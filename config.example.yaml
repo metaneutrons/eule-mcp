@@ -1,6 +1,12 @@
 # Eule MCP configuration
 language: de # de | en
 
+# OAuth settings — defaults to Thunderbird's app registration.
+# Override with your own Azure AD app if available.
+# oauth:
+#   clientId: "9e5f94bc-e8a4-4e73-b8be-63364c29d753"
+#   tenant: "common"
+
 roles:
   - id: VPDIT
     name: "VP Hochschule Hannover"

@@ -21,9 +21,16 @@ export interface RoleConfig {
   readonly connectors: RoleConnectors;
 }
 
+/** OAuth configuration with sensible defaults. */
+export interface OAuthConfig {
+  readonly clientId: string;
+  readonly tenant: string;
+}
+
 /** Root application configuration loaded from config.yaml. */
 export interface AppConfig {
   readonly language: "de" | "en";
+  readonly oauth: OAuthConfig;
   readonly roles: readonly RoleConfig[];
 }
 

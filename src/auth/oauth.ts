@@ -4,15 +4,23 @@ import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import open from "open";
-import type { ApiTier, TokenStore, AccountToken } from "../types/index.js";
+import type { ApiTier, OAuthConfig, TokenStore, AccountToken } from "../types/index.js";
 
 const TOKENS_PATH = join(homedir(), ".eule", "tokens.json");
 
-// Thunderbird's registered app ID — consented in most M365 tenants.
-const CLIENT_ID = "9e5f94bc-e8a4-4e73-b8be-63364c29d753";
-const TENANT = "common";
-const AUTH_ENDPOINT = `https://login.microsoftonline.com/${TENANT}/oauth2/v2.0/authorize`;
-const TOKEN_ENDPOINT = `https://login.microsoftonline.com/${TENANT}/oauth2/v2.0/token`;
+/** Default OAuth config — Thunderbird's registered app ID. */
+const DEFAULT_OAUTH: OAuthConfig = {
+  clientId: "9e5f94bc-e8a4-4e73-b8be-63364c29d753",
+  tenant: "common",
+};
+
+function authEndpoint(oauth: OAuthConfig): string {
+  return `https://login.microsoftonline.com/${oauth.tenant}/oauth2/v2.0/authorize`;
+}
+
+function tokenEndpoint(oauth: OAuthConfig): string {
+  return `https://login.microsoftonline.com/${oauth.tenant}/oauth2/v2.0/token`;
+}
 
 /** Scope sets per API tier. */
 export const TIER_SCOPES: Record<ApiTier, string> = {
@@ -41,19 +49,22 @@ export function saveTokens(store: TokenStore): void {
 }
 
 /** Refresh an expired access token using the refresh token. */
-export async function refreshAccessToken(account: string): Promise<AccountToken | null> {
+export async function refreshAccessToken(
+  account: string,
+  oauth: OAuthConfig = DEFAULT_OAUTH,
+): Promise<AccountToken | null> {
   const store = loadTokens();
   const token = store.accounts[account];
   if (!token?.refreshToken) return null;
 
   const body = new URLSearchParams({
-    client_id: CLIENT_ID,
+    client_id: oauth.clientId,
     grant_type: "refresh_token",
     refresh_token: token.refreshToken,
     scope: TIER_SCOPES[token.tier],
   });
 
-  const res = await fetch(TOKEN_ENDPOINT, {
+  const res = await fetch(tokenEndpoint(oauth), {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: body.toString(),
@@ -80,14 +91,17 @@ export async function refreshAccessToken(account: string): Promise<AccountToken 
 }
 
 /** Get a valid access token for an account, refreshing if needed. */
-export async function getAccessToken(account: string): Promise<string | null> {
+export async function getAccessToken(
+  account: string,
+  oauth: OAuthConfig = DEFAULT_OAUTH,
+): Promise<string | null> {
   const store = loadTokens();
   const token = store.accounts[account];
   if (!token) return null;
 
   // Refresh if expiring within 5 minutes.
   if (token.expiresAt - Date.now() < 5 * 60 * 1000) {
-    const refreshed = await refreshAccessToken(account);
+    const refreshed = await refreshAccessToken(account, oauth);
     return refreshed?.accessToken ?? null;
   }
 
@@ -101,6 +115,7 @@ export async function getAccessToken(account: string): Promise<string | null> {
 export async function authenticateAccount(
   tier: ApiTier,
   accountHint?: string,
+  oauth: OAuthConfig = DEFAULT_OAUTH,
 ): Promise<AccountToken> {
   const { verifier, challenge } = generatePkce();
   const state = randomBytes(16).toString("hex");
@@ -139,7 +154,7 @@ export async function authenticateAccount(
 
       // Exchange code for tokens.
       const tokenBody = new URLSearchParams({
-        client_id: CLIENT_ID,
+        client_id: oauth.clientId,
         grant_type: "authorization_code",
         code,
         redirect_uri: `http://localhost:${String(port)}/callback`,
@@ -149,7 +164,7 @@ export async function authenticateAccount(
 
       void (async () => {
         try {
-          const tokenRes = await fetch(TOKEN_ENDPOINT, {
+          const tokenRes = await fetch(tokenEndpoint(oauth), {
             method: "POST",
             headers: { "Content-Type": "application/x-www-form-urlencoded" },
             body: tokenBody.toString(),
@@ -208,7 +223,7 @@ export async function authenticateAccount(
 
       const redirectUri = `http://localhost:${String(port)}/callback`;
       const params = new URLSearchParams({
-        client_id: CLIENT_ID,
+        client_id: oauth.clientId,
         response_type: "code",
         redirect_uri: redirectUri,
         response_mode: "query",
@@ -223,7 +238,7 @@ export async function authenticateAccount(
         params.set("login_hint", accountHint);
       }
 
-      const authUrl = `${AUTH_ENDPOINT}?${params.toString()}`;
+      const authUrl = `${authEndpoint(oauth)}?${params.toString()}`;
       console.log(`\nOpening browser for authentication...`);
       console.log(`If the browser doesn't open, visit:\n${authUrl}\n`);
       void open(authUrl);

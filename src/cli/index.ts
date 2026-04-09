@@ -50,7 +50,7 @@ async function setup(): Promise<void> {
   console.log("A browser window will open for Microsoft login...\n");
 
   try {
-    const token = await authenticateAccount(tier, accountHint || undefined);
+    const token = await authenticateAccount(tier, accountHint || undefined, config.oauth);
     console.log(`\n✅ Success! Account: ${token.account}`);
     console.log(`   Tier: ${token.tier}`);
     console.log(`   Token expires: ${new Date(token.expiresAt).toLocaleString()}`);

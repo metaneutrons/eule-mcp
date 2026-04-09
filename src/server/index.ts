@@ -60,7 +60,8 @@ server.tool(
   async ({ account, tier }) => {
     const apiTier: ApiTier = tier ?? "graph";
     try {
-      const token = await authenticateAccount(apiTier, account);
+      const config = configManager.get();
+      const token = await authenticateAccount(apiTier, account, config.oauth);
       return {
         content: [
           {
@@ -92,7 +93,8 @@ server.tool(
   },
   async ({ account }) => {
     // Try to get a valid token first.
-    const accessToken = await getAccessToken(account);
+    const config = configManager.get();
+    const accessToken = await getAccessToken(account, config.oauth);
     if (!accessToken) {
       return {
         content: [

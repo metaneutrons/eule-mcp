@@ -2,13 +2,19 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import yaml from "js-yaml";
-import type { AppConfig, RoleConfig } from "../types/index.js";
+import type { AppConfig, OAuthConfig, RoleConfig } from "../types/index.js";
 
 const EULE_DIR = join(homedir(), ".eule");
 const CONFIG_PATH = join(EULE_DIR, "config.yaml");
 
+const DEFAULT_OAUTH: OAuthConfig = {
+  clientId: "9e5f94bc-e8a4-4e73-b8be-63364c29d753", // Thunderbird
+  tenant: "common",
+};
+
 const DEFAULT_CONFIG: AppConfig = {
   language: "de",
+  oauth: DEFAULT_OAUTH,
   roles: [],
 };
 
@@ -38,6 +44,7 @@ function validate(raw: unknown): AppConfig {
 
   const obj = raw as Record<string, unknown>;
   const language = obj["language"] === "en" ? "en" : "de";
+  const oauth = parseOAuth(obj["oauth"]);
   const roles: RoleConfig[] = [];
 
   if (Array.isArray(obj["roles"])) {
@@ -56,7 +63,16 @@ function validate(raw: unknown): AppConfig {
     }
   }
 
-  return { language, roles };
+  return { language, oauth, roles };
+}
+
+function parseOAuth(raw: unknown): OAuthConfig {
+  if (typeof raw !== "object" || raw === null) return DEFAULT_OAUTH;
+  const obj = raw as Record<string, unknown>;
+  return {
+    clientId: typeof obj["clientId"] === "string" ? obj["clientId"] : DEFAULT_OAUTH.clientId,
+    tenant: typeof obj["tenant"] === "string" ? obj["tenant"] : DEFAULT_OAUTH.tenant,
+  };
 }
 
 function parseConnectors(raw: unknown): RoleConfig["connectors"] {

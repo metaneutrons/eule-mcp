@@ -1,5 +1,6 @@
 export type {
   AppConfig,
+  OAuthConfig,
   RoleConfig,
   RoleConnectors,
   ConnectorConfig,
