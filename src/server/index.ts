@@ -250,7 +250,7 @@ server.tool(
     allMessages.sort((a, b) => b.receivedAt.localeCompare(a.receivedAt));
 
     const lines = allMessages.map((m) =>
-      `[${m.account}] ${m.isRead ? " " : "●"} ${m.receivedAt.slice(0, 16)} | ${m.from} | ${m.subject}\n  ${m.snippet.slice(0, 100)}${m.snippet.length > 100 ? "..." : ""}\n  ID: ${m.id}`,
+      `[${m.account}] ${m.isRead ? " " : "●"} ${m.receivedAt.slice(0, 16)} | ${m.from} | ${m.subject}${m.snippet ? `\n  ${m.snippet.slice(0, 100)}${m.snippet.length > 100 ? "..." : ""}` : ""}\n  ID: ${m.id}`,
     );
 
     return { content: [{ type: "text" as const, text: lines.join("\n\n") || "No messages found." }] };
