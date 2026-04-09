@@ -43,7 +43,7 @@ Eule is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) serve
 │       │           │              │          │
 │  ┌────▼───────────▼──────────────▼──────┐   │
 │  │          Provider Layer              │   │
-│  │  M365 (Graph/EWS/IMAP) · iCloud · …. │   │
+│  │  M365 (Graph/EWS) · IMAP/SMTP · iCloud · … │   │
 │  └──────────────────────────────────────┘   │
 └─────────────────────────────────────────────┘
 ```
@@ -173,6 +173,28 @@ roles:
         - id: work-mail
           type: m365
           account: "you@example.com"
+      calendar:
+        - id: work-cal
+          type: m365
+          account: "you@example.com"
+```
+
+**Generic IMAP** (iCloud, Gmail, Fastmail, any mail server):
+
+```yaml
+roles:
+  - id: personal
+    name: "Personal"
+    weeklyHours: 0
+    connectors:
+      mail:
+        - id: icloud
+          type: imap
+          account: "you@icloud.com"
+          host: "imap.mail.me.com"
+          smtpHost: "smtp.mail.me.com"
+          auth: password
+          password: "xxxx-xxxx-xxxx-xxxx"  # app-specific password
 ```
 
 ### Register with your AI assistant
@@ -222,13 +244,13 @@ autoAuth:
 - [x] Mail tools (list, read, search, send, reply, attachments)
 - [x] HTML → Markdown rendering with thread splitting
 - [x] Provider-based architecture
-- [x] Calendar read/write (EWS)
+- [x] Calendar read/write (Graph + EWS)
 - [x] GTD task engine with SQLite + Markdown export
 - [x] Role & context CRUD
 - [x] Ideas, Notes, Contacts
 - [x] Daily briefing
-- [ ] Graph API connectors (Mail + Calendar)
-- [ ] IMAP Mail connector (Tier 3)
+- [x] Graph API connectors (Mail + Calendar)
+- [x] Generic IMAP/SMTP provider (any mail server, password or OAuth)
 - [ ] Resource planning & capacity tracking
 - [ ] Paperless-ngx connector
 - [ ] iCloud provider (CalDAV calendar, CalDAV reminders, CardDAV contacts, IMAP mail)
