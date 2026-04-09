@@ -1,6 +1,14 @@
+import { XMLParser } from "fast-xml-parser";
 import type { MailConnector, MailMessage, MailMessageFull, MailAttachment } from "../../types/index.js";
 
 const EWS_URL = "https://outlook.office365.com/EWS/Exchange.asmx";
+
+const parser = new XMLParser({
+  ignoreAttributes: false,
+  attributeNamePrefix: "@_",
+  removeNSPrefix: true,
+  isArray: (name) => ["Message", "FileAttachment", "Mailbox"].includes(name),
+});
 
 function soap(body: string): string {
   return `<?xml version="1.0" encoding="utf-8"?>
@@ -11,28 +19,27 @@ function soap(body: string): string {
 </soap:Envelope>`;
 }
 
-/** Extract text between XML tags. Returns empty string if not found. */
-function tag(xml: string, name: string): string {
-  const re = new RegExp(`<[^:]*:?${name}[^>]*>([\\s\\S]*?)</[^:]*:?${name}>`, "i");
-  const match = re.exec(xml);
-  return match?.[1]?.trim() ?? "";
+function escapeXml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-/** Extract all occurrences of a tag. */
-function tags(xml: string, name: string): string[] {
-  const re = new RegExp(`<[^:]*:?${name}[^>]*>([\\s\\S]*?)</[^:]*:?${name}>`, "gi");
-  const results: string[] = [];
-  let match: RegExpExecArray | null;
-  while ((match = re.exec(xml)) !== null) {
-    if (match[1]) results.push(match[1].trim());
+/** Safely navigate a nested object path. */
+function dig(obj: unknown, ...keys: string[]): unknown {
+  let current = obj;
+  for (const key of keys) {
+    if (current == null || typeof current !== "object") return undefined;
+    current = (current as Record<string, unknown>)[key];
   }
-  return results;
+  return current;
 }
 
-/** Extract attribute value from an XML element. */
-function attr(xml: string, element: string, attribute: string): string {
-  const re = new RegExp(`<[^:]*:?${element}[^>]*${attribute}="([^"]*)"`, "i");
-  return re.exec(xml)?.[1] ?? "";
+function str(val: unknown): string {
+  if (val == null) return "";
+  if (typeof val === "string") return val;
+  if (typeof val === "object" && "#text" in (val as Record<string, unknown>)) {
+    return String((val as Record<string, unknown>)["#text"]);
+  }
+  return String(val);
 }
 
 export class EwsMailConnector implements MailConnector {
@@ -43,7 +50,7 @@ export class EwsMailConnector implements MailConnector {
     private readonly getToken: () => Promise<string | null>,
   ) {}
 
-  private async post(body: string): Promise<string> {
+  private async post(body: string): Promise<unknown> {
     const token = await this.getToken();
     if (!token) throw new Error(`No token for ${this.account}`);
     const res = await fetch(EWS_URL, {
@@ -55,11 +62,12 @@ export class EwsMailConnector implements MailConnector {
       body: soap(body),
     });
     if (!res.ok) throw new Error(`EWS ${String(res.status)}: ${await res.text()}`);
-    return res.text();
+    const xml = await res.text();
+    return parser.parse(xml);
   }
 
   async listMessages(folder = "inbox", limit = 10): Promise<MailMessage[]> {
-    const xml = await this.post(`
+    const data = await this.post(`
     <m:FindItem Traversal="Shallow">
       <m:ItemShape>
         <t:BaseShape>Default</t:BaseShape>
@@ -81,11 +89,12 @@ export class EwsMailConnector implements MailConnector {
       </m:ParentFolderIds>
     </m:FindItem>`);
 
-    return this.parseMessages(xml);
+    const messages = this.extractMessages(data);
+    return messages.map((m) => this.mapMessage(m));
   }
 
   async getMessage(id: string): Promise<MailMessageFull> {
-    const xml = await this.post(`
+    const data = await this.post(`
     <m:GetItem>
       <m:ItemShape>
         <t:BaseShape>Default</t:BaseShape>
@@ -105,41 +114,29 @@ export class EwsMailConnector implements MailConnector {
       </m:ItemIds>
     </m:GetItem>`);
 
-    const msgs = this.parseMessages(xml);
-    const msg = msgs[0] ?? { id, account: this.account, subject: "", from: "", to: [], receivedAt: "", snippet: "", isRead: false };
+    const messages = this.extractMessages(data);
+    const m = messages[0];
+    const msg = m ? this.mapMessage(m) : { id, account: this.account, subject: "", from: "", to: [], receivedAt: "", snippet: "", isRead: false };
 
-    // Extract body — match the EWS Body element with BodyType attribute specifically.
-    const bodyMatch = /<[^:]*:?Body BodyType="([^"]*)"[^>]*>([\s\S]*?)<\/[^:]*:?Body>/i.exec(xml);
-    const body = bodyMatch?.[2]?.trim() ?? "";
-    const bodyType = bodyMatch?.[1] === "Text" ? "text" as const : "html" as const;
+    const bodyNode = m ? dig(m, "Body") : undefined;
+    const body = str(bodyNode);
+    const bodyType = (typeof bodyNode === "object" && bodyNode !== null && (bodyNode as Record<string, unknown>)["@_BodyType"] === "Text")
+      ? "text" as const
+      : "html" as const;
 
-    // Parse attachments with IDs.
-    const attachmentBlocks = tags(xml, "FileAttachment");
-    const attachments: MailAttachment[] = attachmentBlocks.map((block) => ({
-      id: tag(block, "AttachmentId") || attr(block, "AttachmentId", "Id"),
-      name: tag(block, "Name"),
-      size: parseInt(tag(block, "Size") || "0", 10),
-      contentType: tag(block, "ContentType") || "application/octet-stream",
+    const fileAttachments = (m ? dig(m, "Attachments", "FileAttachment") : undefined) as Record<string, unknown>[] | undefined;
+    const attachments: MailAttachment[] = (fileAttachments ?? []).map((a) => ({
+      id: str(dig(a, "AttachmentId", "@_Id")),
+      name: str(a["Name"]),
+      size: parseInt(str(a["Size"]) || "0", 10),
+      contentType: str(a["ContentType"]) || "application/octet-stream",
     }));
 
     return { ...msg, body, bodyType, attachments };
   }
 
-  async downloadAttachment(messageId: string, attachmentId: string): Promise<Buffer> {
-    void messageId; // EWS uses attachment ID directly.
-    const xml = await this.post(`
-    <m:GetAttachment>
-      <m:AttachmentIds>
-        <t:AttachmentId Id="${attachmentId}"/>
-      </m:AttachmentIds>
-    </m:GetAttachment>`);
-
-    const content = tag(xml, "Content");
-    return Buffer.from(content, "base64");
-  }
-
   async searchMessages(query: string, limit = 10): Promise<MailMessage[]> {
-    const xml = await this.post(`
+    const data = await this.post(`
     <m:FindItem Traversal="Shallow">
       <m:ItemShape>
         <t:BaseShape>Default</t:BaseShape>
@@ -158,10 +155,11 @@ export class EwsMailConnector implements MailConnector {
       <m:ParentFolderIds>
         <t:DistinguishedFolderId Id="inbox"/>
       </m:ParentFolderIds>
-      <m:QueryString>${query}</m:QueryString>
+      <m:QueryString>${escapeXml(query)}</m:QueryString>
     </m:FindItem>`);
 
-    return this.parseMessages(xml);
+    const messages = this.extractMessages(data);
+    return messages.map((m) => this.mapMessage(m));
   }
 
   async sendMessage(to: string[], subject: string, body: string): Promise<void> {
@@ -169,10 +167,10 @@ export class EwsMailConnector implements MailConnector {
     <m:CreateItem MessageDisposition="SendAndSaveCopy">
       <m:Items>
         <t:Message>
-          <t:Subject>${this.escapeXml(subject)}</t:Subject>
-          <t:Body BodyType="Text">${this.escapeXml(body)}</t:Body>
+          <t:Subject>${escapeXml(subject)}</t:Subject>
+          <t:Body BodyType="Text">${escapeXml(body)}</t:Body>
           <t:ToRecipients>
-            ${to.map((addr) => `<t:Mailbox><t:EmailAddress>${this.escapeXml(addr)}</t:EmailAddress></t:Mailbox>`).join("")}
+            ${to.map((addr) => `<t:Mailbox><t:EmailAddress>${escapeXml(addr)}</t:EmailAddress></t:Mailbox>`).join("")}
           </t:ToRecipients>
         </t:Message>
       </m:Items>
@@ -185,28 +183,73 @@ export class EwsMailConnector implements MailConnector {
       <m:Items>
         <t:ReplyToItem>
           <t:ReferenceItemId Id="${id}"/>
-          <t:NewBodyContent BodyType="Text">${this.escapeXml(body)}</t:NewBodyContent>
+          <t:NewBodyContent BodyType="Text">${escapeXml(body)}</t:NewBodyContent>
         </t:ReplyToItem>
       </m:Items>
     </m:CreateItem>`);
   }
 
-  private parseMessages(xml: string): MailMessage[] {
-    // Match both <t:Message> and <m:Message> blocks.
-    const messageBlocks = tags(xml, "Message");
-    return messageBlocks.map((block) => ({
-      id: attr(block, "ItemId", "Id"),
-      account: this.account,
-      subject: tag(block, "Subject"),
-      from: tag(tag(block, "From"), "EmailAddress"),
-      to: tags(tag(block, "ToRecipients"), "EmailAddress"),
-      receivedAt: tag(block, "DateTimeReceived"),
-      snippet: tag(block, "Preview") || tag(block, "BodyPreview") || "",
-      isRead: tag(block, "IsRead") === "true",
-    }));
+  async downloadAttachment(_messageId: string, attachmentId: string): Promise<Buffer> {
+    const data = await this.post(`
+    <m:GetAttachment>
+      <m:AttachmentIds>
+        <t:AttachmentId Id="${attachmentId}"/>
+      </m:AttachmentIds>
+    </m:GetAttachment>`);
+
+    const content = str(dig(data, "Envelope", "Body", "GetAttachmentResponse", "ResponseMessages", "GetAttachmentResponseMessage", "Attachments", "FileAttachment", "Content"));
+    if (!content) {
+      // Try array form.
+      const attachments = dig(data, "Envelope", "Body", "GetAttachmentResponse", "ResponseMessages", "GetAttachmentResponseMessage", "Attachments", "FileAttachment") as Record<string, unknown>[] | undefined;
+      const first = attachments?.[0];
+      if (first) return Buffer.from(str(first["Content"]), "base64");
+      throw new Error("No attachment content found");
+    }
+    return Buffer.from(content, "base64");
   }
 
-  private escapeXml(s: string): string {
-    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  /** Extract Message items from parsed EWS response. */
+  private extractMessages(data: unknown): Record<string, unknown>[] {
+    // Navigate: Envelope > Body > *Response > ResponseMessages > *ResponseMessage > RootFolder? > Items > Message
+    const body = dig(data, "Envelope", "Body") as Record<string, unknown> | undefined;
+    if (!body) return [];
+
+    // Find the response message (works for FindItem, GetItem, etc.)
+    for (const key of Object.keys(body)) {
+      const response = body[key] as Record<string, unknown>;
+      const responseMessages = dig(response, "ResponseMessages") as Record<string, unknown> | undefined;
+      if (!responseMessages) continue;
+
+      for (const rmKey of Object.keys(responseMessages)) {
+        const rm = responseMessages[rmKey] as Record<string, unknown>;
+        // FindItem has RootFolder > Items > Message
+        const rootFolder = rm["RootFolder"] as Record<string, unknown> | undefined;
+        const items = (rootFolder ? dig(rootFolder, "Items") : dig(rm, "Items")) as Record<string, unknown> | undefined;
+        if (!items) continue;
+
+        const messages = items["Message"];
+        if (Array.isArray(messages)) return messages as Record<string, unknown>[];
+        if (messages && typeof messages === "object") return [messages as Record<string, unknown>];
+      }
+    }
+
+    return [];
+  }
+
+  private mapMessage(m: Record<string, unknown>): MailMessage {
+    const from = dig(m, "From", "Mailbox", "EmailAddress") as string | undefined;
+    const toRecipients = dig(m, "ToRecipients", "Mailbox") as Record<string, unknown>[] | Record<string, unknown> | undefined;
+    const toList = Array.isArray(toRecipients) ? toRecipients : toRecipients ? [toRecipients] : [];
+
+    return {
+      id: str(dig(m, "ItemId", "@_Id")),
+      account: this.account,
+      subject: str(m["Subject"]),
+      from: str(from),
+      to: toList.map((r) => str(r["EmailAddress"])),
+      receivedAt: str(m["DateTimeReceived"]),
+      snippet: str(m["Preview"]),
+      isRead: str(m["IsRead"]) === "true",
+    };
   }
 }
