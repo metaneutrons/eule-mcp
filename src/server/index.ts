@@ -15,7 +15,7 @@ export const dbManager = new DatabaseManager();
 
 const server = new McpServer({
   name: "eule",
-  version: "0.0.1",
+  version: "0.1.0",
 });
 
 // --- auth_status tool ---
