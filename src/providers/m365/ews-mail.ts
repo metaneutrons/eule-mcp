@@ -70,14 +70,13 @@ export class EwsMailConnector implements MailConnector {
     const data = await this.post(`
     <m:FindItem Traversal="Shallow">
       <m:ItemShape>
-        <t:BaseShape>Default</t:BaseShape>
+        <t:BaseShape>IdOnly</t:BaseShape>
         <t:AdditionalProperties>
           <t:FieldURI FieldURI="item:Subject"/>
           <t:FieldURI FieldURI="message:From"/>
           <t:FieldURI FieldURI="message:ToRecipients"/>
           <t:FieldURI FieldURI="item:DateTimeReceived"/>
           <t:FieldURI FieldURI="message:IsRead"/>
-          <t:FieldURI FieldURI="item:Preview"/>
         </t:AdditionalProperties>
       </m:ItemShape>
       <m:IndexedPageItemView MaxEntriesReturned="${String(limit)}" Offset="0" BasePoint="Beginning"/>
@@ -97,7 +96,7 @@ export class EwsMailConnector implements MailConnector {
     const data = await this.post(`
     <m:GetItem>
       <m:ItemShape>
-        <t:BaseShape>Default</t:BaseShape>
+        <t:BaseShape>IdOnly</t:BaseShape>
         <t:BodyType>HTML</t:BodyType>
         <t:AdditionalProperties>
           <t:FieldURI FieldURI="item:Body"/>
@@ -139,13 +138,12 @@ export class EwsMailConnector implements MailConnector {
     const data = await this.post(`
     <m:FindItem Traversal="Shallow">
       <m:ItemShape>
-        <t:BaseShape>Default</t:BaseShape>
+        <t:BaseShape>IdOnly</t:BaseShape>
         <t:AdditionalProperties>
           <t:FieldURI FieldURI="item:Subject"/>
           <t:FieldURI FieldURI="message:From"/>
           <t:FieldURI FieldURI="item:DateTimeReceived"/>
           <t:FieldURI FieldURI="message:IsRead"/>
-          <t:FieldURI FieldURI="item:Preview"/>
         </t:AdditionalProperties>
       </m:ItemShape>
       <m:IndexedPageItemView MaxEntriesReturned="${String(limit)}" Offset="0" BasePoint="Beginning"/>
@@ -237,18 +235,21 @@ export class EwsMailConnector implements MailConnector {
   }
 
   private mapMessage(m: Record<string, unknown>): MailMessage {
-    const from = dig(m, "From", "Mailbox", "EmailAddress") as string | undefined;
-    const toRecipients = dig(m, "ToRecipients", "Mailbox") as Record<string, unknown>[] | Record<string, unknown> | undefined;
-    const toList = Array.isArray(toRecipients) ? toRecipients : toRecipients ? [toRecipients] : [];
+    // Mailbox is always an array due to isArray config.
+    const fromMailboxes = dig(m, "From", "Mailbox") as Record<string, unknown>[] | undefined;
+    const fromAddr = fromMailboxes?.[0] ? str(fromMailboxes[0]["EmailAddress"]) : "";
+
+    const toMailboxes = dig(m, "ToRecipients", "Mailbox") as Record<string, unknown>[] | undefined;
+    const toList = (toMailboxes ?? []).map((r) => str(r["EmailAddress"]));
 
     return {
       id: str(dig(m, "ItemId", "@_Id")),
       account: this.account,
       subject: str(m["Subject"]),
-      from: str(from),
-      to: toList.map((r) => str(r["EmailAddress"])),
+      from: fromAddr,
+      to: toList,
       receivedAt: str(m["DateTimeReceived"]),
-      snippet: str(m["Preview"]),
+      snippet: str(m["Preview"] ?? m["BodyPreview"] ?? ""),
       isRead: str(m["IsRead"]) === "true",
     };
   }
