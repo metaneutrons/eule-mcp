@@ -14,6 +14,14 @@ const DEFAULT_OAUTH: OAuthConfig = {
   tenant: "common",
 };
 
+/**
+ * Redirect URI registered on Thunderbird's app.
+ * Microsoft will redirect to this URL with ?code=... in the query string.
+ * We use a local HTTP server that intercepts requests to ANY path and
+ * extracts the code, then we exchange it using this exact redirect_uri.
+ */
+const REDIRECT_URI = "https://login.microsoftonline.com/common/oauth2/nativeclient";
+
 function authEndpoint(oauth: OAuthConfig): string {
   return `https://login.microsoftonline.com/${oauth.tenant}/oauth2/v2.0/authorize`;
 }
@@ -24,7 +32,8 @@ function tokenEndpoint(oauth: OAuthConfig): string {
 
 /** Scope sets per API tier. */
 export const TIER_SCOPES: Record<ApiTier, string> = {
-  graph: "https://graph.microsoft.com/Mail.ReadWrite https://graph.microsoft.com/Calendars.ReadWrite https://graph.microsoft.com/Contacts.Read offline_access",
+  graph:
+    "https://graph.microsoft.com/Mail.ReadWrite https://graph.microsoft.com/Calendars.ReadWrite https://graph.microsoft.com/Contacts.Read offline_access",
   ews: "https://outlook.office.com/EWS.AccessAsUser.All offline_access",
   imap: "https://outlook.office.com/IMAP.AccessAsUser.All https://outlook.office.com/SMTP.Send offline_access",
 };
@@ -99,7 +108,6 @@ export async function getAccessToken(
   const token = store.accounts[account];
   if (!token) return null;
 
-  // Refresh if expiring within 5 minutes.
   if (token.expiresAt - Date.now() < 5 * 60 * 1000) {
     const refreshed = await refreshAccessToken(account, oauth);
     return refreshed?.accessToken ?? null;
@@ -109,8 +117,57 @@ export async function getAccessToken(
 }
 
 /**
+ * Exchange an authorization code for tokens.
+ */
+async function exchangeCode(
+  code: string,
+  verifier: string,
+  scope: string,
+  oauth: OAuthConfig,
+): Promise<AccountToken> {
+  const body = new URLSearchParams({
+    client_id: oauth.clientId,
+    grant_type: "authorization_code",
+    code,
+    redirect_uri: REDIRECT_URI,
+    code_verifier: verifier,
+    scope,
+  });
+
+  const res = await fetch(tokenEndpoint(oauth), {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: body.toString(),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Token exchange failed: ${errText}`);
+  }
+
+  const data = (await res.json()) as {
+    access_token: string;
+    refresh_token: string;
+    expires_in: number;
+  };
+
+  const account = extractEmail(data.access_token) ?? "unknown";
+  return {
+    account,
+    accessToken: data.access_token,
+    refreshToken: data.refresh_token,
+    expiresAt: Date.now() + data.expires_in * 1000,
+    tier: "graph", // Will be set by caller
+  };
+}
+
+/**
  * Run the interactive browser-based OAuth2 authorization code flow with PKCE.
- * Starts a local HTTP server, opens the browser, waits for the redirect.
+ *
+ * Uses the nativeclient redirect URI registered on Thunderbird's app.
+ * After login, Microsoft redirects to the nativeclient URL with ?code=...
+ * We start a local server that shows a page asking the user to paste the
+ * full redirect URL, OR we try to intercept it automatically.
  */
 export async function authenticateAccount(
   tier: ApiTier,
@@ -121,130 +178,121 @@ export async function authenticateAccount(
   const state = randomBytes(16).toString("hex");
   const scope = TIER_SCOPES[tier];
 
+  const params = new URLSearchParams({
+    client_id: oauth.clientId,
+    response_type: "code",
+    redirect_uri: REDIRECT_URI,
+    response_mode: "query",
+    scope,
+    state,
+    code_challenge: challenge,
+    code_challenge_method: "S256",
+    prompt: "select_account",
+  });
+
+  if (accountHint) {
+    params.set("login_hint", accountHint);
+  }
+
+  const authUrl = `${authEndpoint(oauth)}?${params.toString()}`;
+
   return new Promise<AccountToken>((resolve, reject) => {
+    // Start a local server that serves a page to capture the redirect URL.
     const server = createServer((req, res) => {
-      const url = new URL(req.url ?? "/", `http://localhost`);
+      const url = new URL(req.url ?? "/", "http://localhost");
 
-      if (url.pathname !== "/callback") {
-        res.writeHead(404);
-        res.end();
-        return;
-      }
+      // Check if this is a POST with the pasted URL.
+      if (req.method === "POST" && url.pathname === "/submit") {
+        let body = "";
+        req.on("data", (chunk: Buffer) => {
+          body += chunk.toString();
+        });
+        req.on("end", () => {
+          const formData = new URLSearchParams(body);
+          const pastedUrl = formData.get("url") ?? "";
 
-      const code = url.searchParams.get("code");
-      const returnedState = url.searchParams.get("state");
-      const error = url.searchParams.get("error");
-      const errorDesc = url.searchParams.get("error_description");
-
-      if (error) {
-        res.writeHead(200, { "Content-Type": "text/html" });
-        res.end(`<h1>Authentication failed</h1><p>${errorDesc ?? error}</p><p>You can close this window.</p>`);
-        server.close();
-        reject(new Error(`OAuth error: ${errorDesc ?? error}`));
-        return;
-      }
-
-      if (!code || returnedState !== state) {
-        res.writeHead(400, { "Content-Type": "text/html" });
-        res.end("<h1>Invalid callback</h1><p>Missing code or state mismatch.</p>");
-        server.close();
-        reject(new Error("Invalid OAuth callback"));
-        return;
-      }
-
-      // Exchange code for tokens.
-      const tokenBody = new URLSearchParams({
-        client_id: oauth.clientId,
-        grant_type: "authorization_code",
-        code,
-        redirect_uri: `http://localhost:${String(port)}/callback`,
-        code_verifier: verifier,
-        scope,
-      });
-
-      void (async () => {
-        try {
-          const tokenRes = await fetch(tokenEndpoint(oauth), {
-            method: "POST",
-            headers: { "Content-Type": "application/x-www-form-urlencoded" },
-            body: tokenBody.toString(),
-          });
-
-          if (!tokenRes.ok) {
-            const errText = await tokenRes.text();
+          let code: string | null = null;
+          try {
+            const parsed = new URL(pastedUrl);
+            code = parsed.searchParams.get("code");
+            const returnedState = parsed.searchParams.get("state");
+            if (returnedState !== state) {
+              res.writeHead(200, { "Content-Type": "text/html" });
+              res.end("<h1>❌ State mismatch</h1><p>Try again.</p>");
+              return;
+            }
+          } catch {
             res.writeHead(200, { "Content-Type": "text/html" });
-            res.end(`<h1>Token exchange failed</h1><pre>${errText}</pre><p>You can close this window.</p>`);
-            server.close();
-            reject(new Error(`Token exchange failed: ${errText}`));
+            res.end("<h1>❌ Invalid URL</h1><p>Paste the full URL from the browser address bar.</p>");
             return;
           }
 
-          const data = (await tokenRes.json()) as {
-            access_token: string;
-            refresh_token: string;
-            expires_in: number;
-            id_token?: string;
-          };
+          if (!code) {
+            res.writeHead(200, { "Content-Type": "text/html" });
+            res.end("<h1>❌ No code found</h1><p>Paste the full URL including ?code=...</p>");
+            return;
+          }
 
-          // Extract account email from the access token (JWT payload).
-          const account = extractEmail(data.access_token) ?? accountHint ?? "unknown";
+          void (async () => {
+            try {
+              const tokenData = await exchangeCode(code, verifier, scope, oauth);
+              const result: AccountToken = { ...tokenData, tier };
 
-          const tokenData: AccountToken = {
-            account,
-            accessToken: data.access_token,
-            refreshToken: data.refresh_token,
-            expiresAt: Date.now() + data.expires_in * 1000,
-            tier,
-          };
+              const store = loadTokens();
+              store.accounts[result.account] = result;
+              saveTokens(store);
 
-          // Persist.
-          const store = loadTokens();
-          store.accounts[account] = tokenData;
-          saveTokens(store);
+              res.writeHead(200, { "Content-Type": "text/html" });
+              res.end(
+                `<h1>✅ Authenticated!</h1><p>Account: ${result.account}</p><p>Tier: ${tier}</p><p>You can close this window.</p>`,
+              );
+              server.close();
+              resolve(result);
+            } catch (err) {
+              res.writeHead(200, { "Content-Type": "text/html" });
+              res.end(`<h1>❌ Error</h1><pre>${err instanceof Error ? err.message : String(err)}</pre>`);
+              server.close();
+              reject(err instanceof Error ? err : new Error(String(err)));
+            }
+          })();
+        });
+        return;
+      }
 
-          res.writeHead(200, { "Content-Type": "text/html" });
-          res.end(`<h1>✅ Authenticated!</h1><p>Account: ${account}</p><p>Tier: ${tier}</p><p>You can close this window.</p>`);
-          server.close();
-          resolve(tokenData);
-        } catch (err) {
-          server.close();
-          reject(err instanceof Error ? err : new Error(String(err)));
-        }
-      })();
+      // Serve the capture page.
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<!DOCTYPE html>
+<html><head><title>Eule MCP — OAuth Callback</title>
+<style>body{font-family:system-ui;max-width:600px;margin:40px auto;padding:0 20px}
+input[type=text]{width:100%;padding:8px;font-size:14px;margin:8px 0}
+button{padding:10px 20px;font-size:16px;cursor:pointer;background:#0078d4;color:white;border:none;border-radius:4px}</style>
+</head><body>
+<h1>🦉 Eule MCP — Authentication</h1>
+<p>After logging in, Microsoft will redirect you to a blank page or an error page. This is expected.</p>
+<p><strong>Copy the full URL from your browser's address bar</strong> and paste it below:</p>
+<form method="POST" action="/submit">
+<input type="text" name="url" placeholder="https://login.microsoftonline.com/common/oauth2/nativeclient?code=..." autofocus>
+<br><button type="submit">Submit</button>
+</form>
+<p><small>The URL should start with <code>https://login.microsoftonline.com/common/oauth2/nativeclient?code=</code></small></p>
+</body></html>`);
     });
 
-    // Listen on random port.
-    let port = 0;
     server.listen(0, "127.0.0.1", () => {
       const addr = server.address();
-      if (typeof addr === "object" && addr !== null) {
-        port = addr.port;
-      }
+      const port = typeof addr === "object" && addr !== null ? addr.port : 0;
 
-      const redirectUri = `http://localhost:${String(port)}/callback`;
-      const params = new URLSearchParams({
-        client_id: oauth.clientId,
-        response_type: "code",
-        redirect_uri: redirectUri,
-        response_mode: "query",
-        scope,
-        state,
-        code_challenge: challenge,
-        code_challenge_method: "S256",
-        prompt: "select_account",
-      });
-
-      if (accountHint) {
-        params.set("login_hint", accountHint);
-      }
-
-      const authUrl = `${authEndpoint(oauth)}?${params.toString()}`;
       console.log(`\nOpening browser for authentication...`);
+      console.log(`After login, paste the redirect URL at: http://localhost:${String(port)}\n`);
       console.log(`If the browser doesn't open, visit:\n${authUrl}\n`);
       void open(authUrl);
+
+      // Also open the capture page.
+      setTimeout(() => {
+        void open(`http://localhost:${String(port)}`);
+      }, 1000);
     });
 
-    // Timeout after 5 minutes.
     setTimeout(() => {
       server.close();
       reject(new Error("Authentication timed out (5 minutes)"));
@@ -259,8 +307,13 @@ function extractEmail(jwt: string): string | null {
   const payload = parts[1];
   if (!payload) return null;
   try {
-    const decoded = JSON.parse(Buffer.from(payload, "base64url").toString()) as Record<string, unknown>;
-    return (decoded["upn"] ?? decoded["preferred_username"] ?? decoded["email"] ?? null) as string | null;
+    const decoded = JSON.parse(Buffer.from(payload, "base64url").toString()) as Record<
+      string,
+      unknown
+    >;
+    return (decoded["upn"] ?? decoded["preferred_username"] ?? decoded["email"] ?? null) as
+      | string
+      | null;
   } catch {
     return null;
   }
