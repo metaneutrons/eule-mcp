@@ -56,9 +56,9 @@ Eule is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) serve
 - **Role-based context** — map accounts and connectors to professional roles
 - **LLM-optimized output** — HTML emails rendered as clean Markdown with thread splitting
 
-## Tools
+## Tools (33)
 
-### 🔐 Auth
+### 🔐 Auth (3)
 
 | Tool | Description |
 |---|---|
@@ -66,49 +66,75 @@ Eule is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) serve
 | `auth_login` | Authenticate or re-authenticate an M365 account |
 | `auth_probe` | Test which API tier works for an account |
 
-### 📧 Mail
-
-| Tool | Description |
-|---|---|
-| `mail_list` | List recent emails, optionally filtered by role |
-| `mail_read` | Read email as Markdown (default), raw HTML, or plain text. Supports `depth` for thread control and `maxLength` for token budgets |
-| `mail_search` | Search emails across accounts |
-| `mail_send` | Compose and send a new email |
-| `mail_reply` | Reply to an existing email |
-| `mail_attachment_list` | List attachments with ID, name, size, content type |
-| `mail_attachment_get` | Download attachment to disk, return file path |
-
-### 👤 Roles
+### 👤 Roles (4)
 
 | Tool | Description |
 |---|---|
 | `role_list` | List all configured roles with connectors and weekly hours |
+| `role_add` | Add a new role |
+| `role_update` | Update a role's properties |
+| `role_remove` | Remove a role |
 
-### 📅 Calendar *(planned)*
+### 📧 Mail (7)
 
 | Tool | Description |
 |---|---|
-| `calendar_list` | List upcoming events |
-| `calendar_today` | Today's schedule |
-| `calendar_create` | Create a new event |
+| `mail_list` | List recent emails, optionally filtered by role |
+| `mail_read` | Read email as Markdown, raw HTML, or plain text. Thread splitting with `depth` control |
+| `mail_search` | Search emails across accounts |
+| `mail_send` | Compose and send a new email |
+| `mail_reply` | Reply to an existing email |
+| `mail_attachment_list` | List attachments with ID, name, size, content type |
+| `mail_attachment_get` | Download attachment to disk |
 
-### ✅ GTD Tasks *(planned)*
+### 📅 Calendar (5)
+
+| Tool | Description |
+|---|---|
+| `calendar_list` | List upcoming events (configurable days ahead) |
+| `calendar_today` | Today's schedule with attendees and locations |
+| `calendar_create` | Create a new event with attendees |
+| `calendar_update` | Update an existing event |
+| `calendar_delete` | Delete an event |
+
+### ✅ GTD Tasks (6)
 
 | Tool | Description |
 |---|---|
 | `task_inbox` | Show unprocessed items |
-| `task_add` | Capture a new task |
-| `task_list` | List tasks by project/context |
+| `task_add` | Capture a new task (supports email source linking) |
+| `task_list` | List tasks by status/project/context/role |
+| `task_update` | Update task properties |
 | `task_complete` | Mark task as done |
+| `task_search` | Full-text search across tasks |
 
-### 🧠 Intelligence *(planned)*
+### 💡 Ideas (2)
 
 | Tool | Description |
 |---|---|
-| `briefing_today` | Daily briefing across all sources |
-| `meeting_prep` | Context gathering for upcoming meetings |
-| `idea_capture` | Quick-capture ideas |
-| `note_add` | Create searchable notes |
+| `idea_add` | Quick-capture an idea with tags and context |
+| `idea_list` | List captured ideas |
+
+### 📝 Notes (3)
+
+| Tool | Description |
+|---|---|
+| `note_add` | Create a searchable note (Markdown) |
+| `note_list` | List notes |
+| `note_search` | Full-text search across notes |
+
+### 👤 Contacts (2)
+
+| Tool | Description |
+|---|---|
+| `contact_add` | Add a contact with organization and notes |
+| `contact_list` | List contacts |
+
+### 🧠 Intelligence (1)
+
+| Tool | Description |
+|---|---|
+| `briefing_today` | Daily briefing: calendar + unread mail + active tasks |
 
 ## Quickstart
 
@@ -196,11 +222,13 @@ autoAuth:
 - [x] Mail tools (list, read, search, send, reply, attachments)
 - [x] HTML → Markdown rendering with thread splitting
 - [x] Provider-based architecture
-- [ ] Calendar read/write (Graph + EWS)
-- [ ] GTD task engine with SQLite + Markdown export
-- [ ] Role & context CRUD
-- [ ] Daily briefing / meeting prep
-- [ ] Idea & note capture
+- [x] Calendar read/write (EWS)
+- [x] GTD task engine with SQLite + Markdown export
+- [x] Role & context CRUD
+- [x] Ideas, Notes, Contacts
+- [x] Daily briefing
+- [ ] Graph API connectors (Mail + Calendar)
+- [ ] IMAP Mail connector (Tier 3)
 - [ ] Resource planning & capacity tracking
 - [ ] Paperless-ngx connector
 - [ ] iCloud provider (CalDAV calendar, CalDAV reminders, CardDAV contacts, IMAP mail)

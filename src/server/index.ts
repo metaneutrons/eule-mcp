@@ -728,6 +728,97 @@ server.tool(
   },
 );
 
+server.tool(
+  "calendar_create",
+  "Create a new calendar event",
+  {
+    subject: z.string().describe("Event subject"),
+    start: z.string().describe("Start time (ISO 8601, e.g. 2026-04-10T14:00:00)"),
+    end: z.string().describe("End time (ISO 8601)"),
+    location: z.string().optional().describe("Location"),
+    body: z.string().optional().describe("Event description"),
+    attendees: z.array(z.string()).optional().describe("Attendee email addresses"),
+    role: z.string().optional().describe("Role ID (uses first calendar connector)"),
+  },
+  async ({ role, ...event }) => {
+    const connectors = registry.getCalendarConnectors(role);
+    if (connectors.length === 0)
+      return {
+        content: [{ type: "text" as const, text: "No calendar connectors configured." }],
+        isError: true,
+      };
+    const c = connectors[0];
+    if (!c)
+      return {
+        content: [{ type: "text" as const, text: "No calendar connectors configured." }],
+        isError: true,
+      };
+    const created = await c.createEvent(event);
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: `📅 Event created: ${created.subject} (${created.start.slice(0, 16)})`,
+        },
+      ],
+    };
+  },
+);
+
+server.tool(
+  "calendar_update",
+  "Update an existing calendar event",
+  {
+    id: z.string().describe("Event ID (from calendar_list)"),
+    subject: z.string().optional().describe("New subject"),
+    start: z.string().optional().describe("New start time (ISO 8601)"),
+    end: z.string().optional().describe("New end time (ISO 8601)"),
+    location: z.string().optional().describe("New location"),
+    role: z.string().optional().describe("Role ID"),
+  },
+  async ({ id, role, ...updates }) => {
+    const connectors = registry.getCalendarConnectors(role);
+    if (connectors.length === 0)
+      return {
+        content: [{ type: "text" as const, text: "No calendar connectors configured." }],
+        isError: true,
+      };
+    const c = connectors[0];
+    if (!c)
+      return {
+        content: [{ type: "text" as const, text: "No calendar connectors configured." }],
+        isError: true,
+      };
+    const updated = await c.updateEvent(id, updates);
+    return { content: [{ type: "text" as const, text: `📅 Event updated: ${updated.subject}` }] };
+  },
+);
+
+server.tool(
+  "calendar_delete",
+  "Delete a calendar event",
+  {
+    id: z.string().describe("Event ID (from calendar_list)"),
+    role: z.string().optional().describe("Role ID"),
+  },
+  async ({ id, role }) => {
+    const connectors = registry.getCalendarConnectors(role);
+    if (connectors.length === 0)
+      return {
+        content: [{ type: "text" as const, text: "No calendar connectors configured." }],
+        isError: true,
+      };
+    const c = connectors[0];
+    if (!c)
+      return {
+        content: [{ type: "text" as const, text: "No calendar connectors configured." }],
+        isError: true,
+      };
+    await c.deleteEvent(id);
+    return { content: [{ type: "text" as const, text: "📅 Event deleted." }] };
+  },
+);
+
 // --- Task tools ---
 const taskManager = new TaskManager(dbManager);
 
