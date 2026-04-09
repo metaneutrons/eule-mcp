@@ -174,6 +174,8 @@ kiro-cli mcp add --name eule --command node --args "/path/to/eule-mcp/dist/serve
 For unattended re-authentication when tokens expire (e.g., on a server):
 
 ```bash
+# Playwright is already an npm dependency, but the Chromium browser
+# binary (~150MB) needs to be downloaded separately:
 npx playwright install chromium
 ```
 
