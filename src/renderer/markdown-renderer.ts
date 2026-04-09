@@ -151,7 +151,14 @@ export function renderMail(opts: {
     const cleaned = removeSignature(part);
     if (i === 0) return cleaned;
     const header = extractReplyHeader(part);
-    return header ? `\n---\n${header}\n\n${cleaned}` : `\n---\n\n${cleaned}`;
+    // Strip the header lines from the body to avoid duplication.
+    let body = cleaned;
+    if (header) {
+      for (const line of header.split("\n")) {
+        body = body.replace(line, "").trim();
+      }
+    }
+    return header ? `\n---\n${header}\n\n${body}` : `\n---\n\n${body}`;
   });
 
   let result = rendered.join("\n");
