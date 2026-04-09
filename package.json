@@ -1,7 +1,7 @@
 {
   "name": "eule-mcp",
   "version": "0.1.0",
-  "description": "Kiro office agent — unified MCP server for M365 mail/calendar, GTD tasks, resource planning",
+  "description": "MCP server for an office assistant - E-Mail/Calendar integration, GTD tasks & resource planning",
   "type": "module",
   "license": "GPL-3.0-or-later",
   "author": "metaneutrons",
