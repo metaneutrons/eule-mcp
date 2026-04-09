@@ -1,4 +1,4 @@
-import type { MailConnector, MailMessage, MailMessageFull } from "../types/index.js";
+import type { MailConnector, MailMessage, MailMessageFull } from "../../types/index.js";
 
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
 

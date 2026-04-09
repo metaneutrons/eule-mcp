@@ -1,7 +1,7 @@
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { ConfigManager } from "../config/index.js";
-import { authenticateAccount, loadTokens } from "../auth/index.js";
+import { authenticateAccount, loadTokens } from "../providers/m365/index.js";
 import type { ApiTier } from "../types/index.js";
 
 const args = process.argv.slice(2);

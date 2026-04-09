@@ -3,7 +3,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { ConfigManager } from "../config/index.js";
 import { DatabaseManager } from "../db/index.js";
-import { loadTokens, authenticateAccount, getAccessToken } from "../auth/index.js";
+import { loadTokens, authenticateAccount, getAccessToken } from "../providers/m365/index.js";
 import { ConnectorRegistry } from "../connectors/index.js";
 import type { ApiTier, MailMessage } from "../types/index.js";
 

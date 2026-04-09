@@ -2,7 +2,7 @@ import { TOTP } from "otpauth";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { writeFileSync } from "node:fs";
-import type { ApiTier, AutoAuthConfig, OAuthConfig, AccountToken } from "../types/index.js";
+import type { ApiTier, AutoAuthConfig, OAuthConfig, AccountToken } from "../../../types/index.js";
 import { TIER_SCOPES, loadTokens, saveTokens } from "./oauth.js";
 import { randomBytes, createHash } from "node:crypto";
 

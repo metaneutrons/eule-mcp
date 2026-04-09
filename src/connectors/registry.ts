@@ -1,9 +1,9 @@
 import type { MailConnector } from "../types/index.js";
 import type { ConfigManager } from "../config/index.js";
-import { loadTokens, getAccessToken } from "../auth/index.js";
-import { GraphMailConnector } from "./graph-mail.js";
-import { EwsMailConnector } from "./ews-mail.js";
-import { ImapMailConnector } from "./imap-mail.js";
+import { loadTokens, getAccessToken } from "../providers/m365/index.js";
+import { GraphMailConnector } from "../providers/m365/graph-mail.js";
+import { EwsMailConnector } from "../providers/m365/ews-mail.js";
+import { ImapMailConnector } from "../providers/m365/imap-mail.js";
 
 export class ConnectorRegistry {
   constructor(private readonly config: ConfigManager) {}

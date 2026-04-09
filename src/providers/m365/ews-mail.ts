@@ -1,4 +1,4 @@
-import type { MailConnector, MailMessage, MailMessageFull } from "../types/index.js";
+import type { MailConnector, MailMessage, MailMessageFull } from "../../types/index.js";
 
 const EWS_URL = "https://outlook.office365.com/EWS/Exchange.asmx";
 

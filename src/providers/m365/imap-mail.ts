@@ -1,6 +1,6 @@
 import { ImapFlow } from "imapflow";
 import { createTransport } from "nodemailer";
-import type { MailConnector, MailMessage, MailMessageFull } from "../types/index.js";
+import type { MailConnector, MailMessage, MailMessageFull } from "../../types/index.js";
 
 export class ImapMailConnector implements MailConnector {
   readonly tier = "imap";
