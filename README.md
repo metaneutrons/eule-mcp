@@ -2,8 +2,6 @@
   <img src="https://raw.githubusercontent.com/metaneutrons/eule-mcp/main/assets/logo.svg" alt="Eule" width="200">
 </p>
 
-<h1 align="center">🦉 Eule MCP</h1>
-
 <p align="center">
   <strong>MCP server for an office assistant — E-Mail/Calendar integration, GTD tasks & resource planning</strong>
 </p>
@@ -37,20 +35,21 @@ Eule is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) serve
 └──────────────────┬──────────────────────────┘
                    │ MCP Protocol
 ┌──────────────────▼──────────────────────────┐
-│              🦉 Eule MCP Server             │
+│            Eule MCP Server                  │
 │                                             │
-│  ┌─────────┐ ┌──────────┐ ┌─────────────┐  │
-│  │  Mail   │ │ Calendar │ │  GTD Tasks  │  │
-│  └────┬────┘ └────┬─────┘ └──────┬──────┘  │
+│  ┌─────────┐ ┌──────────┐ ┌─────────────┐   │
+│  │  Mail   │ │ Calendar │ │  GTD Tasks  │   │
+│  └────┬────┘ └────┬─────┘ └──────┬──────┘   │
 │       │           │              │          │
 │  ┌────▼───────────▼──────────────▼──────┐   │
-│  │         Provider Layer               │   │
-│  │  M365 (Graph/EWS/IMAP) · iCloud · …│   │
+│  │          Provider Layer              │   │
+│  │  M365 (Graph/EWS/IMAP) · iCloud · …. │   │
 │  └──────────────────────────────────────┘   │
 └─────────────────────────────────────────────┘
 ```
 
 **Key design decisions:**
+
 - **Multi-provider architecture** — M365 today, iCloud/Google/CalDAV tomorrow
 - **Tiered API access** — Graph API → EWS → IMAP/SMTP, auto-detected per tenant
 - **Headless re-authentication** — optional TOTP auto-auth via Playwright when tokens expire
@@ -58,6 +57,14 @@ Eule is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) serve
 - **LLM-optimized output** — HTML emails rendered as clean Markdown with thread splitting
 
 ## Tools
+
+### 🔐 Auth
+
+| Tool | Description |
+|---|---|
+| `auth_status` | Show authentication status and configuration |
+| `auth_login` | Authenticate or re-authenticate an M365 account |
+| `auth_probe` | Test which API tier works for an account |
 
 ### 📧 Mail
 
@@ -70,14 +77,6 @@ Eule is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) serve
 | `mail_reply` | Reply to an existing email |
 | `mail_attachment_list` | List attachments with ID, name, size, content type |
 | `mail_attachment_get` | Download attachment to disk, return file path |
-
-### 🔐 Auth
-
-| Tool | Description |
-|---|---|
-| `auth_status` | Show authentication status and configuration |
-| `auth_login` | Authenticate or re-authenticate an M365 account |
-| `auth_probe` | Test which API tier works for an account |
 
 ### 👤 Roles
 
@@ -153,11 +152,13 @@ roles:
 ### Register with your AI assistant
 
 **Kiro CLI:**
+
 ```bash
 kiro-cli mcp add --name eule --command node --args "/path/to/eule-mcp/dist/server/index.js"
 ```
 
 **Claude Desktop / Cursor** — add to your MCP config:
+
 ```json
 {
   "mcpServers": {
@@ -204,6 +205,7 @@ autoAuth:
 - [ ] Paperless-ngx connector
 - [ ] Apple ecosystem (iCloud Calendar, Reminders)
 - [ ] Auto-auth i18n resilience
+- [ ] IETF OAuth for Open Public Clients (`draft-ietf-mailmaint-oauth-public`) — provider-agnostic auth with dynamic client registration
 - [ ] Exchange on-premise support (Basic/NTLM auth, configurable EWS URL)
 - [ ] sqlite-vec for local semantic search
 
