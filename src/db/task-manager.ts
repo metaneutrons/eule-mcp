@@ -17,6 +17,7 @@ export interface Task {
   source_type: string | null;
   source_id: string | null;
   completed_at: string | null;
+  estimated_hours: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -33,6 +34,7 @@ export interface TaskInput {
   waiting_for?: string;
   source_type?: string;
   source_id?: string;
+  estimated_hours?: number;
 }
 
 export interface TaskUpdate {
@@ -45,6 +47,7 @@ export interface TaskUpdate {
   priority?: number;
   due_date?: string | null;
   waiting_for?: string | null;
+  estimated_hours?: number | null;
 }
 
 export interface Project {
@@ -62,8 +65,8 @@ export class TaskManager {
 
   add(input: TaskInput): Task {
     const stmt = this.dbm.db.prepare(`
-      INSERT INTO tasks (title, body, status, role_id, project_id, context, priority, due_date, waiting_for, source_type, source_id)
-      VALUES (@title, @body, @status, @role_id, @project_id, @context, @priority, @due_date, @waiting_for, @source_type, @source_id)
+      INSERT INTO tasks (title, body, status, role_id, project_id, context, priority, due_date, waiting_for, source_type, source_id, estimated_hours)
+      VALUES (@title, @body, @status, @role_id, @project_id, @context, @priority, @due_date, @waiting_for, @source_type, @source_id, @estimated_hours)
     `);
     const result = stmt.run({
       title: input.title,
@@ -77,6 +80,7 @@ export class TaskManager {
       waiting_for: input.waiting_for ?? null,
       source_type: input.source_type ?? null,
       source_id: input.source_id ?? null,
+      estimated_hours: input.estimated_hours ?? null,
     });
     const task = this.get(Number(result.lastInsertRowid));
     this.exportMarkdown();

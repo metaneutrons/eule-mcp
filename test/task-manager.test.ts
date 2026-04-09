@@ -9,7 +9,7 @@ function createTestDb(): DatabaseManager {
   db.pragma("foreign_keys = ON");
   db.exec(`
     CREATE TABLE projects (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, role_id TEXT NOT NULL, status TEXT DEFAULT 'active', description TEXT, created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now')));
-    CREATE TABLE tasks (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, body TEXT, status TEXT DEFAULT 'inbox', role_id TEXT, project_id INTEGER REFERENCES projects(id), context TEXT, priority INTEGER DEFAULT 0, due_date TEXT, waiting_for TEXT, source_type TEXT, source_id TEXT, completed_at TEXT, created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now')));
+    CREATE TABLE tasks (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, body TEXT, status TEXT DEFAULT 'inbox', role_id TEXT, project_id INTEGER REFERENCES projects(id), context TEXT, priority INTEGER DEFAULT 0, due_date TEXT, waiting_for TEXT, source_type TEXT, source_id TEXT, completed_at TEXT, estimated_hours REAL, created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now')));
     CREATE TABLE tags (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE);
     CREATE TABLE task_tags (task_id INTEGER REFERENCES tasks(id), tag_id INTEGER REFERENCES tags(id), PRIMARY KEY (task_id, tag_id));
     CREATE VIRTUAL TABLE tasks_fts USING fts5(title, body, content=tasks, content_rowid=id);

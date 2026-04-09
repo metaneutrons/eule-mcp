@@ -855,6 +855,7 @@ server.tool(
     waiting_for: z.string().optional().describe("Who/what are we waiting for"),
     source_type: z.string().optional().describe("Source type (e.g. email, meeting)"),
     source_id: z.string().optional().describe("Source ID (e.g. email message ID)"),
+    estimated_hours: z.number().optional().describe("Estimated hours to complete"),
   },
   async (input) => {
     const task = taskManager.add(input);
@@ -904,6 +905,7 @@ server.tool(
     priority: z.number().optional(),
     due_date: z.string().nullable().optional(),
     waiting_for: z.string().nullable().optional(),
+    estimated_hours: z.number().nullable().optional(),
   },
   async ({ id, ...updates }) => {
     try {

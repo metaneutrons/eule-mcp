@@ -100,6 +100,9 @@ const MIGRATIONS: string[] = [
   `ALTER TABLE tasks ADD COLUMN source_type TEXT;
    ALTER TABLE tasks ADD COLUMN source_id TEXT;
    ALTER TABLE tasks ADD COLUMN completed_at TEXT;`,
+
+  // Migration 8: estimated hours for capacity planning
+  `ALTER TABLE tasks ADD COLUMN estimated_hours REAL;`,
 ];
 
 export class DatabaseManager {
