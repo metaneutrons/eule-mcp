@@ -632,6 +632,8 @@ server.tool(
   },
 );
 
+import { BriefingService } from "../services/index.js";
+
 // --- Calendar tools ---
 
 server.tool(
@@ -867,6 +869,57 @@ server.tool(
       return { content: [{ type: "text" as const, text: "No tasks found." }] };
     const lines = tasks.map((t) => `[${t.status}] #${String(t.id)} ${t.title}`);
     return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+  },
+);
+
+// --- Briefing tool ---
+const briefingService = new BriefingService(registry, taskManager);
+
+server.tool(
+  "briefing_today",
+  "Generate a daily briefing: today's calendar, unread mail, active tasks",
+  {},
+  async () => {
+    const b = await briefingService.generate();
+
+    const sections: string[] = [];
+
+    // Calendar.
+    sections.push(`📅 **Schedule** (${String(b.calendar.length)} events)`);
+    if (b.calendar.length > 0) {
+      for (const e of b.calendar) {
+        const time = e.isAllDay ? "All day" : `${e.start.slice(11, 16)}–${e.end.slice(11, 16)}`;
+        const loc = e.location ? ` 📍 ${e.location}` : "";
+        sections.push(`  ${time}: ${e.subject}${loc}`);
+      }
+    }
+
+    // Mail.
+    sections.push("", `📧 **Unread Mail** (${String(b.unreadMail.length)})`);
+    for (const m of b.unreadMail.slice(0, 8)) {
+      sections.push(`  ${m.receivedAt.slice(11, 16)} ${m.from} — ${m.subject}`);
+    }
+    if (b.unreadMail.length > 8) sections.push(`  ...+${String(b.unreadMail.length - 8)} more`);
+
+    // Tasks.
+    if (b.inboxTasks.length > 0) {
+      sections.push("", `📥 **Inbox** (${String(b.inboxTasks.length)} unprocessed)`);
+      for (const t of b.inboxTasks) sections.push(`  #${String(t.id)} ${t.title}`);
+    }
+    if (b.nextTasks.length > 0) {
+      sections.push("", `⚡ **Next Actions** (${String(b.nextTasks.length)})`);
+      for (const t of b.nextTasks)
+        sections.push(`  #${String(t.id)} ${t.title}${t.context ? ` @${t.context}` : ""}`);
+    }
+    if (b.waitingTasks.length > 0) {
+      sections.push("", `⏳ **Waiting For** (${String(b.waitingTasks.length)})`);
+      for (const t of b.waitingTasks)
+        sections.push(`  #${String(t.id)} ${t.title}${t.waiting_for ? ` → ${t.waiting_for}` : ""}`);
+    }
+
+    sections.push("", `_Briefing saved to ~/.eule/knowledge/briefings/${b.date}.md_`);
+
+    return { content: [{ type: "text" as const, text: sections.join("\n") }] };
   },
 );
 
