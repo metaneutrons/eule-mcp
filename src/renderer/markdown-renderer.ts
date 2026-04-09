@@ -53,13 +53,25 @@ export interface ThreadMessage {
   body: string;
 }
 
+/** Unescape XML/HTML entities that may come from SOAP responses. */
+function unescapeHtml(s: string): string {
+  return s
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n as string, 10)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, n) => String.fromCharCode(parseInt(n as string, 16)));
+}
+
 /** Convert HTML email body to clean Markdown. */
 export function htmlToMarkdown(html: string): string {
-  // Strip common HTML noise before conversion.
-  let cleaned = html
+  // Unescape entities from XML wrapping, then strip noise.
+  let cleaned = unescapeHtml(html)
     .replace(/<head[\s\S]*?<\/head>/gi, "")
     .replace(/<!--[\s\S]*?-->/g, "")
-    .replace(/<o:p>[\s\S]*?<\/o:p>/gi, "") // Outlook XML
+    .replace(/<o:p>[\s\S]*?<\/o:p>/gi, "")
     .replace(/&nbsp;/g, " ");
 
   return turndown.turndown(cleaned).trim();

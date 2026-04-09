@@ -8,7 +8,9 @@ const parser = new XMLParser({
   attributeNamePrefix: "@_",
   removeNSPrefix: true,
   isArray: (name) => ["Message", "FileAttachment", "Mailbox"].includes(name),
-  processEntities: false,
+  processEntities: { enabled: true, maxTotalExpansions: 50000 },
+  htmlEntities: true,
+  numberParseOptions: { hex: false, leadingZeros: false, skipLike: /.*/ },
 });
 
 function soap(body: string): string {
