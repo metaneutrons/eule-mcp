@@ -1,9 +1,10 @@
-import type { MailConnector } from "../types/index.js";
+import type { MailConnector, CalendarConnector } from "../types/index.js";
 import type { ConfigManager } from "../config/index.js";
 import { loadTokens, getAccessToken } from "../providers/m365/index.js";
 import { GraphMailConnector } from "../providers/m365/graph-mail.js";
 import { EwsMailConnector } from "../providers/m365/ews-mail.js";
 import { ImapMailConnector } from "../providers/m365/imap-mail.js";
+import { EwsCalendarConnector } from "../providers/m365/ews-calendar.js";
 
 export class ConnectorRegistry {
   constructor(private readonly config: ConfigManager) {}
@@ -59,5 +60,28 @@ export class ConnectorRegistry {
       case "imap":
         return new ImapMailConnector(account, getToken);
     }
+  }
+
+  /** Get all calendar connectors, optionally filtered by role. */
+  getCalendarConnectors(role?: string): CalendarConnector[] {
+    const cfg = this.config.get();
+    const oauth = cfg.oauth;
+    const tokens = loadTokens();
+    const connectors: CalendarConnector[] = [];
+
+    const roles = role ? cfg.roles.filter((r) => r.id === role) : cfg.roles;
+
+    for (const r of roles) {
+      for (const cc of r.connectors.calendar ?? []) {
+        const token = tokens.accounts[cc.account];
+        if (!token) continue;
+        const getToken = () => getAccessToken(cc.account, oauth);
+        if (token.tier === "graph" || token.tier === "ews") {
+          connectors.push(new EwsCalendarConnector(cc.account, getToken));
+        }
+      }
+    }
+
+    return connectors;
   }
 }

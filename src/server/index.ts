@@ -7,7 +7,7 @@ import { DatabaseManager, TaskManager } from "../db/index.js";
 import { loadTokens, authenticateAccount, getAccessToken } from "../providers/m365/index.js";
 import { ConnectorRegistry } from "../connectors/index.js";
 import { renderMail } from "../renderer/index.js";
-import type { ApiTier, MailMessage } from "../types/index.js";
+import type { ApiTier, MailMessage, CalendarEvent } from "../types/index.js";
 
 const configManager = new ConfigManager();
 const registry = new ConnectorRegistry(configManager);
@@ -546,6 +546,94 @@ server.tool(
         isError: true,
       };
     }
+  },
+);
+
+// --- Calendar tools ---
+
+server.tool(
+  "calendar_list",
+  "List upcoming calendar events",
+  {
+    role: z.string().optional().describe("Filter by role ID"),
+    days: z.number().optional().describe("Number of days to look ahead (default: 7)"),
+  },
+  async ({ role, days }) => {
+    const connectors = registry.getCalendarConnectors(role);
+    if (connectors.length === 0)
+      return { content: [{ type: "text" as const, text: "No calendar connectors configured." }] };
+
+    const now = new Date();
+    const end = new Date(now);
+    end.setDate(end.getDate() + (days ?? 7));
+
+    const allEvents: CalendarEvent[] = [];
+    for (const c of connectors) {
+      const events = await c.listEvents(now.toISOString(), end.toISOString());
+      allEvents.push(...events);
+    }
+
+    allEvents.sort((a, b) => a.start.localeCompare(b.start));
+
+    if (allEvents.length === 0)
+      return { content: [{ type: "text" as const, text: "No events found." }] };
+
+    const lines = allEvents.map((e) => {
+      const start = e.start.slice(0, 16).replace("T", " ");
+      const end = e.end.slice(11, 16);
+      const loc = e.location ? ` 📍 ${e.location}` : "";
+      const att = e.attendees.length > 0 ? ` 👥 ${String(e.attendees.length)}` : "";
+      return e.isAllDay
+        ? `${e.start.slice(0, 10)} (all day) | ${e.subject}${loc}`
+        : `${start}–${end} | ${e.subject}${loc}${att}`;
+    });
+
+    return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+  },
+);
+
+server.tool(
+  "calendar_today",
+  "Show today's schedule",
+  {
+    role: z.string().optional().describe("Filter by role ID"),
+  },
+  async ({ role }) => {
+    const connectors = registry.getCalendarConnectors(role);
+    if (connectors.length === 0)
+      return { content: [{ type: "text" as const, text: "No calendar connectors configured." }] };
+
+    const now = new Date();
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).toISOString();
+
+    const allEvents: CalendarEvent[] = [];
+    for (const c of connectors) {
+      const events = await c.listEvents(start, end);
+      allEvents.push(...events);
+    }
+
+    allEvents.sort((a, b) => a.start.localeCompare(b.start));
+
+    if (allEvents.length === 0)
+      return { content: [{ type: "text" as const, text: "📅 No events today." }] };
+
+    const lines = allEvents.map((e) => {
+      const s = e.start.slice(11, 16);
+      const en = e.end.slice(11, 16);
+      const loc = e.location ? ` 📍 ${e.location}` : "";
+      const att = e.attendees.length > 0 ? ` (${e.attendees.join(", ")})` : "";
+      return e.isAllDay ? `🔵 All day: ${e.subject}${loc}` : `${s}–${en} ${e.subject}${loc}${att}`;
+    });
+
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: `📅 Today (${String(allEvents.length)} events):\n\n${lines.join("\n")}`,
+        },
+      ],
+    };
   },
 );
 
