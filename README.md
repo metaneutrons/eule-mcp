@@ -203,7 +203,10 @@ autoAuth:
 - [ ] Idea & note capture
 - [ ] Resource planning & capacity tracking
 - [ ] Paperless-ngx connector
-- [ ] Apple ecosystem (iCloud Calendar, Reminders)
+- [ ] iCloud provider (CalDAV calendar, CalDAV reminders, CardDAV contacts, IMAP mail)
+- [ ] Apple Notes (macOS-only, AppleScript/SQLite)
+- [ ] Messengers — Signal (`signal-cli`), iMessage (macOS), WhatsApp (Business API), Telegram
+- [ ] Google Workspace (Gmail API, Google Calendar API)
 - [ ] Auto-auth i18n resilience
 - [ ] IETF OAuth for Open Public Clients (`draft-ietf-mailmaint-oauth-public`) — provider-agnostic auth with dynamic client registration
 - [ ] Exchange on-premise support (Basic/NTLM auth, configurable EWS URL)

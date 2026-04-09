@@ -357,9 +357,14 @@ Context gathering for upcoming meetings.
 - **IETF OAuth for Open Public Clients** — implement `draft-ietf-mailmaint-oauth-public` for provider-agnostic OAuth with dynamic client registration (IMAP/CalDAV/CardDAV), replacing hardcoded client_ids
 - **Exchange on-premise** — auth-agnostic EWS connector with Basic/NTLM auth providers, configurable EWS URL
 - **Paperless-ngx** connector
-- **Apple ecosystem**: iMessage, Apple Notes, Apple Reminders/Todos
-- **Messaging**: WhatsApp, Signal (generic chat connector interface)
-- **Other connectors**: CalDAV, iCloud Calendar, Google Workspace
+- **iCloud provider** — app-specific password auth, CalDAV calendar, CalDAV reminders (VTODO), IMAP mail (reuse existing connector), CardDAV contacts
+- **Apple Notes** — macOS-only via AppleScript or direct SQLite (`NoteStore.sqlite`), read/search/create
+- **Messengers** — generic `ChatConnector` interface with `chat_list`, `chat_read`, `chat_send` tools
+  - **Signal** via `signal-cli` bridge (most viable, open protocol)
+  - **iMessage** — macOS-only via `chat.db` SQLite (read-only) + AppleScript (send)
+  - **WhatsApp** — WhatsApp Business API or community bridges (legal/ToS constraints)
+  - **Telegram** — Bot API or TDLib
+- **Google Workspace** — OAuth2 with registered client, Gmail API, Google Calendar API
 - **sqlite-vec** for local vector/semantic search within SQLite
 - **Weekly review wizard** (guided GTD review)
 - **Recurring tasks**
