@@ -1,8 +1,9 @@
+/* eslint-disable @typescript-eslint/require-await, @typescript-eslint/no-deprecated */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { ConfigManager } from "../config/index.js";
-import { DatabaseManager } from "../db/index.js";
+import { DatabaseManager, TaskManager } from "../db/index.js";
 import { loadTokens, authenticateAccount, getAccessToken } from "../providers/m365/index.js";
 import { ConnectorRegistry } from "../connectors/index.js";
 import { renderMail } from "../renderer/index.js";
@@ -122,7 +123,7 @@ server.tool(
 
     // Test the current tier.
     const tier = tokenData.tier;
-    let testResult = "unknown";
+    let testResult = "unknown"; // eslint-disable-line no-useless-assignment
 
     if (tier === "graph") {
       try {
@@ -187,7 +188,10 @@ server.tool(
     if (config.roles.length === 0) {
       return {
         content: [
-          { type: "text" as const, text: "No roles configured. Edit ~/.eule/config.yaml or use role_add." },
+          {
+            type: "text" as const,
+            text: "No roles configured. Edit ~/.eule/config.yaml or use role_add.",
+          },
         ],
       };
     }
@@ -231,7 +235,11 @@ server.tool(
   async ({ role, limit }) => {
     const connectors = registry.getMailConnectors(role);
     if (connectors.length === 0) {
-      return { content: [{ type: "text" as const, text: "No mail connectors available. Run auth_login first." }] };
+      return {
+        content: [
+          { type: "text" as const, text: "No mail connectors available. Run auth_login first." },
+        ],
+      };
     }
 
     const allMessages: MailMessage[] = [];
@@ -241,19 +249,28 @@ server.tool(
         allMessages.push(...msgs);
       } catch (err) {
         allMessages.push({
-          id: "error", account: c.account, subject: `Error: ${err instanceof Error ? err.message : String(err)}`,
-          from: "", to: [], receivedAt: "", snippet: "", isRead: false,
+          id: "error",
+          account: c.account,
+          subject: `Error: ${err instanceof Error ? err.message : String(err)}`,
+          from: "",
+          to: [],
+          receivedAt: "",
+          snippet: "",
+          isRead: false,
         });
       }
     }
 
     allMessages.sort((a, b) => b.receivedAt.localeCompare(a.receivedAt));
 
-    const lines = allMessages.map((m) =>
-      `[${m.account}] ${m.isRead ? " " : "●"} ${m.receivedAt.slice(0, 16)} | ${m.from} | ${m.subject}${m.snippet ? `\n  ${m.snippet.slice(0, 100)}${m.snippet.length > 100 ? "..." : ""}` : ""}\n  ID: ${m.id}`,
+    const lines = allMessages.map(
+      (m) =>
+        `[${m.account}] ${m.isRead ? " " : "●"} ${m.receivedAt.slice(0, 16)} | ${m.from} | ${m.subject}${m.snippet ? `\n  ${m.snippet.slice(0, 100)}${m.snippet.length > 100 ? "..." : ""}` : ""}\n  ID: ${m.id}`,
     );
 
-    return { content: [{ type: "text" as const, text: lines.join("\n\n") || "No messages found." }] };
+    return {
+      content: [{ type: "text" as const, text: lines.join("\n\n") || "No messages found." }],
+    };
   },
 );
 
@@ -264,14 +281,23 @@ server.tool(
   {
     id: z.string().describe("Message ID"),
     account: z.string().describe("Account email address"),
-    depth: z.number().optional().describe("Thread depth: 1=latest reply (default), 0=full thread, N=last N replies"),
+    depth: z
+      .number()
+      .optional()
+      .describe("Thread depth: 1=latest reply (default), 0=full thread, N=last N replies"),
     maxLength: z.number().optional().describe("Max chars (default 4000). 0=unlimited"),
-    format: z.enum(["markdown", "raw", "plain"]).optional().describe("Output format (default: markdown)"),
+    format: z
+      .enum(["markdown", "raw", "plain"])
+      .optional()
+      .describe("Output format (default: markdown)"),
   },
   async ({ id, account, depth, maxLength, format }) => {
     const connector = registry.getMailConnectorForAccount(account);
     if (!connector) {
-      return { content: [{ type: "text" as const, text: `No connector for ${account}` }], isError: true };
+      return {
+        content: [{ type: "text" as const, text: `No connector for ${account}` }],
+        isError: true,
+      };
     }
     try {
       const msg = await connector.getMessage(id);
@@ -283,7 +309,9 @@ server.tool(
         msg.attachments.length > 0
           ? `Attachments: ${msg.attachments.map((a) => `${a.name} (${String(Math.round(a.size / 1024))}KB, ${a.contentType})`).join(", ")}`
           : "",
-      ].filter(Boolean).join("\n");
+      ]
+        .filter(Boolean)
+        .join("\n");
 
       const body = renderMail({
         body: msg.body,
@@ -295,7 +323,15 @@ server.tool(
 
       return { content: [{ type: "text" as const, text: `${header}\n\n${body}` }] };
     } catch (err) {
-      return { content: [{ type: "text" as const, text: `Error: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Error: ${err instanceof Error ? err.message : String(err)}`,
+          },
+        ],
+        isError: true,
+      };
     }
   },
 );
@@ -318,18 +354,25 @@ server.tool(
     const results: MailMessage[] = [];
     for (const c of connectors) {
       try {
-        results.push(...await c.searchMessages(query, limit ?? 10));
+        results.push(...(await c.searchMessages(query, limit ?? 10)));
       } catch (err) {
         results.push({
-          id: "error", account: c.account, subject: `Search error: ${err instanceof Error ? err.message : String(err)}`,
-          from: "", to: [], receivedAt: "", snippet: "", isRead: false,
+          id: "error",
+          account: c.account,
+          subject: `Search error: ${err instanceof Error ? err.message : String(err)}`,
+          from: "",
+          to: [],
+          receivedAt: "",
+          snippet: "",
+          isRead: false,
         });
       }
     }
 
     results.sort((a, b) => b.receivedAt.localeCompare(a.receivedAt));
-    const lines = results.map((m) =>
-      `[${m.account}] ${m.receivedAt.slice(0, 16)} | ${m.from} | ${m.subject}\n  ID: ${m.id}`,
+    const lines = results.map(
+      (m) =>
+        `[${m.account}] ${m.receivedAt.slice(0, 16)} | ${m.from} | ${m.subject}\n  ID: ${m.id}`,
     );
 
     return { content: [{ type: "text" as const, text: lines.join("\n\n") || "No results." }] };
@@ -350,14 +393,27 @@ server.tool(
     const connectors = registry.getMailConnectors(role);
     const connector = connectors[0];
     if (!connector) {
-      return { content: [{ type: "text" as const, text: "No mail connector available for sending." }], isError: true };
+      return {
+        content: [{ type: "text" as const, text: "No mail connector available for sending." }],
+        isError: true,
+      };
     }
     try {
       const recipients = to.split(",").map((s) => s.trim());
       await connector.sendMessage(recipients, subject, body);
-      return { content: [{ type: "text" as const, text: `✅ Sent from ${connector.account} to ${to}` }] };
+      return {
+        content: [{ type: "text" as const, text: `✅ Sent from ${connector.account} to ${to}` }],
+      };
     } catch (err) {
-      return { content: [{ type: "text" as const, text: `❌ Send failed: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `❌ Send failed: ${err instanceof Error ? err.message : String(err)}`,
+          },
+        ],
+        isError: true,
+      };
     }
   },
 );
@@ -374,13 +430,24 @@ server.tool(
   async ({ id, account, body }) => {
     const connector = registry.getMailConnectorForAccount(account);
     if (!connector) {
-      return { content: [{ type: "text" as const, text: `No connector for ${account}` }], isError: true };
+      return {
+        content: [{ type: "text" as const, text: `No connector for ${account}` }],
+        isError: true,
+      };
     }
     try {
       await connector.replyToMessage(id, body);
       return { content: [{ type: "text" as const, text: `✅ Reply sent from ${account}` }] };
     } catch (err) {
-      return { content: [{ type: "text" as const, text: `❌ Reply failed: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `❌ Reply failed: ${err instanceof Error ? err.message : String(err)}`,
+          },
+        ],
+        isError: true,
+      };
     }
   },
 );
@@ -396,19 +463,31 @@ server.tool(
   async ({ id, account }) => {
     const connector = registry.getMailConnectorForAccount(account);
     if (!connector) {
-      return { content: [{ type: "text" as const, text: `No connector for ${account}` }], isError: true };
+      return {
+        content: [{ type: "text" as const, text: `No connector for ${account}` }],
+        isError: true,
+      };
     }
     try {
       const msg = await connector.getMessage(id);
       if (msg.attachments.length === 0) {
         return { content: [{ type: "text" as const, text: "No attachments." }] };
       }
-      const lines = msg.attachments.map((a) =>
-        `- ${a.name} (${String(Math.round(a.size / 1024))}KB, ${a.contentType})\n  ID: ${a.id}`,
+      const lines = msg.attachments.map(
+        (a) =>
+          `- ${a.name} (${String(Math.round(a.size / 1024))}KB, ${a.contentType})\n  ID: ${a.id}`,
       );
       return { content: [{ type: "text" as const, text: lines.join("\n") }] };
     } catch (err) {
-      return { content: [{ type: "text" as const, text: `Error: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Error: ${err instanceof Error ? err.message : String(err)}`,
+          },
+        ],
+        isError: true,
+      };
     }
   },
 );
@@ -427,7 +506,10 @@ server.tool(
   async ({ messageId, attachmentId, account, name, path: customPath }) => {
     const connector = registry.getMailConnectorForAccount(account);
     if (!connector) {
-      return { content: [{ type: "text" as const, text: `No connector for ${account}` }], isError: true };
+      return {
+        content: [{ type: "text" as const, text: `No connector for ${account}` }],
+        isError: true,
+      };
     }
     try {
       const data = await connector.downloadAttachment(messageId, attachmentId);
@@ -445,10 +527,175 @@ server.tool(
       }
 
       writeFileSync(savePath, data);
-      return { content: [{ type: "text" as const, text: `✅ Saved: ${savePath} (${String(Math.round(data.length / 1024))}KB)` }] };
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `✅ Saved: ${savePath} (${String(Math.round(data.length / 1024))}KB)`,
+          },
+        ],
+      };
     } catch (err) {
-      return { content: [{ type: "text" as const, text: `Error: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Error: ${err instanceof Error ? err.message : String(err)}`,
+          },
+        ],
+        isError: true,
+      };
     }
+  },
+);
+
+// --- Task tools ---
+const taskManager = new TaskManager(dbManager);
+
+server.tool("task_inbox", "Show unprocessed inbox tasks", {}, async () => {
+  const tasks = taskManager.inbox();
+  if (tasks.length === 0)
+    return { content: [{ type: "text" as const, text: "Inbox is empty ✨" }] };
+  const lines = tasks.map(
+    (t) =>
+      `#${String(t.id)} ${t.title}${t.due_date ? ` 📅 ${t.due_date}` : ""}${t.body ? `\n  ${t.body.split("\n")[0] ?? ""}` : ""}`,
+  );
+  return {
+    content: [
+      { type: "text" as const, text: `📥 Inbox (${String(tasks.length)}):\n\n${lines.join("\n")}` },
+    ],
+  };
+});
+
+server.tool(
+  "task_add",
+  "Add a new task (defaults to inbox)",
+  {
+    title: z.string().describe("Task title"),
+    body: z.string().optional().describe("Task details/notes"),
+    status: z
+      .enum(["inbox", "next", "waiting", "someday"])
+      .optional()
+      .describe("GTD status (default: inbox)"),
+    role_id: z.string().optional().describe("Role ID"),
+    project_id: z.number().optional().describe("Project ID"),
+    context: z.string().optional().describe("GTD context (e.g. @computer, @phone, @office)"),
+    priority: z.number().optional().describe("Priority (0=normal, higher=more urgent)"),
+    due_date: z.string().optional().describe("Due date (YYYY-MM-DD)"),
+    waiting_for: z.string().optional().describe("Who/what are we waiting for"),
+    source_type: z.string().optional().describe("Source type (e.g. email, meeting)"),
+    source_id: z.string().optional().describe("Source ID (e.g. email message ID)"),
+  },
+  async (input) => {
+    const task = taskManager.add(input);
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: `✅ Task #${String(task.id)} added: ${task.title} [${task.status}]`,
+        },
+      ],
+    };
+  },
+);
+
+server.tool(
+  "task_list",
+  "List active tasks, optionally filtered",
+  {
+    status: z.enum(["inbox", "next", "waiting", "someday"]).optional().describe("Filter by status"),
+    project_id: z.number().optional().describe("Filter by project ID"),
+    context: z.string().optional().describe("Filter by context"),
+    role_id: z.string().optional().describe("Filter by role"),
+  },
+  async (opts) => {
+    const tasks = taskManager.list(opts);
+    if (tasks.length === 0)
+      return { content: [{ type: "text" as const, text: "No tasks found." }] };
+    const lines = tasks.map(
+      (t) =>
+        `[${t.status}] #${String(t.id)} ${t.title}${t.due_date ? ` 📅 ${t.due_date}` : ""}${t.waiting_for ? ` ⏳ ${t.waiting_for}` : ""}${t.context ? ` @${t.context}` : ""}`,
+    );
+    return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+  },
+);
+
+server.tool(
+  "task_update",
+  "Update a task's properties",
+  {
+    id: z.number().describe("Task ID"),
+    title: z.string().optional(),
+    body: z.string().optional(),
+    status: z.enum(["inbox", "next", "waiting", "someday"]).optional(),
+    role_id: z.string().optional(),
+    project_id: z.number().nullable().optional(),
+    context: z.string().optional(),
+    priority: z.number().optional(),
+    due_date: z.string().nullable().optional(),
+    waiting_for: z.string().nullable().optional(),
+  },
+  async ({ id, ...updates }) => {
+    try {
+      const task = taskManager.update(id, updates);
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `✅ Task #${String(task.id)} updated: ${task.title} [${task.status}]`,
+          },
+        ],
+      };
+    } catch (err) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Error: ${err instanceof Error ? err.message : String(err)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
+  "task_complete",
+  "Mark a task as done",
+  { id: z.number().describe("Task ID") },
+  async ({ id }) => {
+    try {
+      const task = taskManager.complete(id);
+      return {
+        content: [
+          { type: "text" as const, text: `✅ Task #${String(task.id)} completed: ${task.title}` },
+        ],
+      };
+    } catch (err) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Error: ${err instanceof Error ? err.message : String(err)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
+  "task_search",
+  "Full-text search across tasks",
+  { query: z.string().describe("Search query") },
+  async ({ query }) => {
+    const tasks = taskManager.search(query);
+    if (tasks.length === 0)
+      return { content: [{ type: "text" as const, text: "No tasks found." }] };
+    const lines = tasks.map((t) => `[${t.status}] #${String(t.id)} ${t.title}`);
+    return { content: [{ type: "text" as const, text: lines.join("\n") }] };
   },
 );
 

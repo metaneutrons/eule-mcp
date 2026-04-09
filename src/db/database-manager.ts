@@ -95,6 +95,11 @@ const MIGRATIONS: string[] = [
   `CREATE VIRTUAL TABLE IF NOT EXISTS tasks_fts USING fts5(title, body, content=tasks, content_rowid=id);
    CREATE VIRTUAL TABLE IF NOT EXISTS ideas_fts USING fts5(content, content=ideas, content_rowid=id);
    CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(title, body, content=notes, content_rowid=id);`,
+
+  // Migration 7: task source tracking and completion timestamp
+  `ALTER TABLE tasks ADD COLUMN source_type TEXT;
+   ALTER TABLE tasks ADD COLUMN source_id TEXT;
+   ALTER TABLE tasks ADD COLUMN completed_at TEXT;`,
 ];
 
 export class DatabaseManager {
@@ -109,9 +114,7 @@ export class DatabaseManager {
 
   /** Runs pending migrations. */
   private migrate(): void {
-    this.db.exec(
-      "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)",
-    );
+    this.db.exec("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)");
 
     const row = this.db.prepare("SELECT MAX(version) as v FROM schema_version").get() as
       | { v: number | null }
