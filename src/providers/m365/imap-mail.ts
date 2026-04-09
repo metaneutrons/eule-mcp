@@ -31,7 +31,7 @@ export class ImapMailConnector implements MailConnector {
       try {
         const messages: MailMessage[] = [];
         const mailbox = client.mailbox;
-        const total = mailbox && typeof mailbox === "object" ? (mailbox.exists ?? 0) : 0;
+        const total = mailbox && typeof mailbox === "object" ? (mailbox.exists) : 0;
         const from = Math.max(1, total - limit + 1);
 
         for await (const raw of client.fetch(`${String(from)}:*`, {
@@ -39,7 +39,16 @@ export class ImapMailConnector implements MailConnector {
           flags: true,
           bodyStructure: true,
         })) {
-          const msg = raw as { uid: number; envelope?: { subject?: string; date?: Date; from?: { address?: string }[]; to?: { address?: string }[] }; flags?: Set<string> };
+          const msg = raw as {
+            uid: number;
+            envelope?: {
+              subject?: string;
+              date?: Date;
+              from?: { address?: string }[];
+              to?: { address?: string }[];
+            };
+            flags?: Set<string>;
+          };
           messages.push({
             id: String(msg.uid),
             account: this.account,
@@ -66,14 +75,28 @@ export class ImapMailConnector implements MailConnector {
     try {
       const lock = await client.getMailboxLock("INBOX");
       try {
-        const raw = await client.fetchOne(id, {
-          envelope: true,
-          flags: true,
-          bodyStructure: true,
-          source: true,
-        }, { uid: true });
+        const raw = await client.fetchOne(
+          id,
+          {
+            envelope: true,
+            flags: true,
+            bodyStructure: true,
+            source: true,
+          },
+          { uid: true },
+        );
 
-        const msg = raw as { uid: number; source?: Buffer; envelope?: { subject?: string; date?: Date; from?: { address?: string }[]; to?: { address?: string }[] }; flags?: Set<string> };
+        const msg = raw as {
+          uid: number;
+          source?: Buffer;
+          envelope?: {
+            subject?: string;
+            date?: Date;
+            from?: { address?: string }[];
+            to?: { address?: string }[];
+          };
+          flags?: Set<string>;
+        };
         const body = msg.source?.toString() ?? "";
         const bodyStart = body.indexOf("\r\n\r\n");
         const textBody = bodyStart >= 0 ? body.slice(bodyStart + 4) : "";
@@ -99,8 +122,23 @@ export class ImapMailConnector implements MailConnector {
     }
   }
 
-  async downloadAttachment(_messageId: string, _attachmentId: string): Promise<Buffer> {
-    throw new Error("IMAP attachment download not yet implemented");
+  async downloadAttachment(messageId: string, attachmentId: string): Promise<Buffer> {
+    const client = await this.connect();
+    try {
+      const lock = await client.getMailboxLock("INBOX");
+      try {
+        const part = await client.download(messageId, attachmentId, { uid: true });
+        const chunks: Buffer[] = [];
+        for await (const chunk of part.content) {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array));
+        }
+        return Buffer.concat(chunks);
+      } finally {
+        lock.release();
+      }
+    } finally {
+      await client.logout();
+    }
   }
 
   async searchMessages(query: string, limit = 10): Promise<MailMessage[]> {
@@ -109,11 +147,20 @@ export class ImapMailConnector implements MailConnector {
       const lock = await client.getMailboxLock("INBOX");
       try {
         const results: MailMessage[] = [];
-        for await (const raw of client.fetch(
-          { text: query } as unknown as string,
-          { envelope: true, flags: true },
-        )) {
-          const msg = raw as { uid: number; envelope?: { subject?: string; date?: Date; from?: { address?: string }[]; to?: { address?: string }[] }; flags?: Set<string> };
+        for await (const raw of client.fetch({ text: query } as unknown as string, {
+          envelope: true,
+          flags: true,
+        })) {
+          const msg = raw as {
+            uid: number;
+            envelope?: {
+              subject?: string;
+              date?: Date;
+              from?: { address?: string }[];
+              to?: { address?: string }[];
+            };
+            flags?: Set<string>;
+          };
           results.push({
             id: String(msg.uid),
             account: this.account,
