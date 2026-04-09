@@ -5,6 +5,7 @@ import { ConfigManager } from "../config/index.js";
 import { DatabaseManager } from "../db/index.js";
 import { loadTokens, authenticateAccount, getAccessToken } from "../providers/m365/index.js";
 import { ConnectorRegistry } from "../connectors/index.js";
+import { renderMail } from "../renderer/index.js";
 import type { ApiTier, MailMessage } from "../types/index.js";
 
 const configManager = new ConfigManager();
@@ -259,27 +260,40 @@ server.tool(
 // --- mail_read tool ---
 server.tool(
   "mail_read",
-  "Read a specific email by ID",
+  "Read a specific email by ID. Returns clean Markdown by default (latest reply only). Use depth=0 for full thread, format=raw for original HTML.",
   {
     id: z.string().describe("Message ID"),
     account: z.string().describe("Account email address"),
+    depth: z.number().optional().describe("Thread depth: 1=latest reply (default), 0=full thread, N=last N replies"),
+    maxLength: z.number().optional().describe("Max chars (default 4000). 0=unlimited"),
+    format: z.enum(["markdown", "raw", "plain"]).optional().describe("Output format (default: markdown)"),
   },
-  async ({ id, account }) => {
+  async ({ id, account, depth, maxLength, format }) => {
     const connector = registry.getMailConnectorForAccount(account);
     if (!connector) {
       return { content: [{ type: "text" as const, text: `No connector for ${account}` }], isError: true };
     }
     try {
       const msg = await connector.getMessage(id);
-      const text = [
+      const header = [
         `From: ${msg.from}`,
         `To: ${msg.to.join(", ")}`,
         `Subject: ${msg.subject}`,
         `Date: ${msg.receivedAt}`,
-        msg.attachments.length > 0 ? `Attachments: ${msg.attachments.map((a) => `${a.name} (${String(a.size)}B)`).join(", ")}` : "",
-        `\n${msg.body}`,
+        msg.attachments.length > 0
+          ? `Attachments: ${msg.attachments.map((a) => `${a.name} (${String(Math.round(a.size / 1024))}KB, ${a.contentType})`).join(", ")}`
+          : "",
       ].filter(Boolean).join("\n");
-      return { content: [{ type: "text" as const, text }] };
+
+      const body = renderMail({
+        body: msg.body,
+        bodyType: msg.bodyType,
+        depth: depth ?? 1,
+        maxLength: maxLength ?? 4000,
+        format: format ?? "markdown",
+      });
+
+      return { content: [{ type: "text" as const, text: `${header}\n\n${body}` }] };
     } catch (err) {
       return { content: [{ type: "text" as const, text: `Error: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
     }
@@ -367,6 +381,73 @@ server.tool(
       return { content: [{ type: "text" as const, text: `✅ Reply sent from ${account}` }] };
     } catch (err) {
       return { content: [{ type: "text" as const, text: `❌ Reply failed: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
+    }
+  },
+);
+
+// --- mail_attachment_list tool ---
+server.tool(
+  "mail_attachment_list",
+  "List attachments of an email",
+  {
+    id: z.string().describe("Message ID"),
+    account: z.string().describe("Account email address"),
+  },
+  async ({ id, account }) => {
+    const connector = registry.getMailConnectorForAccount(account);
+    if (!connector) {
+      return { content: [{ type: "text" as const, text: `No connector for ${account}` }], isError: true };
+    }
+    try {
+      const msg = await connector.getMessage(id);
+      if (msg.attachments.length === 0) {
+        return { content: [{ type: "text" as const, text: "No attachments." }] };
+      }
+      const lines = msg.attachments.map((a) =>
+        `- ${a.name} (${String(Math.round(a.size / 1024))}KB, ${a.contentType})\n  ID: ${a.id}`,
+      );
+      return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+    } catch (err) {
+      return { content: [{ type: "text" as const, text: `Error: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
+    }
+  },
+);
+
+// --- mail_attachment_get tool ---
+server.tool(
+  "mail_attachment_get",
+  "Download an email attachment to disk and return the file path",
+  {
+    messageId: z.string().describe("Message ID"),
+    attachmentId: z.string().describe("Attachment ID (from mail_attachment_list)"),
+    account: z.string().describe("Account email address"),
+    name: z.string().describe("Filename for saving"),
+    path: z.string().optional().describe("Custom save path (default: ~/.eule/attachments/)"),
+  },
+  async ({ messageId, attachmentId, account, name, path: customPath }) => {
+    const connector = registry.getMailConnectorForAccount(account);
+    if (!connector) {
+      return { content: [{ type: "text" as const, text: `No connector for ${account}` }], isError: true };
+    }
+    try {
+      const data = await connector.downloadAttachment(messageId, attachmentId);
+      const { join } = await import("node:path");
+      const { homedir } = await import("node:os");
+      const { mkdirSync, writeFileSync } = await import("node:fs");
+
+      let savePath: string;
+      if (customPath) {
+        savePath = customPath;
+      } else {
+        const dir = join(homedir(), ".eule", "attachments", messageId.slice(0, 32));
+        mkdirSync(dir, { recursive: true });
+        savePath = join(dir, name);
+      }
+
+      writeFileSync(savePath, data);
+      return { content: [{ type: "text" as const, text: `✅ Saved: ${savePath} (${String(Math.round(data.length / 1024))}KB)` }] };
+    } catch (err) {
+      return { content: [{ type: "text" as const, text: `Error: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
     }
   },
 );

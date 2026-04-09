@@ -13,6 +13,7 @@ export type {
 export type {
   MailMessage,
   MailMessageFull,
+  MailAttachment,
   CalendarEvent,
   CalendarEventInput,
   MailConnector,

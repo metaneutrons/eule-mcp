@@ -2,6 +2,14 @@ import type { MailConnector, MailMessage, MailMessageFull } from "../../types/in
 
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
 
+interface GraphAttachment {
+  id?: string;
+  name?: string;
+  size?: number;
+  contentType?: string;
+  contentBytes?: string;
+}
+
 interface GraphMessage {
   id: string;
   subject: string;
@@ -11,7 +19,7 @@ interface GraphMessage {
   bodyPreview?: string;
   isRead?: boolean;
   body?: { contentType?: string; content?: string };
-  attachments?: { name?: string; size?: number }[];
+  attachments?: GraphAttachment[];
 }
 
 export class GraphMailConnector implements MailConnector {
@@ -52,8 +60,21 @@ export class GraphMailConnector implements MailConnector {
       ...this.mapMessage(m),
       body: m.body?.content ?? "",
       bodyType: m.body?.contentType === "html" ? "html" : "text",
-      attachments: (m.attachments ?? []).map((a) => ({ name: a.name ?? "", size: a.size ?? 0 })),
+      attachments: (m.attachments ?? []).map((a) => ({
+        id: a.id ?? "",
+        name: a.name ?? "",
+        size: a.size ?? 0,
+        contentType: a.contentType ?? "application/octet-stream",
+      })),
     };
+  }
+
+  async downloadAttachment(messageId: string, attachmentId: string): Promise<Buffer> {
+    const h = await this.headers();
+    const url = `${this.base}/messages/${messageId}/attachments/${attachmentId}/$value`;
+    const res = await fetch(url, { headers: h });
+    if (!res.ok) throw new Error(`Graph downloadAttachment: ${String(res.status)} ${await res.text()}`);
+    return Buffer.from(await res.arrayBuffer());
   }
 
   async searchMessages(query: string, limit = 10): Promise<MailMessage[]> {

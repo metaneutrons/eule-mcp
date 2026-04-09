@@ -1,4 +1,4 @@
-import type { MailConnector, MailMessage, MailMessageFull } from "../../types/index.js";
+import type { MailConnector, MailMessage, MailMessageFull, MailAttachment } from "../../types/index.js";
 
 const EWS_URL = "https://outlook.office365.com/EWS/Exchange.asmx";
 
@@ -89,7 +89,7 @@ export class EwsMailConnector implements MailConnector {
     <m:GetItem>
       <m:ItemShape>
         <t:BaseShape>Default</t:BaseShape>
-        <t:BodyType>Text</t:BodyType>
+        <t:BodyType>HTML</t:BodyType>
         <t:AdditionalProperties>
           <t:FieldURI FieldURI="item:Body"/>
           <t:FieldURI FieldURI="item:Attachments"/>
@@ -108,19 +108,31 @@ export class EwsMailConnector implements MailConnector {
     const msgs = this.parseMessages(xml);
     const msg = msgs[0] ?? { id, account: this.account, subject: "", from: "", to: [], receivedAt: "", snippet: "", isRead: false };
     const body = tag(xml, "Body");
-    const bodyType = attr(xml, "Body", "BodyType") === "HTML" ? "html" as const : "text" as const;
-    const attachmentNames = tags(xml, "Name");
-    const attachmentSizes = tags(xml, "Size");
+    const bodyType = attr(xml, "Body", "BodyType") === "Text" ? "text" as const : "html" as const;
 
-    return {
-      ...msg,
-      body,
-      bodyType,
-      attachments: attachmentNames.map((name, i) => ({
-        name,
-        size: parseInt(attachmentSizes[i] ?? "0", 10),
-      })),
-    };
+    // Parse attachments with IDs.
+    const attachmentBlocks = tags(xml, "FileAttachment");
+    const attachments: MailAttachment[] = attachmentBlocks.map((block) => ({
+      id: tag(block, "AttachmentId") || attr(block, "AttachmentId", "Id"),
+      name: tag(block, "Name"),
+      size: parseInt(tag(block, "Size") || "0", 10),
+      contentType: tag(block, "ContentType") || "application/octet-stream",
+    }));
+
+    return { ...msg, body, bodyType, attachments };
+  }
+
+  async downloadAttachment(messageId: string, attachmentId: string): Promise<Buffer> {
+    void messageId; // EWS uses attachment ID directly.
+    const xml = await this.post(`
+    <m:GetAttachment>
+      <m:AttachmentIds>
+        <t:AttachmentId Id="${attachmentId}"/>
+      </m:AttachmentIds>
+    </m:GetAttachment>`);
+
+    const content = tag(xml, "Content");
+    return Buffer.from(content, "base64");
   }
 
   async searchMessages(query: string, limit = 10): Promise<MailMessage[]> {

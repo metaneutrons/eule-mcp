@@ -59,6 +59,7 @@
     "nodemailer": "^8.0.5",
     "open": "^11.0.0",
     "otpauth": "^9.5.0",
+    "turndown": "^7.2.4",
     "zod": "^4.3.6"
   },
   "devDependencies": {
@@ -69,6 +70,7 @@
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^25.5.2",
     "@types/nodemailer": "^8.0.0",
+    "@types/turndown": "^5.0.6",
     "eslint": "^10.2.0",
     "husky": "^9.1.7",
     "lint-staged": "^16.4.0",

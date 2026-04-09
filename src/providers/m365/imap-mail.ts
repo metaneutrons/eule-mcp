@@ -99,6 +99,10 @@ export class ImapMailConnector implements MailConnector {
     }
   }
 
+  async downloadAttachment(_messageId: string, _attachmentId: string): Promise<Buffer> {
+    throw new Error("IMAP attachment download not yet implemented");
+  }
+
   async searchMessages(query: string, limit = 10): Promise<MailMessage[]> {
     const client = await this.connect();
     try {

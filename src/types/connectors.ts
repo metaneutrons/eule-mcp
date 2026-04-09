@@ -15,7 +15,15 @@ export interface MailMessage {
 export interface MailMessageFull extends MailMessage {
   readonly body: string;
   readonly bodyType: "text" | "html";
-  readonly attachments: readonly { name: string; size: number }[];
+  readonly attachments: readonly MailAttachment[];
+}
+
+/** Attachment metadata. */
+export interface MailAttachment {
+  readonly id: string;
+  readonly name: string;
+  readonly size: number;
+  readonly contentType: string;
 }
 
 /** Calendar event representation. */
@@ -50,6 +58,7 @@ export interface MailConnector {
   searchMessages(query: string, limit?: number): Promise<MailMessage[]>;
   sendMessage(to: string[], subject: string, body: string): Promise<void>;
   replyToMessage(id: string, body: string): Promise<void>;
+  downloadAttachment(messageId: string, attachmentId: string): Promise<Buffer>;
 }
 
 /** Calendar connector interface — implemented per API tier. */
