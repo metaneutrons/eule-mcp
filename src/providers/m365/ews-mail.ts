@@ -107,8 +107,11 @@ export class EwsMailConnector implements MailConnector {
 
     const msgs = this.parseMessages(xml);
     const msg = msgs[0] ?? { id, account: this.account, subject: "", from: "", to: [], receivedAt: "", snippet: "", isRead: false };
-    const body = tag(xml, "Body");
-    const bodyType = attr(xml, "Body", "BodyType") === "Text" ? "text" as const : "html" as const;
+
+    // Extract body — match the EWS Body element with BodyType attribute specifically.
+    const bodyMatch = /<[^:]*:?Body BodyType="([^"]*)"[^>]*>([\s\S]*?)<\/[^:]*:?Body>/i.exec(xml);
+    const body = bodyMatch?.[2]?.trim() ?? "";
+    const bodyType = bodyMatch?.[1] === "Text" ? "text" as const : "html" as const;
 
     // Parse attachments with IDs.
     const attachmentBlocks = tags(xml, "FileAttachment");
@@ -189,6 +192,7 @@ export class EwsMailConnector implements MailConnector {
   }
 
   private parseMessages(xml: string): MailMessage[] {
+    // Match both <t:Message> and <m:Message> blocks.
     const messageBlocks = tags(xml, "Message");
     return messageBlocks.map((block) => ({
       id: attr(block, "ItemId", "Id"),
@@ -197,7 +201,7 @@ export class EwsMailConnector implements MailConnector {
       from: tag(tag(block, "From"), "EmailAddress"),
       to: tags(tag(block, "ToRecipients"), "EmailAddress"),
       receivedAt: tag(block, "DateTimeReceived"),
-      snippet: tag(block, "Preview"),
+      snippet: tag(block, "Preview") || tag(block, "BodyPreview") || "",
       isRead: tag(block, "IsRead") === "true",
     }));
   }
