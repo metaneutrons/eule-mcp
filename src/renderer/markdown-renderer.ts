@@ -41,7 +41,6 @@ export interface ThreadMessage {
 
 /** Split HTML email body into thread parts using HTML markers. */
 function splitHtmlThread(html: string): string[] {
-
   // Strategy 1: Split on <div id="divRplyFwdMsg"> (Outlook/OWA)
   // The <hr> + divRplyFwdMsg pattern is the most common in enterprise email.
   const outlookSplit = html.split(/<hr[^>]*>[\s\S]*?<div\s+id=["']divRplyFwdMsg["'][^>]*>/i);
@@ -56,8 +55,8 @@ function splitHtmlThread(html: string): string[] {
   }
 
   // Strategy 3: Split on <blockquote> (Gmail, Apple Mail)
-  const bqMatch = html.match(/^([\s\S]*?)<blockquote[^>]*>([\s\S]*)$/i);
-  if (bqMatch && bqMatch[1] && bqMatch[2]) {
+  const bqMatch = /^([\s\S]*?)<blockquote[^>]*>([\s\S]*)$/i.exec(html);
+  if (bqMatch?.[1] && bqMatch[2]) {
     return [bqMatch[1], bqMatch[2]];
   }
 
@@ -72,14 +71,14 @@ function htmlFragmentToMarkdown(html: string): string {
     .replace(/<!--[\s\S]*?-->/g, "")
     .replace(/<o:p>[\s\S]*?<\/o:p>/gi, "")
     .replace(/&nbsp;/g, " ");
-  return turndown.turndown(cleaned).trim();
+  return turndown.turndown(cleaned).replace(/ {2,}/g, " ").trim();
 }
 
 /** Split plain text into thread messages. */
 function splitTextThread(text: string): string[] {
   for (const sep of TEXT_SEPARATORS) {
     const match = sep.exec(text);
-    if (match?.index !== undefined && match.index > 50) {
+    if (match?.index !== undefined && match.index > 10) {
       return [text.slice(0, match.index).trim(), text.slice(match.index).trim()];
     }
   }
@@ -104,7 +103,7 @@ export function removeSignature(text: string): string {
   let cutIndex = text.length;
   for (const pattern of SIGNATURE_PATTERNS) {
     const match = pattern.exec(text);
-    if (match?.index !== undefined && match.index > 50 && match.index < cutIndex) {
+    if (match?.index !== undefined && match.index > 10 && match.index < cutIndex) {
       cutIndex = match.index;
     }
   }
