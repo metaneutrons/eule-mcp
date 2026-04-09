@@ -354,7 +354,7 @@ Context gathering for upcoming meetings.
 ## Future Roadmap
 
 - **Auto-auth i18n resilience** — detect Microsoft login page language dynamically, use data-attributes/IDs instead of text selectors where possible
-- **Paperless-ngx** connector (REDACTED)
+- **Paperless-ngx** connector
 - **Apple ecosystem**: iMessage, Apple Notes, Apple Reminders/Todos
 - **Messaging**: WhatsApp, Signal (generic chat connector interface)
 - **Other connectors**: CalDAV, iCloud Calendar, Google Workspace
