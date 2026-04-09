@@ -1,9 +1,13 @@
 import { TOTP } from "otpauth";
+import { join } from "node:path";
+import { homedir } from "node:os";
+import { writeFileSync } from "node:fs";
 import type { ApiTier, AutoAuthConfig, OAuthConfig, AccountToken } from "../types/index.js";
 import { TIER_SCOPES, loadTokens, saveTokens } from "./oauth.js";
 import { randomBytes, createHash } from "node:crypto";
 
 const REDIRECT_URI = "https://login.microsoftonline.com/common/oauth2/nativeclient";
+const DEBUG_DIR = join(homedir(), ".eule");
 
 function authEndpoint(oauth: OAuthConfig): string {
   return `https://login.microsoftonline.com/${oauth.tenant}/oauth2/v2.0/authorize`;
@@ -24,7 +28,6 @@ function generateTotp(secret: string): string {
   return totp.generate();
 }
 
-/** Extract email from JWT without verification. */
 function extractEmail(jwt: string): string | null {
   const parts = jwt.split(".");
   if (parts.length < 2) return null;
@@ -38,11 +41,20 @@ function extractEmail(jwt: string): string | null {
   }
 }
 
+async function saveDebug(page: { url: () => string; content: () => Promise<string>; screenshot: (opts: { path: string }) => Promise<unknown> }, label: string): Promise<void> {
+  try {
+    writeFileSync(join(DEBUG_DIR, `auto-auth-debug-${label}.html`), await page.content(), "utf-8");
+    await page.screenshot({ path: join(DEBUG_DIR, `auto-auth-debug-${label}.png`) });
+    console.log(`  Debug saved: ~/.eule/auto-auth-debug-${label}.{html,png}`);
+  } catch {
+    // Ignore debug save errors.
+  }
+}
+
 /**
  * Automated headless OAuth flow using Playwright + TOTP.
- * Falls back to manual flow on any failure.
  *
- * @returns AccountToken on success, null if automation failed (caller should fall back).
+ * Flow: email → password → FIDO bypass → MFA picker → TOTP → redirect
  */
 export async function autoAuthenticate(
   tier: ApiTier,
@@ -69,11 +81,10 @@ export async function autoAuthenticate(
 
   let chromium;
   try {
-    // Dynamic import — playwright is a dev/optional dependency.
     const pw = await import("playwright");
     chromium = pw.chromium;
   } catch {
-    console.log("Playwright not available, falling back to manual auth.");
+    console.log("  Playwright not available, falling back to manual auth.");
     return null;
   }
 
@@ -83,74 +94,130 @@ export async function autoAuthenticate(
     const context = await browser.newContext();
     const page = await context.newPage();
 
-    // Navigate to auth URL.
+    // Step 1: Navigate to auth URL.
     await page.goto(authUrl, { waitUntil: "networkidle" });
+    await page.waitForTimeout(2000);
+    console.log(`  Step 1 (email): ${page.url()}`);
 
-    // Wait for and fill email (may be pre-filled via login_hint).
+    // Step 2: Fill email if visible.
     try {
-      const emailInput = page.locator('input[type="email"], input[name="loginfmt"]');
+      const emailInput = page.locator('input[type="email"], input[name="loginfmt"], input[name="UserName"], input[id="userNameInput"], input[id="i0116"]').first();
       if (await emailInput.isVisible({ timeout: 3000 })) {
         await emailInput.fill(credentials.account);
-        await page.locator('input[type="submit"], button[type="submit"]').first().click();
+        await page.locator('input[type="submit"], button[type="submit"], button[id="idSIButton9"]').first().click();
         await page.waitForLoadState("networkidle");
+        await page.waitForTimeout(2000);
       }
     } catch {
-      // Email may have been pre-filled, continue.
+      // Email pre-filled via login_hint.
     }
+    console.log(`  Step 2 (after email): ${page.url()}`);
 
-    // Fill password.
+    // Step 3: Fill password.
     try {
-      const passwordInput = page.locator('input[type="password"], input[name="passwd"]');
+      const passwordInput = page.locator('input[type="password"]').first();
       await passwordInput.waitFor({ state: "visible", timeout: 10000 });
       await passwordInput.fill(credentials.password);
-      await page.locator('input[type="submit"], button[type="submit"]').first().click();
+      await page.locator('input[type="submit"], button[type="submit"], button[id="idSIButton9"]').first().click();
       await page.waitForLoadState("networkidle");
+      await page.waitForTimeout(3000);
+    } catch (err) {
+      console.log(`  Password step failed: ${err instanceof Error ? err.message : String(err)}`);
+      await saveDebug(page, "password");
+      return null;
+    }
+    console.log(`  Step 3 (after password): ${page.url()}`);
+
+    // Step 4: Handle FIDO/passkey MFA prompt — click "Auf andere Weise anmelden" / "Sign in another way".
+    if (page.url().includes("/fido/")) {
+      console.log("  FIDO MFA detected, clicking 'Sign in another way'...");
+      try {
+        const link = page.locator('a:has-text("andere Weise"), a:has-text("another way")').first();
+        await link.waitFor({ state: "visible", timeout: 5000 });
+        await link.click();
+        await page.waitForLoadState("networkidle");
+        await page.waitForTimeout(2000);
+        console.log(`  Step 4 (after FIDO bypass): ${page.url()}`);
+      } catch (err) {
+        console.log(`  FIDO bypass failed: ${err instanceof Error ? err.message : String(err)}`);
+        await saveDebug(page, "fido");
+        return null;
+      }
+    }
+
+    // Step 5: MFA method picker — select "Use a verification code" / "Verwenden eines Prüfcodes".
+    try {
+      const codeOption = page.getByText("Use a verification code");
+      const codeOptionDe = page.getByText("Verwenden eines Prüfcodes");
+      if (await codeOption.isVisible({ timeout: 5000 })) {
+        console.log("  Selecting 'Use a verification code'...");
+        await codeOption.click();
+      } else if (await codeOptionDe.isVisible({ timeout: 2000 })) {
+        console.log("  Selecting 'Verwenden eines Prüfcodes'...");
+        await codeOptionDe.click();
+      } else {
+        console.log("  No TOTP option found in MFA picker.");
+        await saveDebug(page, "picker");
+        return null;
+      }
+      await page.waitForLoadState("networkidle");
+      await page.waitForTimeout(2000);
+    } catch (err) {
+      console.log(`  MFA picker failed: ${err instanceof Error ? err.message : String(err)}`);
+      await saveDebug(page, "picker");
+      return null;
+    }
+    console.log(`  Step 5 (after MFA picker): ${page.url()}`);
+
+    // Step 6: Enter TOTP code.
+    try {
+      const totpInput = page.locator('input[name="otc"], input[id="idTxtBx_SAOTCC_OTC"], input[aria-label*="code"], input[placeholder*="Code"], input[placeholder*="code"]').first();
+      await totpInput.waitFor({ state: "visible", timeout: 10000 });
+      const code = generateTotp(credentials.totpSecret);
+      console.log("  Entering TOTP code...");
+      await totpInput.fill(code);
+      await page.locator('input[type="submit"], button[type="submit"], button:has-text("Verify"), button:has-text("Überprüfen")').first().click();
+      await page.waitForLoadState("networkidle");
+      await page.waitForTimeout(2000);
+    } catch (err) {
+      console.log(`  TOTP step failed: ${err instanceof Error ? err.message : String(err)}`);
+      await saveDebug(page, "totp");
+      return null;
+    }
+    console.log(`  Step 6 (after TOTP): ${page.url()}`);
+
+    // Step 7: Handle "Stay signed in?" / "Angemeldet bleiben?" prompt.
+    try {
+      const btn = page.locator('input[type="submit"], button[id="idSIButton9"], button[id="idBtn_Back"]').first();
+      if (await btn.isVisible({ timeout: 3000 })) {
+        await btn.click();
+        await page.waitForLoadState("networkidle");
+        await page.waitForTimeout(2000);
+      }
     } catch {
-      console.log("Auto-auth: password field not found, falling back.");
+      // No prompt.
+    }
+
+    // Step 8: Wait for redirect to nativeclient.
+    try {
+      await page.waitForURL("**/nativeclient**", { timeout: 15000 });
+    } catch {
+      console.log(`  Timeout waiting for redirect. URL: ${page.url()}`);
+      await saveDebug(page, "final");
       return null;
     }
 
-    // Handle TOTP MFA prompt.
-    try {
-      // Microsoft shows various MFA prompts. Look for TOTP input.
-      const totpInput = page.locator('input[name="otc"], input[id="idTxtBx_SAOTCC_OTC"], input[aria-label*="code"], input[placeholder*="code"]');
-      if (await totpInput.isVisible({ timeout: 10000 })) {
-        const code = generateTotp(credentials.totpSecret);
-        await totpInput.fill(code);
-        // Click verify/submit.
-        await page.locator('input[type="submit"], button[type="submit"], button:has-text("Verify"), button:has-text("Überprüfen")').first().click();
-        await page.waitForLoadState("networkidle");
-      }
-    } catch {
-      // MFA might not be TOTP, or different prompt. Fall back.
-      console.log("Auto-auth: TOTP input not found or MFA type not supported, falling back.");
-      return null;
-    }
-
-    // Handle "Stay signed in?" prompt.
-    try {
-      const staySignedIn = page.locator('input[type="submit"][value="Yes"], button:has-text("Yes"), input[type="submit"][value="Ja"], button:has-text("Ja")');
-      if (await staySignedIn.isVisible({ timeout: 3000 })) {
-        await staySignedIn.click();
-        await page.waitForLoadState("networkidle");
-      }
-    } catch {
-      // No "stay signed in" prompt, continue.
-    }
-
-    // Wait for redirect to nativeclient with code.
-    await page.waitForURL("**/nativeclient**", { timeout: 15000 });
+    // Step 9: Extract code and exchange for tokens.
     const finalUrl = page.url();
     const parsed = new URL(finalUrl);
     const code = parsed.searchParams.get("code");
     const returnedState = parsed.searchParams.get("state");
 
     if (!code || returnedState !== state) {
-      console.log("Auto-auth: no code in redirect URL, falling back.");
+      console.log("  No code in redirect URL.");
       return null;
     }
 
-    // Exchange code for tokens.
     const tokenBody = new URLSearchParams({
       client_id: oauth.clientId,
       grant_type: "authorization_code",
@@ -167,7 +234,7 @@ export async function autoAuthenticate(
     });
 
     if (!res.ok) {
-      console.log(`Auto-auth: token exchange failed (${String(res.status)}), falling back.`);
+      console.log(`  Token exchange failed: ${String(res.status)}`);
       return null;
     }
 
@@ -192,8 +259,7 @@ export async function autoAuthenticate(
 
     return tokenData;
   } catch (err) {
-    console.log(`Auto-auth failed: ${err instanceof Error ? err.message : String(err)}`);
-    console.log("Falling back to manual browser auth.");
+    console.log(`  Auto-auth failed: ${err instanceof Error ? err.message : String(err)}`);
     return null;
   } finally {
     if (browser) {
