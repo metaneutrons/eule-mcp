@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-base-to-string */
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -43,23 +44,21 @@ function validate(raw: unknown): AppConfig {
   }
 
   const obj = raw as Record<string, unknown>;
-  const language = obj["language"] === "en" ? "en" : "de";
-  const oauth = parseOAuth(obj["oauth"]);
-  const autoAuth = parseAutoAuth(obj["autoAuth"]);
+  const language = obj.language === "en" ? "en" : "de";
+  const oauth = parseOAuth(obj.oauth);
+  const autoAuth = parseAutoAuth(obj.autoAuth);
   const roles: RoleConfig[] = [];
 
-  if (Array.isArray(obj["roles"])) {
-    for (const r of obj["roles"] as unknown[]) {
+  if (Array.isArray(obj.roles)) {
+    for (const r of obj.roles as unknown[]) {
       if (typeof r !== "object" || r === null) continue;
       const role = r as Record<string, unknown>;
       roles.push({
-        id: String(role["id"] ?? ""),
-        name: String(role["name"] ?? ""),
-        weeklyHours: Number(role["weeklyHours"] ?? 0),
-        contexts: Array.isArray(role["contexts"])
-          ? (role["contexts"] as unknown[]).map(String)
-          : [],
-        connectors: parseConnectors(role["connectors"]),
+        id: String(role.id ?? ""),
+        name: String(role.name ?? ""),
+        weeklyHours: Number(role.weeklyHours ?? 0),
+        contexts: Array.isArray(role.contexts) ? (role.contexts as unknown[]).map(String) : [],
+        connectors: parseConnectors(role.connectors),
       });
     }
   }
@@ -71,11 +70,16 @@ function parseAutoAuth(raw: unknown): AutoAuthConfig[] | undefined {
   if (!Array.isArray(raw)) return undefined;
   return (raw as unknown[])
     .filter((c): c is Record<string, unknown> => typeof c === "object" && c !== null)
-    .filter((c) => typeof c["account"] === "string" && typeof c["password"] === "string" && typeof c["totpSecret"] === "string")
+    .filter(
+      (c) =>
+        typeof c.account === "string" &&
+        typeof c.password === "string" &&
+        typeof c.totpSecret === "string",
+    )
     .map((c) => ({
-      account: String(c["account"]),
-      password: String(c["password"]),
-      totpSecret: String(c["totpSecret"]),
+      account: String(c.account),
+      password: String(c.password),
+      totpSecret: String(c.totpSecret),
     }));
 }
 
@@ -83,8 +87,8 @@ function parseOAuth(raw: unknown): OAuthConfig {
   if (typeof raw !== "object" || raw === null) return DEFAULT_OAUTH;
   const obj = raw as Record<string, unknown>;
   return {
-    clientId: typeof obj["clientId"] === "string" ? obj["clientId"] : DEFAULT_OAUTH.clientId,
-    tenant: typeof obj["tenant"] === "string" ? obj["tenant"] : DEFAULT_OAUTH.tenant,
+    clientId: typeof obj.clientId === "string" ? obj.clientId : DEFAULT_OAUTH.clientId,
+    tenant: typeof obj.tenant === "string" ? obj.tenant : DEFAULT_OAUTH.tenant,
   };
 }
 
@@ -92,8 +96,8 @@ function parseConnectors(raw: unknown): RoleConfig["connectors"] {
   if (typeof raw !== "object" || raw === null) return {};
   const obj = raw as Record<string, unknown>;
   return {
-    mail: parseConnectorList(obj["mail"]),
-    calendar: parseConnectorList(obj["calendar"]),
+    mail: parseConnectorList(obj.mail),
+    calendar: parseConnectorList(obj.calendar),
   };
 }
 
@@ -102,10 +106,10 @@ function parseConnectorList(raw: unknown): RoleConfig["connectors"]["mail"] {
   return (raw as unknown[])
     .filter((c): c is Record<string, unknown> => typeof c === "object" && c !== null)
     .map((c) => ({
-      id: String(c["id"] ?? ""),
+      id: String(c.id ?? ""),
       type: "m365" as const,
-      account: String(c["account"] ?? ""),
-      shared: c["shared"] === true,
+      account: String(c.account ?? ""),
+      shared: c.shared === true,
     }));
 }
 
@@ -142,6 +146,33 @@ export class ConfigManager {
   save(config: AppConfig): void {
     this.config = config;
     writeFileSync(CONFIG_PATH, yaml.dump(config, { lineWidth: 120 }), "utf-8");
+  }
+
+  /** Add a new role. */
+  addRole(role: RoleConfig): void {
+    if (this.config.roles.some((r) => r.id === role.id))
+      throw new Error(`Role "${role.id}" already exists`);
+    this.save({ ...this.config, roles: [...this.config.roles, role] });
+  }
+
+  /** Update an existing role. */
+  updateRole(id: string, updates: Partial<Omit<RoleConfig, "id">>): RoleConfig {
+    const idx = this.config.roles.findIndex((r) => r.id === id);
+    if (idx === -1) throw new Error(`Role "${id}" not found`);
+    const existing = this.config.roles[idx];
+    if (!existing) throw new Error(`Role "${id}" not found`);
+    const updated = { ...existing, ...updates };
+    const roles = [...this.config.roles];
+    roles[idx] = updated;
+    this.save({ ...this.config, roles });
+    return updated;
+  }
+
+  /** Remove a role by ID. */
+  removeRole(id: string): void {
+    const roles = this.config.roles.filter((r) => r.id !== id);
+    if (roles.length === this.config.roles.length) throw new Error(`Role "${id}" not found`);
+    this.save({ ...this.config, roles });
   }
 
   private load(): AppConfig {

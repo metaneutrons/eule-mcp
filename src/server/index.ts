@@ -224,6 +224,89 @@ server.tool(
   },
 );
 
+// --- role CRUD tools ---
+
+server.tool(
+  "role_add",
+  "Add a new role",
+  {
+    id: z.string().describe("Role ID (e.g. VPDIT, teaching)"),
+    name: z.string().describe("Display name"),
+    weeklyHours: z.number().optional().describe("Weekly hours (default: 0)"),
+  },
+  async ({ id, name, weeklyHours }) => {
+    try {
+      configManager.addRole({ id, name, weeklyHours: weeklyHours ?? 0, connectors: {} });
+      return { content: [{ type: "text" as const, text: `✅ Role "${id}" added.` }] };
+    } catch (err) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Error: ${err instanceof Error ? err.message : String(err)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
+  "role_update",
+  "Update a role's properties",
+  {
+    id: z.string().describe("Role ID to update"),
+    name: z.string().optional().describe("New display name"),
+    weeklyHours: z.number().optional().describe("New weekly hours"),
+  },
+  async ({ id, ...updates }) => {
+    try {
+      const role = configManager.updateRole(id, updates);
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `✅ Role "${role.id}" updated: ${role.name} (${String(role.weeklyHours)}h/week)`,
+          },
+        ],
+      };
+    } catch (err) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Error: ${err instanceof Error ? err.message : String(err)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
+  "role_remove",
+  "Remove a role",
+  { id: z.string().describe("Role ID to remove") },
+  async ({ id }) => {
+    try {
+      configManager.removeRole(id);
+      return { content: [{ type: "text" as const, text: `✅ Role "${id}" removed.` }] };
+    } catch (err) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Error: ${err instanceof Error ? err.message : String(err)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  },
+);
+
 // --- mail_list tool ---
 server.tool(
   "mail_list",
