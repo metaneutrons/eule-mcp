@@ -107,9 +107,15 @@ function parseConnectorList(raw: unknown): RoleConfig["connectors"]["mail"] {
     .filter((c): c is Record<string, unknown> => typeof c === "object" && c !== null)
     .map((c) => ({
       id: String(c.id ?? ""),
-      type: "m365" as const,
+      type: (c.type === "imap" ? "imap" : "m365"),
       account: String(c.account ?? ""),
       shared: c.shared === true,
+      host: typeof c.host === "string" ? c.host : undefined,
+      port: typeof c.port === "number" ? c.port : undefined,
+      smtpHost: typeof c.smtpHost === "string" ? c.smtpHost : undefined,
+      smtpPort: typeof c.smtpPort === "number" ? c.smtpPort : undefined,
+      auth: c.auth === "oauth" || c.auth === "password" ? c.auth : undefined,
+      password: typeof c.password === "string" ? c.password : undefined,
     }));
 }
 

@@ -2,26 +2,47 @@ import { ImapFlow } from "imapflow";
 import { createTransport } from "nodemailer";
 import type { MailConnector, MailMessage, MailMessageFull } from "../../types/index.js";
 
+export interface ImapConfig {
+  account: string;
+  host: string;
+  port?: number;
+  smtpHost: string;
+  smtpPort?: number;
+  auth: "oauth" | "password";
+  getToken?: () => Promise<string | null>;
+  password?: string;
+}
+
 export class ImapMailConnector implements MailConnector {
   readonly tier = "imap";
 
   constructor(
     readonly account: string,
-    private readonly getToken: () => Promise<string | null>,
+    private readonly cfg: ImapConfig,
   ) {}
 
   private async connect(): Promise<ImapFlow> {
-    const token = await this.getToken();
-    if (!token) throw new Error(`No token for ${this.account}`);
+    const auth =
+      this.cfg.auth === "oauth"
+        ? { user: this.cfg.account, accessToken: await this.getTokenOrThrow() }
+        : { user: this.cfg.account, pass: this.cfg.password ?? "" };
+
     const client = new ImapFlow({
-      host: "outlook.office365.com",
-      port: 993,
+      host: this.cfg.host,
+      port: this.cfg.port ?? 993,
       secure: true,
-      auth: { user: this.account, accessToken: token },
+      auth,
       logger: false,
     });
     await client.connect();
     return client;
+  }
+
+  private async getTokenOrThrow(): Promise<string> {
+    if (!this.cfg.getToken) throw new Error(`No token provider for ${this.account}`);
+    const token = await this.cfg.getToken();
+    if (!token) throw new Error(`No token for ${this.account}`);
+    return token;
   }
 
   async listMessages(folder = "INBOX", limit = 10): Promise<MailMessage[]> {
@@ -37,7 +58,6 @@ export class ImapMailConnector implements MailConnector {
         for await (const raw of client.fetch(`${String(from)}:*`, {
           envelope: true,
           flags: true,
-          bodyStructure: true,
         })) {
           const msg = raw as {
             uid: number;
@@ -60,7 +80,6 @@ export class ImapMailConnector implements MailConnector {
             isRead: msg.flags?.has("\\Seen") ?? false,
           });
         }
-
         return messages.reverse();
       } finally {
         lock.release();
@@ -77,15 +96,9 @@ export class ImapMailConnector implements MailConnector {
       try {
         const raw = await client.fetchOne(
           id,
-          {
-            envelope: true,
-            flags: true,
-            bodyStructure: true,
-            source: true,
-          },
+          { envelope: true, flags: true, source: true },
           { uid: true },
         );
-
         const msg = raw as {
           uid: number;
           source?: Buffer;
@@ -183,27 +196,40 @@ export class ImapMailConnector implements MailConnector {
   }
 
   async sendMessage(to: string[], subject: string, body: string): Promise<void> {
-    const token = await this.getToken();
-    if (!token) throw new Error(`No token for ${this.account}`);
+    const auth =
+      this.cfg.auth === "oauth"
+        ? {
+            type: "OAuth2" as const,
+            user: this.cfg.account,
+            accessToken: await this.getTokenOrThrow(),
+          }
+        : { user: this.cfg.account, pass: this.cfg.password ?? "" };
+
     const transport = createTransport({
-      host: "smtp.office365.com",
-      port: 587,
+      host: this.cfg.smtpHost,
+      port: this.cfg.smtpPort ?? 587,
       secure: false,
-      auth: { type: "OAuth2", user: this.account, accessToken: token },
+      auth,
     });
     await transport.sendMail({ from: this.account, to: to.join(", "), subject, text: body });
   }
 
   async replyToMessage(id: string, body: string): Promise<void> {
-    // Fetch original to get headers, then send reply.
     const original = await this.getMessage(id);
-    const token = await this.getToken();
-    if (!token) throw new Error(`No token for ${this.account}`);
+    const auth =
+      this.cfg.auth === "oauth"
+        ? {
+            type: "OAuth2" as const,
+            user: this.cfg.account,
+            accessToken: await this.getTokenOrThrow(),
+          }
+        : { user: this.cfg.account, pass: this.cfg.password ?? "" };
+
     const transport = createTransport({
-      host: "smtp.office365.com",
-      port: 587,
+      host: this.cfg.smtpHost,
+      port: this.cfg.smtpPort ?? 587,
       secure: false,
-      auth: { type: "OAuth2", user: this.account, accessToken: token },
+      auth,
     });
     await transport.sendMail({
       from: this.account,

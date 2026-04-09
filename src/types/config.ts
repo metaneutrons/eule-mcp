@@ -1,9 +1,16 @@
 /** Connector configuration for a single mail or calendar account. */
 export interface ConnectorConfig {
   readonly id: string;
-  readonly type: "m365";
+  readonly type: "m365" | "imap";
   readonly account: string;
   readonly shared?: boolean;
+  // IMAP-specific fields (type: "imap").
+  readonly host?: string;
+  readonly port?: number;
+  readonly smtpHost?: string;
+  readonly smtpPort?: number;
+  readonly auth?: "oauth" | "password";
+  readonly password?: string;
 }
 
 /** Optional auto-authentication credentials for an account. */
