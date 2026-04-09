@@ -1,0 +1,41 @@
+# Eule MCP configuration
+language: de # de | en
+
+roles:
+  - id: VPDIT
+    name: "VP Hochschule Hannover"
+    weeklyHours: 20
+    contexts: ["@office", "@remote"]
+    connectors:
+      mail:
+        - id: vpdit-personal
+          type: m365
+          account: fabian@hs-hannover.de
+        - id: vpdit-shared
+          type: m365
+          account: vp-dit@hs-hannover.de
+          shared: true
+      calendar:
+        - id: vpdit-cal
+          type: m365
+          account: fabian@hs-hannover.de
+  - id: lexICT
+    name: "lexICT GmbH"
+    weeklyHours: 8
+    connectors:
+      mail:
+        - id: lexict-mail
+          type: m365
+          account: fabian@lexict.de
+      calendar:
+        - id: lexict-cal
+          type: m365
+          account: fabian@lexict.de
+  - id: CDU
+    name: "CDU Gehrden"
+    weeklyHours: 4
+    connectors: {}
+  - id: private
+    name: "Private"
+    weeklyHours: 0
+    connectors: {}
