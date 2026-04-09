@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.svg" alt="Eule" width="200">
+  <img src="https://raw.githubusercontent.com/metaneutrons/eule-mcp/main/assets/logo.svg" alt="Eule" width="200">
 </p>
 
 <h1 align="center">🦉 Eule MCP</h1>
