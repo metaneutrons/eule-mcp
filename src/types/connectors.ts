@@ -71,3 +71,22 @@ export interface CalendarConnector {
   updateEvent(id: string, updates: Partial<CalendarEventInput>): Promise<CalendarEvent>;
   deleteEvent(id: string): Promise<void>;
 }
+
+/** Contact from a remote provider (Graph, EWS, CardDAV). */
+export interface RemoteContact {
+  readonly id: string;
+  readonly account: string;
+  readonly displayName: string;
+  readonly email?: string;
+  readonly phone?: string;
+  readonly organization?: string;
+  readonly jobTitle?: string;
+}
+
+/** Contact connector interface — implemented per API tier. */
+export interface ContactConnector {
+  readonly account: string;
+  readonly tier: string;
+  listContacts(limit?: number): Promise<RemoteContact[]>;
+  searchContacts(query: string, limit?: number): Promise<RemoteContact[]>;
+}

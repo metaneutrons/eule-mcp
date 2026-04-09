@@ -926,7 +926,7 @@ const contactManager = new ContactManager(dbManager);
 
 server.tool(
   "contact_add",
-  "Add a contact",
+  "Add a local contact (for contacts not in your address book)",
   {
     name: z.string().describe("Full name"),
     email: z.string().optional().describe("Email address"),
@@ -946,16 +946,75 @@ server.tool(
 
 server.tool(
   "contact_list",
-  "List contacts",
-  { role_id: z.string().optional().describe("Filter by role") },
-  async ({ role_id }) => {
-    const contacts = contactManager.list(role_id);
-    if (contacts.length === 0)
-      return { content: [{ type: "text" as const, text: "No contacts yet." }] };
-    const lines = contacts.map(
-      (c) =>
-        `#${String(c.id)} ${c.name}${c.email ? ` <${c.email}>` : ""}${c.organization ? ` @ ${c.organization}` : ""}`,
-    );
+  "List contacts from all sources (address book + local)",
+  { role: z.string().optional().describe("Filter by role") },
+  async ({ role }) => {
+    const lines: string[] = [];
+
+    // Remote contacts from connectors.
+    const connectors = registry.getContactConnectors(role);
+    for (const c of connectors) {
+      try {
+        const remote = await c.listContacts(50);
+        for (const r of remote) {
+          lines.push(
+            `${r.displayName}${r.email ? ` <${r.email}>` : ""}${r.organization ? ` @ ${r.organization}` : ""}${r.jobTitle ? ` (${r.jobTitle})` : ""}`,
+          );
+        }
+      } catch {
+        /* skip failed connectors */
+      }
+    }
+
+    // Local contacts.
+    const local = contactManager.list(role);
+    for (const c of local) {
+      lines.push(
+        `[local] ${c.name}${c.email ? ` <${c.email}>` : ""}${c.organization ? ` @ ${c.organization}` : ""}${c.notes ? ` — ${c.notes}` : ""}`,
+      );
+    }
+
+    if (lines.length === 0)
+      return { content: [{ type: "text" as const, text: "No contacts found." }] };
+    return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+  },
+);
+
+server.tool(
+  "contact_search",
+  "Search contacts across all sources",
+  { query: z.string().describe("Search query (name, email, organization)") },
+  async ({ query }) => {
+    const lines: string[] = [];
+
+    // Remote search.
+    const connectors = registry.getContactConnectors();
+    for (const c of connectors) {
+      try {
+        const results = await c.searchContacts(query);
+        for (const r of results) {
+          lines.push(
+            `${r.displayName}${r.email ? ` <${r.email}>` : ""}${r.organization ? ` @ ${r.organization}` : ""}`,
+          );
+        }
+      } catch {
+        /* skip */
+      }
+    }
+
+    // Local search (simple name match).
+    const local = contactManager.list();
+    for (const c of local) {
+      const hay = `${c.name} ${c.email ?? ""} ${c.organization ?? ""}`.toLowerCase();
+      if (hay.includes(query.toLowerCase())) {
+        lines.push(
+          `[local] ${c.name}${c.email ? ` <${c.email}>` : ""}${c.notes ? ` — ${c.notes}` : ""}`,
+        );
+      }
+    }
+
+    if (lines.length === 0)
+      return { content: [{ type: "text" as const, text: "No contacts found." }] };
     return { content: [{ type: "text" as const, text: lines.join("\n") }] };
   },
 );

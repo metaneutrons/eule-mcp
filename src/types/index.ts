@@ -16,6 +16,8 @@ export type {
   MailAttachment,
   CalendarEvent,
   CalendarEventInput,
+  RemoteContact,
   MailConnector,
   CalendarConnector,
+  ContactConnector,
 } from "./connectors.js";

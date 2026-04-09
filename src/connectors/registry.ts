@@ -1,4 +1,4 @@
-import type { MailConnector, CalendarConnector } from "../types/index.js";
+import type { MailConnector, CalendarConnector, ContactConnector } from "../types/index.js";
 import type { ConfigManager } from "../config/index.js";
 import { loadTokens, getAccessToken } from "../providers/m365/index.js";
 import { GraphMailConnector } from "../providers/m365/graph-mail.js";
@@ -6,6 +6,8 @@ import { EwsMailConnector } from "../providers/m365/ews-mail.js";
 import { ImapMailConnector } from "../providers/imap/index.js";
 import { EwsCalendarConnector } from "../providers/m365/ews-calendar.js";
 import { GraphCalendarConnector } from "../providers/m365/graph-calendar.js";
+import { GraphContactConnector } from "../providers/m365/graph-contacts.js";
+import { EwsContactConnector } from "../providers/m365/ews-contacts.js";
 
 export class ConnectorRegistry {
   constructor(private readonly config: ConfigManager) {}
@@ -134,6 +136,35 @@ export class ConnectorRegistry {
             break;
           case "ews":
             connectors.push(new EwsCalendarConnector(cc.account, getToken));
+            break;
+        }
+      }
+    }
+
+    return connectors;
+  }
+
+  /** Get all contact connectors, optionally filtered by role. */
+  getContactConnectors(role?: string): ContactConnector[] {
+    const cfg = this.config.get();
+    const oauth = cfg.oauth;
+    const tokens = loadTokens();
+    const connectors: ContactConnector[] = [];
+
+    const roles = role ? cfg.roles.filter((r) => r.id === role) : cfg.roles;
+
+    for (const r of roles) {
+      for (const cc of r.connectors.contacts ?? []) {
+        if (cc.type !== "m365") continue;
+        const token = tokens.accounts[cc.account];
+        if (!token) continue;
+        const getToken = () => getAccessToken(cc.account, oauth);
+        switch (token.tier) {
+          case "graph":
+            connectors.push(new GraphContactConnector(cc.account, getToken, cc.shared));
+            break;
+          case "ews":
+            connectors.push(new EwsContactConnector(cc.account, getToken));
             break;
         }
       }

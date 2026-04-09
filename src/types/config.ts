@@ -24,6 +24,7 @@ export interface AutoAuthConfig {
 export interface RoleConnectors {
   readonly mail?: readonly ConnectorConfig[];
   readonly calendar?: readonly ConnectorConfig[];
+  readonly contacts?: readonly ConnectorConfig[];
 }
 
 /** A single role definition. */

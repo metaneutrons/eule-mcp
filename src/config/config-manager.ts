@@ -98,6 +98,7 @@ function parseConnectors(raw: unknown): RoleConfig["connectors"] {
   return {
     mail: parseConnectorList(obj.mail),
     calendar: parseConnectorList(obj.calendar),
+    contacts: parseConnectorList(obj.contacts),
   };
 }
 
@@ -107,7 +108,7 @@ function parseConnectorList(raw: unknown): RoleConfig["connectors"]["mail"] {
     .filter((c): c is Record<string, unknown> => typeof c === "object" && c !== null)
     .map((c) => ({
       id: String(c.id ?? ""),
-      type: (c.type === "imap" ? "imap" : "m365"),
+      type: c.type === "imap" ? "imap" : "m365",
       account: String(c.account ?? ""),
       shared: c.shared === true,
       host: typeof c.host === "string" ? c.host : undefined,
