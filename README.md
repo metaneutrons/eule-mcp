@@ -56,7 +56,7 @@ Eule is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) serve
 - **Role-based context** — map accounts and connectors to professional roles
 - **LLM-optimized output** — HTML emails rendered as clean Markdown with thread splitting
 
-## Tools (33)
+## Tools (27)
 
 ### 🔐 Auth (3)
 
@@ -66,14 +66,11 @@ Eule is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) serve
 | `auth_login` | Authenticate or re-authenticate an M365 account |
 | `auth_probe` | Test which API tier works for an account |
 
-### 👤 Roles (4)
+### 👤 Roles (1)
 
 | Tool | Description |
 |---|---|
 | `role_list` | List all configured roles with connectors and weekly hours |
-| `role_add` | Add a new role |
-| `role_update` | Update a role's properties |
-| `role_remove` | Remove a role |
 
 ### 📧 Mail (7)
 
@@ -97,23 +94,15 @@ Eule is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) serve
 | `calendar_update` | Update an existing event |
 | `calendar_delete` | Delete an event |
 
-### ✅ GTD Tasks (6)
+### ✅ GTD Tasks (5)
 
 | Tool | Description |
 |---|---|
-| `task_inbox` | Show unprocessed items |
 | `task_add` | Capture a new task (supports email source linking) |
 | `task_list` | List tasks by status/project/context/role |
 | `task_update` | Update task properties |
 | `task_complete` | Mark task as done |
 | `task_search` | Full-text search across tasks |
-
-### 💡 Ideas (2)
-
-| Tool | Description |
-|---|---|
-| `idea_add` | Quick-capture an idea with tags and context |
-| `idea_list` | List captured ideas |
 
 ### 📝 Notes (3)
 

@@ -3,13 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { ConfigManager } from "../config/index.js";
-import {
-  DatabaseManager,
-  TaskManager,
-  IdeaManager,
-  NoteManager,
-  ContactManager,
-} from "../db/index.js";
+import { DatabaseManager, TaskManager, NoteManager, ContactManager } from "../db/index.js";
 import { loadTokens, authenticateAccount, getAccessToken } from "../providers/m365/index.js";
 import { ConnectorRegistry } from "../connectors/index.js";
 import { renderMail } from "../renderer/index.js";
@@ -227,89 +221,6 @@ server.tool(
     }
 
     return { content: [{ type: "text" as const, text: lines.join("\n") }] };
-  },
-);
-
-// --- role CRUD tools ---
-
-server.tool(
-  "role_add",
-  "Add a new role",
-  {
-    id: z.string().describe("Role ID (e.g. VPDIT, teaching)"),
-    name: z.string().describe("Display name"),
-    weeklyHours: z.number().optional().describe("Weekly hours (default: 0)"),
-  },
-  async ({ id, name, weeklyHours }) => {
-    try {
-      configManager.addRole({ id, name, weeklyHours: weeklyHours ?? 0, connectors: {} });
-      return { content: [{ type: "text" as const, text: `✅ Role "${id}" added.` }] };
-    } catch (err) {
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: `Error: ${err instanceof Error ? err.message : String(err)}`,
-          },
-        ],
-        isError: true,
-      };
-    }
-  },
-);
-
-server.tool(
-  "role_update",
-  "Update a role's properties",
-  {
-    id: z.string().describe("Role ID to update"),
-    name: z.string().optional().describe("New display name"),
-    weeklyHours: z.number().optional().describe("New weekly hours"),
-  },
-  async ({ id, ...updates }) => {
-    try {
-      const role = configManager.updateRole(id, updates);
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: `✅ Role "${role.id}" updated: ${role.name} (${String(role.weeklyHours)}h/week)`,
-          },
-        ],
-      };
-    } catch (err) {
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: `Error: ${err instanceof Error ? err.message : String(err)}`,
-          },
-        ],
-        isError: true,
-      };
-    }
-  },
-);
-
-server.tool(
-  "role_remove",
-  "Remove a role",
-  { id: z.string().describe("Role ID to remove") },
-  async ({ id }) => {
-    try {
-      configManager.removeRole(id);
-      return { content: [{ type: "text" as const, text: `✅ Role "${id}" removed.` }] };
-    } catch (err) {
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: `Error: ${err instanceof Error ? err.message : String(err)}`,
-          },
-        ],
-        isError: true,
-      };
-    }
   },
 );
 
@@ -822,21 +733,6 @@ server.tool(
 // --- Task tools ---
 const taskManager = new TaskManager(dbManager);
 
-server.tool("task_inbox", "Show unprocessed inbox tasks", {}, async () => {
-  const tasks = taskManager.inbox();
-  if (tasks.length === 0)
-    return { content: [{ type: "text" as const, text: "Inbox is empty ✨" }] };
-  const lines = tasks.map(
-    (t) =>
-      `#${String(t.id)} ${t.title}${t.due_date ? ` 📅 ${t.due_date}` : ""}${t.body ? `\n  ${t.body.split("\n")[0] ?? ""}` : ""}`,
-  );
-  return {
-    content: [
-      { type: "text" as const, text: `📥 Inbox (${String(tasks.length)}):\n\n${lines.join("\n")}` },
-    ],
-  };
-});
-
 server.tool(
   "task_add",
   "Add a new task (defaults to inbox)",
@@ -967,38 +863,6 @@ server.tool(
     if (tasks.length === 0)
       return { content: [{ type: "text" as const, text: "No tasks found." }] };
     const lines = tasks.map((t) => `[${t.status}] #${String(t.id)} ${t.title}`);
-    return { content: [{ type: "text" as const, text: lines.join("\n") }] };
-  },
-);
-
-// --- Idea tools ---
-const ideaManager = new IdeaManager(dbManager);
-
-server.tool(
-  "idea_add",
-  "Quick-capture an idea",
-  {
-    content: z.string().describe("The idea"),
-    context: z.string().optional().describe("Context where this came up"),
-    role_id: z.string().optional().describe("Role ID"),
-    tags: z.string().optional().describe("Comma-separated tags"),
-    source: z.string().optional().describe("Source (e.g. meeting, email)"),
-  },
-  async ({ content, ...opts }) => {
-    const idea = ideaManager.add(content, opts);
-    return { content: [{ type: "text" as const, text: `💡 Idea #${String(idea.id)} captured.` }] };
-  },
-);
-
-server.tool(
-  "idea_list",
-  "List captured ideas",
-  { role_id: z.string().optional().describe("Filter by role") },
-  async ({ role_id }) => {
-    const ideas = ideaManager.list(role_id);
-    if (ideas.length === 0)
-      return { content: [{ type: "text" as const, text: "No ideas captured yet." }] };
-    const lines = ideas.map((i) => `#${String(i.id)} ${i.content}${i.tags ? ` [${i.tags}]` : ""}`);
     return { content: [{ type: "text" as const, text: lines.join("\n") }] };
   },
 );
