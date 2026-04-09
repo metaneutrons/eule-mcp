@@ -5,6 +5,7 @@ import { GraphMailConnector } from "../providers/m365/graph-mail.js";
 import { EwsMailConnector } from "../providers/m365/ews-mail.js";
 import { ImapMailConnector } from "../providers/m365/imap-mail.js";
 import { EwsCalendarConnector } from "../providers/m365/ews-calendar.js";
+import { GraphCalendarConnector } from "../providers/m365/graph-calendar.js";
 
 export class ConnectorRegistry {
   constructor(private readonly config: ConfigManager) {}
@@ -76,8 +77,13 @@ export class ConnectorRegistry {
         const token = tokens.accounts[cc.account];
         if (!token) continue;
         const getToken = () => getAccessToken(cc.account, oauth);
-        if (token.tier === "graph" || token.tier === "ews") {
-          connectors.push(new EwsCalendarConnector(cc.account, getToken));
+        switch (token.tier) {
+          case "graph":
+            connectors.push(new GraphCalendarConnector(cc.account, getToken, cc.shared));
+            break;
+          case "ews":
+            connectors.push(new EwsCalendarConnector(cc.account, getToken));
+            break;
         }
       }
     }
