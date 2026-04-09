@@ -204,6 +204,7 @@ autoAuth:
 - [ ] Paperless-ngx connector
 - [ ] Apple ecosystem (iCloud Calendar, Reminders)
 - [ ] Auto-auth i18n resilience
+- [ ] Exchange on-premise support (Basic/NTLM auth, configurable EWS URL)
 - [ ] sqlite-vec for local semantic search
 
 ## Contributing
