@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import yaml from "js-yaml";
-import type { AppConfig, OAuthConfig, RoleConfig } from "../types/index.js";
+import type { AppConfig, AutoAuthConfig, OAuthConfig, RoleConfig } from "../types/index.js";
 
 const EULE_DIR = join(homedir(), ".eule");
 const CONFIG_PATH = join(EULE_DIR, "config.yaml");
@@ -45,6 +45,7 @@ function validate(raw: unknown): AppConfig {
   const obj = raw as Record<string, unknown>;
   const language = obj["language"] === "en" ? "en" : "de";
   const oauth = parseOAuth(obj["oauth"]);
+  const autoAuth = parseAutoAuth(obj["autoAuth"]);
   const roles: RoleConfig[] = [];
 
   if (Array.isArray(obj["roles"])) {
@@ -63,7 +64,19 @@ function validate(raw: unknown): AppConfig {
     }
   }
 
-  return { language, oauth, roles };
+  return { language, oauth, autoAuth, roles };
+}
+
+function parseAutoAuth(raw: unknown): AutoAuthConfig[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  return (raw as unknown[])
+    .filter((c): c is Record<string, unknown> => typeof c === "object" && c !== null)
+    .filter((c) => typeof c["account"] === "string" && typeof c["password"] === "string" && typeof c["totpSecret"] === "string")
+    .map((c) => ({
+      account: String(c["account"]),
+      password: String(c["password"]),
+      totpSecret: String(c["totpSecret"]),
+    }));
 }
 
 function parseOAuth(raw: unknown): OAuthConfig {

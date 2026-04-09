@@ -6,6 +6,13 @@ export interface ConnectorConfig {
   readonly shared?: boolean;
 }
 
+/** Optional auto-authentication credentials for an account. */
+export interface AutoAuthConfig {
+  readonly account: string;
+  readonly password: string;
+  readonly totpSecret: string;
+}
+
 /** Connectors grouped by domain. */
 export interface RoleConnectors {
   readonly mail?: readonly ConnectorConfig[];
@@ -31,6 +38,7 @@ export interface OAuthConfig {
 export interface AppConfig {
   readonly language: "de" | "en";
   readonly oauth: OAuthConfig;
+  readonly autoAuth?: readonly AutoAuthConfig[];
   readonly roles: readonly RoleConfig[];
 }
 

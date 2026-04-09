@@ -10,8 +10,9 @@ export default defineConfig({
   outDir: "dist",
   clean: true,
   sourcemap: true,
-  dts: false, // Disabled: tsup DTS generator incompatible with TypeScript 6.x
+  dts: false,
   splitting: true,
+  external: ["playwright", "better-sqlite3", "imapflow"],
   banner: {
     js: "#!/usr/bin/env node",
   },

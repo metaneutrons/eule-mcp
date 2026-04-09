@@ -63,7 +63,8 @@ server.tool(
     const apiTier: ApiTier = tier ?? "graph";
     try {
       const config = configManager.get();
-      const token = await authenticateAccount(apiTier, account, config.oauth);
+      const autoAuth = account ? config.autoAuth?.find((a) => a.account === account) : undefined;
+      const token = await authenticateAccount(apiTier, account, config.oauth, autoAuth);
       return {
         content: [
           {

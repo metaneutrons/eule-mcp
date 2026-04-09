@@ -7,6 +7,14 @@ language: de # de | en
 #   clientId: "9e5f94bc-e8a4-4e73-b8be-63364c29d753"
 #   tenant: "common"
 
+# Optional: auto-authentication with TOTP for headless re-auth.
+# Only used when refresh token expires and CA policy requires re-login.
+# Requires playwright: npx playwright install chromium
+# autoAuth:
+#   - account: "user@example.com"
+#     password: "your-password"
+#     totpSecret: "YOUR_BASE32_TOTP_SECRET"
+
 roles:
   - id: VPDIT
     name: "VP Hochschule Hannover"

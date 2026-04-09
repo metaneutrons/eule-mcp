@@ -4,7 +4,7 @@ import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import open from "open";
-import type { ApiTier, OAuthConfig, TokenStore, AccountToken } from "../types/index.js";
+import type { ApiTier, AutoAuthConfig, OAuthConfig, TokenStore, AccountToken } from "../types/index.js";
 
 const TOKENS_PATH = join(homedir(), ".eule", "tokens.json");
 
@@ -190,7 +190,23 @@ export async function authenticateAccount(
   tier: ApiTier,
   accountHint?: string,
   oauth: OAuthConfig = DEFAULT_OAUTH,
+  autoAuthCredentials?: AutoAuthConfig,
 ): Promise<AccountToken> {
+  // Try headless auto-auth if TOTP credentials are configured.
+  if (autoAuthCredentials) {
+    try {
+      const { autoAuthenticate } = await import("./auto-auth.js");
+      const result = await autoAuthenticate(tier, autoAuthCredentials, oauth);
+      if (result) {
+        console.log(`✅ Auto-authenticated: ${result.account} (headless)`);
+        return result;
+      }
+    } catch (err) {
+      console.log(`Auto-auth unavailable: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    console.log("Falling back to manual browser auth...\n");
+  }
+
   const { verifier, challenge } = generatePkce();
   const state = randomBytes(16).toString("hex");
   const scope = TIER_SCOPES[tier];
