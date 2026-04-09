@@ -4,9 +4,11 @@ import { z } from "zod";
 import { ConfigManager } from "../config/index.js";
 import { DatabaseManager } from "../db/index.js";
 import { loadTokens, authenticateAccount, getAccessToken } from "../auth/index.js";
-import type { ApiTier } from "../types/index.js";
+import { ConnectorRegistry } from "../connectors/index.js";
+import type { ApiTier, MailMessage } from "../types/index.js";
 
 const configManager = new ConfigManager();
+const registry = new ConnectorRegistry(configManager);
 
 // Database initialized at startup, used by task/idea/note tools in Phase 2+.
 export const dbManager = new DatabaseManager();
@@ -213,6 +215,158 @@ server.tool(
     }
 
     return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+  },
+);
+
+// --- mail_list tool ---
+server.tool(
+  "mail_list",
+  "List recent emails from connected accounts, optionally filtered by role",
+  {
+    role: z.string().optional().describe("Filter by role ID (e.g. VPDIT, lexICT)"),
+    limit: z.number().optional().describe("Max messages per account (default 10)"),
+  },
+  async ({ role, limit }) => {
+    const connectors = registry.getMailConnectors(role);
+    if (connectors.length === 0) {
+      return { content: [{ type: "text" as const, text: "No mail connectors available. Run auth_login first." }] };
+    }
+
+    const allMessages: MailMessage[] = [];
+    for (const c of connectors) {
+      try {
+        const msgs = await c.listMessages(undefined, limit ?? 10);
+        allMessages.push(...msgs);
+      } catch (err) {
+        allMessages.push({
+          id: "error", account: c.account, subject: `Error: ${err instanceof Error ? err.message : String(err)}`,
+          from: "", to: [], receivedAt: "", snippet: "", isRead: false,
+        });
+      }
+    }
+
+    allMessages.sort((a, b) => b.receivedAt.localeCompare(a.receivedAt));
+
+    const lines = allMessages.map((m) =>
+      `[${m.account}] ${m.isRead ? " " : "●"} ${m.receivedAt.slice(0, 16)} | ${m.from} | ${m.subject}\n  ${m.snippet.slice(0, 100)}${m.snippet.length > 100 ? "..." : ""}\n  ID: ${m.id}`,
+    );
+
+    return { content: [{ type: "text" as const, text: lines.join("\n\n") || "No messages found." }] };
+  },
+);
+
+// --- mail_read tool ---
+server.tool(
+  "mail_read",
+  "Read a specific email by ID",
+  {
+    id: z.string().describe("Message ID"),
+    account: z.string().describe("Account email address"),
+  },
+  async ({ id, account }) => {
+    const connector = registry.getMailConnectorForAccount(account);
+    if (!connector) {
+      return { content: [{ type: "text" as const, text: `No connector for ${account}` }], isError: true };
+    }
+    try {
+      const msg = await connector.getMessage(id);
+      const text = [
+        `From: ${msg.from}`,
+        `To: ${msg.to.join(", ")}`,
+        `Subject: ${msg.subject}`,
+        `Date: ${msg.receivedAt}`,
+        msg.attachments.length > 0 ? `Attachments: ${msg.attachments.map((a) => `${a.name} (${String(a.size)}B)`).join(", ")}` : "",
+        `\n${msg.body}`,
+      ].filter(Boolean).join("\n");
+      return { content: [{ type: "text" as const, text }] };
+    } catch (err) {
+      return { content: [{ type: "text" as const, text: `Error: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
+    }
+  },
+);
+
+// --- mail_search tool ---
+server.tool(
+  "mail_search",
+  "Search emails across connected accounts",
+  {
+    query: z.string().describe("Search query"),
+    role: z.string().optional().describe("Filter by role ID"),
+    limit: z.number().optional().describe("Max results per account (default 10)"),
+  },
+  async ({ query, role, limit }) => {
+    const connectors = registry.getMailConnectors(role);
+    if (connectors.length === 0) {
+      return { content: [{ type: "text" as const, text: "No mail connectors available." }] };
+    }
+
+    const results: MailMessage[] = [];
+    for (const c of connectors) {
+      try {
+        results.push(...await c.searchMessages(query, limit ?? 10));
+      } catch (err) {
+        results.push({
+          id: "error", account: c.account, subject: `Search error: ${err instanceof Error ? err.message : String(err)}`,
+          from: "", to: [], receivedAt: "", snippet: "", isRead: false,
+        });
+      }
+    }
+
+    results.sort((a, b) => b.receivedAt.localeCompare(a.receivedAt));
+    const lines = results.map((m) =>
+      `[${m.account}] ${m.receivedAt.slice(0, 16)} | ${m.from} | ${m.subject}\n  ID: ${m.id}`,
+    );
+
+    return { content: [{ type: "text" as const, text: lines.join("\n\n") || "No results." }] };
+  },
+);
+
+// --- mail_send tool ---
+server.tool(
+  "mail_send",
+  "Send an email",
+  {
+    to: z.string().describe("Recipient(s), comma-separated"),
+    subject: z.string().describe("Email subject"),
+    body: z.string().describe("Email body text"),
+    role: z.string().optional().describe("Send from this role's first account"),
+  },
+  async ({ to, subject, body, role }) => {
+    const connectors = registry.getMailConnectors(role);
+    const connector = connectors[0];
+    if (!connector) {
+      return { content: [{ type: "text" as const, text: "No mail connector available for sending." }], isError: true };
+    }
+    try {
+      const recipients = to.split(",").map((s) => s.trim());
+      await connector.sendMessage(recipients, subject, body);
+      return { content: [{ type: "text" as const, text: `✅ Sent from ${connector.account} to ${to}` }] };
+    } catch (err) {
+      return { content: [{ type: "text" as const, text: `❌ Send failed: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
+    }
+  },
+);
+
+// --- mail_reply tool ---
+server.tool(
+  "mail_reply",
+  "Reply to an email",
+  {
+    id: z.string().describe("Original message ID"),
+    account: z.string().describe("Account email address"),
+    body: z.string().describe("Reply body text"),
+  },
+  async ({ id, account, body }) => {
+    const connector = registry.getMailConnectorForAccount(account);
+    if (!connector) {
+      return { content: [{ type: "text" as const, text: `No connector for ${account}` }], isError: true };
+    }
+    try {
+      await connector.replyToMessage(id, body);
+      return { content: [{ type: "text" as const, text: `✅ Reply sent from ${account}` }] };
+    } catch (err) {
+      return { content: [{ type: "text" as const, text: `❌ Reply failed: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
+    }
   },
 );
 
