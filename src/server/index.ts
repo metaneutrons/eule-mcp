@@ -3,7 +3,13 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { ConfigManager } from "../config/index.js";
-import { DatabaseManager, TaskManager } from "../db/index.js";
+import {
+  DatabaseManager,
+  TaskManager,
+  IdeaManager,
+  NoteManager,
+  ContactManager,
+} from "../db/index.js";
 import { loadTokens, authenticateAccount, getAccessToken } from "../providers/m365/index.js";
 import { ConnectorRegistry } from "../connectors/index.js";
 import { renderMail } from "../renderer/index.js";
@@ -868,6 +874,131 @@ server.tool(
     if (tasks.length === 0)
       return { content: [{ type: "text" as const, text: "No tasks found." }] };
     const lines = tasks.map((t) => `[${t.status}] #${String(t.id)} ${t.title}`);
+    return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+  },
+);
+
+// --- Idea tools ---
+const ideaManager = new IdeaManager(dbManager);
+
+server.tool(
+  "idea_add",
+  "Quick-capture an idea",
+  {
+    content: z.string().describe("The idea"),
+    context: z.string().optional().describe("Context where this came up"),
+    role_id: z.string().optional().describe("Role ID"),
+    tags: z.string().optional().describe("Comma-separated tags"),
+    source: z.string().optional().describe("Source (e.g. meeting, email)"),
+  },
+  async ({ content, ...opts }) => {
+    const idea = ideaManager.add(content, opts);
+    return { content: [{ type: "text" as const, text: `💡 Idea #${String(idea.id)} captured.` }] };
+  },
+);
+
+server.tool(
+  "idea_list",
+  "List captured ideas",
+  { role_id: z.string().optional().describe("Filter by role") },
+  async ({ role_id }) => {
+    const ideas = ideaManager.list(role_id);
+    if (ideas.length === 0)
+      return { content: [{ type: "text" as const, text: "No ideas captured yet." }] };
+    const lines = ideas.map((i) => `#${String(i.id)} ${i.content}${i.tags ? ` [${i.tags}]` : ""}`);
+    return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+  },
+);
+
+// --- Note tools ---
+const noteManager = new NoteManager(dbManager);
+
+server.tool(
+  "note_add",
+  "Create a note",
+  {
+    title: z.string().describe("Note title"),
+    body: z.string().describe("Note content (Markdown)"),
+    role_id: z.string().optional().describe("Role ID"),
+    project_id: z.number().optional().describe("Project ID"),
+    tags: z.string().optional().describe("Comma-separated tags"),
+  },
+  async ({ title, body, ...opts }) => {
+    const note = noteManager.add(title, body, opts);
+    return {
+      content: [
+        { type: "text" as const, text: `📝 Note #${String(note.id)} created: ${note.title}` },
+      ],
+    };
+  },
+);
+
+server.tool(
+  "note_list",
+  "List notes",
+  { role_id: z.string().optional().describe("Filter by role") },
+  async ({ role_id }) => {
+    const notes = noteManager.list(role_id);
+    if (notes.length === 0) return { content: [{ type: "text" as const, text: "No notes yet." }] };
+    const lines = notes.map(
+      (n) =>
+        `#${String(n.id)} ${n.title}${n.tags ? ` [${n.tags}]` : ""} (${n.updated_at.slice(0, 10)})`,
+    );
+    return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+  },
+);
+
+server.tool(
+  "note_search",
+  "Full-text search across notes",
+  { query: z.string().describe("Search query") },
+  async ({ query }) => {
+    const notes = noteManager.search(query);
+    if (notes.length === 0)
+      return { content: [{ type: "text" as const, text: "No notes found." }] };
+    const lines = notes.map(
+      (n) =>
+        `#${String(n.id)} ${n.title}\n  ${n.body.slice(0, 100)}${n.body.length > 100 ? "..." : ""}`,
+    );
+    return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+  },
+);
+
+// --- Contact tools ---
+const contactManager = new ContactManager(dbManager);
+
+server.tool(
+  "contact_add",
+  "Add a contact",
+  {
+    name: z.string().describe("Full name"),
+    email: z.string().optional().describe("Email address"),
+    organization: z.string().optional().describe("Organization"),
+    role_id: z.string().optional().describe("Role ID"),
+    notes: z.string().optional().describe("Notes about this contact"),
+  },
+  async ({ name, ...opts }) => {
+    const contact = contactManager.add(name, opts);
+    return {
+      content: [
+        { type: "text" as const, text: `👤 Contact #${String(contact.id)} added: ${contact.name}` },
+      ],
+    };
+  },
+);
+
+server.tool(
+  "contact_list",
+  "List contacts",
+  { role_id: z.string().optional().describe("Filter by role") },
+  async ({ role_id }) => {
+    const contacts = contactManager.list(role_id);
+    if (contacts.length === 0)
+      return { content: [{ type: "text" as const, text: "No contacts yet." }] };
+    const lines = contacts.map(
+      (c) =>
+        `#${String(c.id)} ${c.name}${c.email ? ` <${c.email}>` : ""}${c.organization ? ` @ ${c.organization}` : ""}`,
+    );
     return { content: [{ type: "text" as const, text: lines.join("\n") }] };
   },
 );
