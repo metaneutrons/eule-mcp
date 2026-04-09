@@ -6,34 +6,10 @@ const turndown = new TurndownService({
   codeBlockStyle: "fenced",
 });
 
-// Remove images (tracking pixels, logos).
-turndown.addRule("removeImages", {
-  filter: "img",
-  replacement: () => "",
-});
+turndown.addRule("removeImages", { filter: "img", replacement: () => "" });
+turndown.addRule("removeStyle", { filter: ["style", "script"], replacement: () => "" });
 
-// Remove style/script tags.
-turndown.addRule("removeStyle", {
-  filter: ["style", "script"],
-  replacement: () => "",
-});
-
-/** Patterns that indicate the start of a quoted reply. */
-const THREAD_SEPARATORS = [
-  /^-{3,}\s*Original Message\s*-{3,}/im,
-  /^-{3,}\s*Ursprüngliche Nachricht\s*-{3,}/im,
-  /^-{3,}\s*Weitergeleitete Nachricht\s*-{3,}/im,
-  /^-{3,}\s*Forwarded message\s*-{3,}/im,
-  /^Am .+ schrieb .+:$/m,
-  /^On .+ wrote:$/m,
-  /^Von:\s*.+$/m,
-  /^From:\s*.+$/m,
-  /^Gesendet:\s*.+$/m,
-  /^Sent:\s*.+$/m,
-  /^>{3,}/m,
-];
-
-/** Patterns that indicate an email signature. */
+/** Patterns that indicate an email signature in plain text. */
 const SIGNATURE_PATTERNS = [
   /^--\s*$/m,
   /^_{3,}$/m,
@@ -48,96 +24,96 @@ const SIGNATURE_PATTERNS = [
   /^Get Outlook for/im,
 ];
 
+/** Plain text thread separators. */
+const TEXT_SEPARATORS = [
+  /^-{3,}\s*Original Message\s*-{3,}/im,
+  /^-{3,}\s*Ursprüngliche Nachricht\s*-{3,}/im,
+  /^-{3,}\s*Weitergeleitete Nachricht\s*-{3,}/im,
+  /^-{3,}\s*Forwarded message\s*-{3,}/im,
+  /^Am .+ schrieb .+:$/m,
+  /^On .+ wrote:$/m,
+];
+
 export interface ThreadMessage {
   header: string;
   body: string;
 }
 
-/** Unescape XML/HTML entities that may come from SOAP responses. */
-function unescapeHtml(s: string): string {
-  return s
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&amp;/g, "&")
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n as string, 10)))
-    .replace(/&#x([0-9a-fA-F]+);/g, (_, n) => String.fromCharCode(parseInt(n as string, 16)));
+/** Split HTML email body into thread parts using HTML markers. */
+function splitHtmlThread(html: string): string[] {
+
+  // Strategy 1: Split on <div id="divRplyFwdMsg"> (Outlook/OWA)
+  // The <hr> + divRplyFwdMsg pattern is the most common in enterprise email.
+  const outlookSplit = html.split(/<hr[^>]*>[\s\S]*?<div\s+id=["']divRplyFwdMsg["'][^>]*>/i);
+  if (outlookSplit.length > 1) {
+    return outlookSplit;
+  }
+
+  // Strategy 2: Split on <div id="appendonsend"> (Outlook marker)
+  const appendSplit = html.split(/<div\s+id=["']appendonsend["'][^>]*>[\s\S]*?<hr[^>]*>/i);
+  if (appendSplit.length > 1) {
+    return appendSplit;
+  }
+
+  // Strategy 3: Split on <blockquote> (Gmail, Apple Mail)
+  const bqMatch = html.match(/^([\s\S]*?)<blockquote[^>]*>([\s\S]*)$/i);
+  if (bqMatch && bqMatch[1] && bqMatch[2]) {
+    return [bqMatch[1], bqMatch[2]];
+  }
+
+  // No split found — return as single part.
+  return [html];
 }
 
-/** Convert HTML email body to clean Markdown. */
-export function htmlToMarkdown(html: string): string {
-  // Unescape entities from XML wrapping, then strip noise.
-  let cleaned = unescapeHtml(html)
+/** Convert a single HTML fragment to clean Markdown. */
+function htmlFragmentToMarkdown(html: string): string {
+  const cleaned = html
     .replace(/<head[\s\S]*?<\/head>/gi, "")
     .replace(/<!--[\s\S]*?-->/g, "")
     .replace(/<o:p>[\s\S]*?<\/o:p>/gi, "")
     .replace(/&nbsp;/g, " ");
-
   return turndown.turndown(cleaned).trim();
 }
 
-/** Split an email body into thread messages (newest first). */
-export function splitThread(text: string): ThreadMessage[] {
-  const messages: ThreadMessage[] = [];
-  let remaining = text;
-
-  for (const sep of THREAD_SEPARATORS) {
-    const match = sep.exec(remaining);
-    if (match && match.index !== undefined && match.index > 50) {
-      // Found a separator — everything before it is the current message.
-      messages.push({
-        header: "",
-        body: remaining.slice(0, match.index).trim(),
-      });
-      remaining = remaining.slice(match.index).trim();
-      break;
+/** Split plain text into thread messages. */
+function splitTextThread(text: string): string[] {
+  for (const sep of TEXT_SEPARATORS) {
+    const match = sep.exec(text);
+    if (match?.index !== undefined && match.index > 50) {
+      return [text.slice(0, match.index).trim(), text.slice(match.index).trim()];
     }
   }
+  return [text];
+}
 
-  // If no separator found, the whole text is one message.
-  if (messages.length === 0) {
-    return [{ header: "", body: remaining.trim() }];
-  }
-
-  // The rest is the quoted thread — split further recursively.
-  if (remaining.length > 0) {
-    // Extract header line(s) from the separator.
-    const lines = remaining.split("\n");
-    let headerEnd = 0;
-    for (let i = 0; i < Math.min(lines.length, 6); i++) {
-      if (lines[i]?.trim() === "") {
-        headerEnd = i + 1;
-        break;
-      }
-      headerEnd = i + 1;
+/** Extract a reply header from a thread part (Von/From + Gesendet/Sent). */
+function extractReplyHeader(text: string): string {
+  const lines = text.split("\n").slice(0, 8);
+  const headerLines: string[] = [];
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (/^(\*\*)?(?:Von|From|Gesendet|Sent|An|To|Cc|Betreff|Subject)\b/i.test(trimmed)) {
+      headerLines.push(trimmed);
     }
-    const header = lines.slice(0, headerEnd).join("\n").trim();
-    const body = lines.slice(headerEnd).join("\n").trim();
-
-    // Recursively split the quoted part.
-    const nested = splitThread(body);
-    if (nested.length > 0 && nested[0]) {
-      nested[0].header = header;
-    }
-    messages.push(...nested);
   }
-
-  return messages;
+  return headerLines.join("\n");
 }
 
 /** Remove email signature from text. */
 export function removeSignature(text: string): string {
   let cutIndex = text.length;
-
   for (const pattern of SIGNATURE_PATTERNS) {
     const match = pattern.exec(text);
-    if (match && match.index !== undefined && match.index > 50 && match.index < cutIndex) {
+    if (match?.index !== undefined && match.index > 50 && match.index < cutIndex) {
       cutIndex = match.index;
     }
   }
-
   return text.slice(0, cutIndex).trim();
+}
+
+/** Convert HTML email body to clean Markdown. */
+export function htmlToMarkdown(html: string): string {
+  return htmlFragmentToMarkdown(html);
 }
 
 /** Render an email body for LLM consumption. */
@@ -150,35 +126,38 @@ export function renderMail(opts: {
 }): string {
   const { body, bodyType, depth = 1, maxLength = 4000, format = "markdown" } = opts;
 
-  // Raw: return as-is.
-  if (format === "raw") {
-    return truncate(body, maxLength);
-  }
+  if (format === "raw") return truncate(body, maxLength);
 
-  // Convert HTML to text/markdown.
-  let text = bodyType === "html" ? htmlToMarkdown(body) : body;
-
-  // Plain: just strip HTML, no thread splitting.
   if (format === "plain") {
+    const text = bodyType === "html" ? htmlFragmentToMarkdown(body) : body;
     return truncate(removeSignature(text), maxLength);
   }
 
-  // Markdown: split thread, apply depth, remove signatures.
-  const thread = splitThread(text);
+  // Markdown format: split thread, apply depth.
+  let threadParts: string[];
 
-  const selected = depth === 0 ? thread : thread.slice(0, depth);
+  if (bodyType === "html") {
+    // Split in HTML first (more reliable markers), then convert each part.
+    const htmlParts = splitHtmlThread(body);
+    threadParts = htmlParts.map((part) => htmlFragmentToMarkdown(part));
+  } else {
+    threadParts = splitTextThread(body);
+  }
 
-  const parts = selected.map((msg, i) => {
-    const cleaned = removeSignature(msg.body);
+  // Apply depth.
+  const selected = depth === 0 ? threadParts : threadParts.slice(0, depth);
+
+  const rendered = selected.map((part, i) => {
+    const cleaned = removeSignature(part);
     if (i === 0) return cleaned;
-    const header = msg.header ? `\n---\n${msg.header}\n\n` : "\n---\n\n";
-    return header + cleaned;
+    const header = extractReplyHeader(part);
+    return header ? `\n---\n${header}\n\n${cleaned}` : `\n---\n\n${cleaned}`;
   });
 
-  let result = parts.join("\n");
+  let result = rendered.join("\n");
 
-  if (depth > 0 && thread.length > depth) {
-    result += `\n\n[...${String(thread.length - depth)} earlier message(s) truncated, use depth=0 for full thread]`;
+  if (depth > 0 && threadParts.length > depth) {
+    result += `\n\n[...${String(threadParts.length - depth)} earlier message(s), use depth=0 for full thread]`;
   }
 
   return truncate(result, maxLength);
@@ -187,4 +166,10 @@ export function renderMail(opts: {
 function truncate(text: string, maxLength: number): string {
   if (maxLength <= 0 || text.length <= maxLength) return text;
   return text.slice(0, maxLength) + "\n\n[...truncated at " + String(maxLength) + " chars]";
+}
+
+/** Split an email thread (exported for testing). */
+export function splitThread(text: string): ThreadMessage[] {
+  const parts = splitTextThread(text);
+  return parts.map((p) => ({ header: extractReplyHeader(p), body: p }));
 }
