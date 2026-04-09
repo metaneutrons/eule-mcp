@@ -38,6 +38,16 @@ export const TIER_SCOPES: Record<ApiTier, string> = {
   imap: "https://outlook.office.com/IMAP.AccessAsUser.All https://outlook.office.com/SMTP.Send offline_access",
 };
 
+/** Thrown when CA policy requires interactive re-authentication (e.g. sign-in frequency). */
+export class InteractionRequiredError extends Error {
+  constructor(public readonly account: string) {
+    super(
+      `Re-authentication required for ${account}. Your tenant's Conditional Access policy requires a fresh login. Run auth_login to re-authenticate.`,
+    );
+    this.name = "InteractionRequiredError";
+  }
+}
+
 /** Generate PKCE code verifier + challenge. */
 function generatePkce(): { verifier: string; challenge: string } {
   const verifier = randomBytes(32).toString("base64url");
@@ -79,7 +89,14 @@ export async function refreshAccessToken(
     body: body.toString(),
   });
 
-  if (!res.ok) return null;
+  if (!res.ok) {
+    const errBody = await res.text();
+    // Detect CA sign-in frequency or MFA re-prompt.
+    if (errBody.includes("interaction_required") || errBody.includes("AADSTS50076") || errBody.includes("AADSTS50078")) {
+      throw new InteractionRequiredError(account);
+    }
+    return null;
+  }
 
   const data = (await res.json()) as {
     access_token: string;

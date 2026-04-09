@@ -4,5 +4,6 @@ export {
   refreshAccessToken,
   loadTokens,
   saveTokens,
+  InteractionRequiredError,
   TIER_SCOPES,
 } from "./oauth.js";
