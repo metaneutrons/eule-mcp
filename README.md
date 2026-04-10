@@ -47,7 +47,7 @@ Eule is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) serve
 │  ┌───▼──────────▼──────────────▼─────────┐   │
 │  │          Provider Layer               │   │
 │  │  M365 (Graph/EWS) · IMAP · CalDAV ·  │   │
-│  │  CardDAV · iCal · Signal              │   │
+│  │  CardDAV · iCal · Signal · Google     │   │
 │  └───────────────────────────────────────┘   │
 └─────────────────────────────────────────────┘
 ```
@@ -185,19 +185,34 @@ roles:
 **Generic IMAP** (iCloud, Gmail, Fastmail, any mail server):
 
 ```yaml
+google:
+  clientId: "123456.apps.googleusercontent.com"
+  clientSecret: "GOCSPX-..."
+
 roles:
   - id: personal
     name: "Personal"
     weeklyHours: 0
     connectors:
       mail:
+        - id: gmail
+          type: google
+          account: "you@gmail.com"
         - id: icloud
           type: imap
           account: "you@icloud.com"
           host: "imap.mail.me.com"
           smtpHost: "smtp.mail.me.com"
           auth: password
-          password: "xxxx-xxxx-xxxx-xxxx"  # app-specific password
+          password: "xxxx-xxxx-xxxx-xxxx"
+      calendar:
+        - id: gcal
+          type: google
+          account: "you@gmail.com"
+      files:
+        - id: gdrive
+          type: google
+          account: "you@gmail.com"
       messenger:
         - id: signal
           type: signal
