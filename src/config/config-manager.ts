@@ -3,7 +3,13 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import yaml from "js-yaml";
-import type { AppConfig, AutoAuthConfig, OAuthConfig, RoleConfig } from "../types/index.js";
+import type {
+  AppConfig,
+  AutoAuthConfig,
+  OAuthConfig,
+  RoleConfig,
+  ConnectorConfig,
+} from "../types/index.js";
 
 const EULE_DIR = join(homedir(), ".eule");
 const CONFIG_PATH = join(EULE_DIR, "config.yaml");
@@ -108,7 +114,9 @@ function parseConnectorList(raw: unknown): RoleConfig["connectors"]["mail"] {
     .filter((c): c is Record<string, unknown> => typeof c === "object" && c !== null)
     .map((c) => ({
       id: String(c.id ?? ""),
-      type: c.type === "imap" ? "imap" : "m365",
+      type: (["imap", "caldav", "carddav"].includes(String(c.type))
+        ? String(c.type)
+        : "m365") as ConnectorConfig["type"],
       account: String(c.account ?? ""),
       shared: c.shared === true,
       host: typeof c.host === "string" ? c.host : undefined,
@@ -117,6 +125,7 @@ function parseConnectorList(raw: unknown): RoleConfig["connectors"]["mail"] {
       smtpPort: typeof c.smtpPort === "number" ? c.smtpPort : undefined,
       auth: c.auth === "oauth" || c.auth === "password" ? c.auth : undefined,
       password: typeof c.password === "string" ? c.password : undefined,
+      url: typeof c.url === "string" ? c.url : undefined,
     }));
 }
 

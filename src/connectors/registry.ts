@@ -8,6 +8,8 @@ import { EwsCalendarConnector } from "../providers/m365/ews-calendar.js";
 import { GraphCalendarConnector } from "../providers/m365/graph-calendar.js";
 import { GraphContactConnector } from "../providers/m365/graph-contacts.js";
 import { EwsContactConnector } from "../providers/m365/ews-contacts.js";
+import { CalDavCalendarConnector } from "../providers/caldav/index.js";
+import { CardDavContactConnector } from "../providers/caldav/index.js";
 
 export class ConnectorRegistry {
   constructor(private readonly config: ConfigManager) {}
@@ -127,6 +129,20 @@ export class ConnectorRegistry {
 
     for (const r of roles) {
       for (const cc of r.connectors.calendar ?? []) {
+        if (cc.type === "caldav") {
+          if (cc.url && cc.password) {
+            connectors.push(
+              new CalDavCalendarConnector(cc.account, {
+                account: cc.account,
+                url: cc.url,
+                password: cc.password,
+              }),
+            );
+          }
+          continue;
+        }
+
+        // M365 provider.
         const token = tokens.accounts[cc.account];
         if (!token) continue;
         const getToken = () => getAccessToken(cc.account, oauth);
@@ -155,6 +171,19 @@ export class ConnectorRegistry {
 
     for (const r of roles) {
       for (const cc of r.connectors.contacts ?? []) {
+        if (cc.type === "carddav") {
+          if (cc.url && cc.password) {
+            connectors.push(
+              new CardDavContactConnector(cc.account, {
+                account: cc.account,
+                url: cc.url,
+                password: cc.password,
+              }),
+            );
+          }
+          continue;
+        }
+
         if (cc.type !== "m365") continue;
         const token = tokens.accounts[cc.account];
         if (!token) continue;
