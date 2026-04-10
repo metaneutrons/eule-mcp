@@ -17,6 +17,7 @@ export type {
   CalendarEvent,
   CalendarEventInput,
   RemoteContact,
+  ContactInput,
   Conversation,
   ChatMessage,
   FileResult,

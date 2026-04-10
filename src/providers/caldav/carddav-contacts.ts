@@ -1,5 +1,5 @@
 import { DAVClient } from "tsdav";
-import type { ContactConnector, RemoteContact } from "../../types/index.js";
+import type { ContactConnector, ContactInput, RemoteContact } from "../../types/index.js";
 
 export interface CardDavConfig {
   account: string;
@@ -14,6 +14,7 @@ function vcard(data: string, key: string): string {
 
 export class CardDavContactConnector implements ContactConnector {
   readonly tier = "carddav";
+  readonly readOnly = true;
 
   constructor(
     readonly account: string,
@@ -59,6 +60,10 @@ export class CardDavContactConnector implements ContactConnector {
         `${c.displayName} ${c.email ?? ""} ${c.organization ?? ""}`.toLowerCase().includes(q),
       )
       .slice(0, limit);
+  }
+
+  createContact(_contact: ContactInput): Promise<RemoteContact> {
+    return Promise.reject(new Error("CardDAV contacts are read-only"));
   }
 
   private parse(data: string, url: string): RemoteContact {

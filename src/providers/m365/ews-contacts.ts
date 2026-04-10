@@ -1,5 +1,5 @@
 import { XMLParser } from "fast-xml-parser";
-import type { ContactConnector, RemoteContact } from "../../types/index.js";
+import type { ContactConnector, ContactInput, RemoteContact } from "../../types/index.js";
 
 const EWS_URL = "https://outlook.office365.com/EWS/Exchange.asmx";
 
@@ -40,6 +40,7 @@ function dig(obj: unknown, ...keys: string[]): unknown {
 
 export class EwsContactConnector implements ContactConnector {
   readonly tier = "ews";
+  readonly readOnly = false;
 
   constructor(
     readonly account: string,
@@ -92,6 +93,33 @@ export class EwsContactConnector implements ContactConnector {
     </m:FindItem>`);
 
     return this.extractContacts(data);
+  }
+
+  async createContact(contact: ContactInput): Promise<RemoteContact> {
+    await this.post(`
+    <m:CreateItem>
+      <m:SavedItemFolderId>
+        <t:DistinguishedFolderId Id="contacts"/>
+      </m:SavedItemFolderId>
+      <m:Items>
+        <t:Contact>
+          <t:DisplayName>${contact.displayName}</t:DisplayName>
+          ${contact.email ? `<t:EmailAddresses><t:Entry Key="EmailAddress1">${contact.email}</t:Entry></t:EmailAddresses>` : ""}
+          ${contact.phone ? `<t:PhoneNumbers><t:Entry Key="MobilePhone">${contact.phone}</t:Entry></t:PhoneNumbers>` : ""}
+          ${contact.organization ? `<t:CompanyName>${contact.organization}</t:CompanyName>` : ""}
+          ${contact.jobTitle ? `<t:JobTitle>${contact.jobTitle}</t:JobTitle>` : ""}
+        </t:Contact>
+      </m:Items>
+    </m:CreateItem>`);
+    return {
+      id: "",
+      account: this.account,
+      displayName: contact.displayName,
+      email: contact.email,
+      phone: contact.phone,
+      organization: contact.organization,
+      jobTitle: contact.jobTitle,
+    };
   }
 
   private extractContacts(data: unknown): RemoteContact[] {

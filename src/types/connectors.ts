@@ -87,12 +87,23 @@ export interface RemoteContact {
   readonly jobTitle?: string;
 }
 
+/** Input for creating a contact. */
+export interface ContactInput {
+  readonly displayName: string;
+  readonly email?: string;
+  readonly phone?: string;
+  readonly organization?: string;
+  readonly jobTitle?: string;
+}
+
 /** Contact connector interface — implemented per API tier. */
 export interface ContactConnector {
   readonly account: string;
   readonly tier: string;
+  readonly readOnly: boolean;
   listContacts(limit?: number): Promise<RemoteContact[]>;
   searchContacts(query: string, limit?: number): Promise<RemoteContact[]>;
+  createContact(contact: ContactInput): Promise<RemoteContact>;
 }
 
 /** Chat conversation from a messenger. */

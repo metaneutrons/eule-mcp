@@ -1,4 +1,4 @@
-import type { ContactConnector, RemoteContact } from "../../types/index.js";
+import type { ContactConnector, ContactInput, RemoteContact } from "../../types/index.js";
 
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
 
@@ -14,6 +14,7 @@ interface GraphContact {
 
 export class GraphContactConnector implements ContactConnector {
   readonly tier = "graph";
+  readonly readOnly = false;
 
   constructor(
     readonly account: string,
@@ -55,6 +56,27 @@ export class GraphContactConnector implements ContactConnector {
     }
     const data = (await res.json()) as { value: GraphContact[] };
     return data.value.map((c) => this.map(c));
+  }
+
+  async createContact(contact: ContactInput): Promise<RemoteContact> {
+    const h = await this.headers();
+    const body: Record<string, unknown> = {
+      givenName: contact.displayName,
+      displayName: contact.displayName,
+    };
+    if (contact.email)
+      body.emailAddresses = [{ address: contact.email, name: contact.displayName }];
+    if (contact.phone) body.mobilePhone = contact.phone;
+    if (contact.organization) body.companyName = contact.organization;
+    if (contact.jobTitle) body.jobTitle = contact.jobTitle;
+    const res = await fetch(`${this.base}/contacts`, {
+      method: "POST",
+      headers: h,
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(`Graph createContact: ${String(res.status)} ${await res.text()}`);
+    const c = (await res.json()) as GraphContact;
+    return this.map(c);
   }
 
   private map(c: GraphContact): RemoteContact {

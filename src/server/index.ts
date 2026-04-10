@@ -3,7 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { ConfigManager } from "../config/index.js";
-import { DatabaseManager, TaskManager, NoteManager, ContactManager } from "../db/index.js";
+import { DatabaseManager, TaskManager, ContactManager } from "../db/index.js";
 import { loadTokens, authenticateAccount, getAccessToken } from "../providers/m365/index.js";
 import { ConnectorRegistry } from "../connectors/index.js";
 import { renderMail } from "../renderer/index.js";
@@ -1084,78 +1084,68 @@ server.tool(
   },
 );
 
-// --- Note tools ---
-const noteManager = new NoteManager(dbManager);
-
-server.tool(
-  "note_add",
-  "Create a note",
-  {
-    title: z.string().describe("Note title"),
-    body: z.string().describe("Note content (Markdown)"),
-    role_id: z.string().optional().describe("Role ID"),
-    project_id: z.number().optional().describe("Project ID"),
-    tags: z.string().optional().describe("Comma-separated tags"),
-  },
-  async ({ title, body, ...opts }) => {
-    const note = noteManager.add(title, body, opts);
-    return {
-      content: [
-        { type: "text" as const, text: `📝 Note #${String(note.id)} created: ${note.title}` },
-      ],
-    };
-  },
-);
-
-server.tool(
-  "note_list",
-  "List notes",
-  { role_id: z.string().optional().describe("Filter by role") },
-  async ({ role_id }) => {
-    const notes = noteManager.list(role_id);
-    if (notes.length === 0) return { content: [{ type: "text" as const, text: "No notes yet." }] };
-    const lines = notes.map(
-      (n) =>
-        `#${String(n.id)} ${n.title}${n.tags ? ` [${n.tags}]` : ""} (${n.updated_at.slice(0, 10)})`,
-    );
-    return { content: [{ type: "text" as const, text: lines.join("\n") }] };
-  },
-);
-
-server.tool(
-  "note_search",
-  "Full-text search across notes",
-  { query: z.string().describe("Search query") },
-  async ({ query }) => {
-    const notes = noteManager.search(query);
-    if (notes.length === 0)
-      return { content: [{ type: "text" as const, text: "No notes found." }] };
-    const lines = notes.map(
-      (n) =>
-        `#${String(n.id)} ${n.title}\n  ${n.body.slice(0, 100)}${n.body.length > 100 ? "..." : ""}`,
-    );
-    return { content: [{ type: "text" as const, text: lines.join("\n") }] };
-  },
-);
-
 // --- Contact tools ---
 const contactManager = new ContactManager(dbManager);
 
 server.tool(
   "contact_add",
-  "Add a local contact (for contacts not in your address book)",
+  "Add a contact to a remote address book (Graph, EWS) or locally",
   {
     name: z.string().describe("Full name"),
     email: z.string().optional().describe("Email address"),
+    phone: z.string().optional().describe("Phone number"),
     organization: z.string().optional().describe("Organization"),
-    role_id: z.string().optional().describe("Role ID"),
-    notes: z.string().optional().describe("Notes about this contact"),
+    jobTitle: z.string().optional().describe("Job title"),
+    role: z.string().optional().describe("Role ID (picks first writable connector)"),
+    account: z.string().optional().describe("Specific account to add to"),
+    local: z.boolean().optional().describe("Force local-only storage"),
+    notes: z.string().optional().describe("Notes (local contacts only)"),
   },
-  async ({ name, ...opts }) => {
-    const contact = contactManager.add(name, opts);
+  async ({ name, email, phone, organization, jobTitle, role, account, local, notes }) => {
+    // Try remote connector first (unless local forced).
+    if (!local) {
+      const connectors = registry.getContactConnectors(role);
+      const target = account
+        ? connectors.find((c) => c.account === account)
+        : connectors.find((c) => !c.readOnly);
+      if (target && !target.readOnly) {
+        try {
+          const created = await target.createContact({
+            displayName: name,
+            email,
+            phone,
+            organization,
+            jobTitle,
+          });
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `👤 Contact added to ${target.account} (${target.tier}): ${created.displayName}`,
+              },
+            ],
+          };
+        } catch (err) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `❌ Remote failed: ${err instanceof Error ? err.message : String(err)}`,
+              },
+            ],
+            isError: true,
+          };
+        }
+      }
+    }
+    // Local fallback.
+    const contact = contactManager.add(name, { email, organization, notes });
     return {
       content: [
-        { type: "text" as const, text: `👤 Contact #${String(contact.id)} added: ${contact.name}` },
+        {
+          type: "text" as const,
+          text: `👤 Contact #${String(contact.id)} added locally: ${contact.name}`,
+        },
       ],
     };
   },
