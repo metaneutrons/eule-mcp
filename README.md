@@ -60,7 +60,7 @@ Eule is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) serve
 - **Role-based context** — map accounts and connectors to professional roles
 - **LLM-optimized output** — HTML emails rendered as clean Markdown with thread splitting
 
-## Tools (33)
+## Tools (29)
 
 ### 🔐 Auth (3)
 
@@ -123,27 +123,13 @@ Eule is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) serve
 | `task_complete` | Mark task as done |
 | `task_search` | Full-text search across tasks |
 
-### 📝 Notes (3)
-
-| Tool | Description |
-|---|---|
-| `note_add` | Create a searchable note (Markdown) |
-| `note_list` | List notes |
-| `note_search` | Full-text search across notes |
-
 ### 👤 Contacts (3)
 
 | Tool | Description |
 |---|---|
-| `contact_add` | Add a local contact with notes |
+| `contact_add` | Add contact to remote address book (Graph, EWS) or locally |
 | `contact_list` | List contacts from all sources (Graph, EWS, CardDAV + local) |
 | `contact_search` | Search contacts across all sources |
-
-### 🧠 Intelligence (1)
-
-| Tool | Description |
-|---|---|
-| `briefing_today` | Daily briefing: calendar + unread mail + active tasks |
 
 ## Quickstart
 
@@ -269,8 +255,7 @@ autoAuth:
 - [x] Calendar read/write (Graph + EWS + CalDAV)
 - [x] GTD task engine with SQLite + Markdown export
 - [x] Role & context CRUD
-- [x] Ideas, Notes, Contacts
-- [x] Daily briefing
+- [x] Contacts (local + remote write via Graph/EWS)
 - [x] Graph API connectors (Mail + Calendar + Contacts)
 - [x] Generic IMAP/SMTP provider (any mail server, password or OAuth)
 - [x] CalDAV/CardDAV provider (iCloud, Nextcloud, any CalDAV/CardDAV server)
