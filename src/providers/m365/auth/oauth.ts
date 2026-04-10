@@ -4,7 +4,13 @@ import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import open from "open";
-import type { ApiTier, AutoAuthConfig, OAuthConfig, TokenStore, AccountToken } from "../../../types/index.js";
+import type {
+  ApiTier,
+  AutoAuthConfig,
+  OAuthConfig,
+  TokenStore,
+  AccountToken,
+} from "../../../types/index.js";
 
 const TOKENS_PATH = join(homedir(), ".eule", "tokens.json");
 
@@ -92,7 +98,11 @@ export async function refreshAccessToken(
   if (!res.ok) {
     const errBody = await res.text();
     // Detect CA sign-in frequency or MFA re-prompt.
-    if (errBody.includes("interaction_required") || errBody.includes("AADSTS50076") || errBody.includes("AADSTS50078")) {
+    if (
+      errBody.includes("interaction_required") ||
+      errBody.includes("AADSTS50076") ||
+      errBody.includes("AADSTS50078")
+    ) {
       throw new InteractionRequiredError(account);
     }
     return null;
@@ -256,7 +266,9 @@ export async function authenticateAccount(
             }
           } catch {
             res.writeHead(200, { "Content-Type": "text/html" });
-            res.end("<h1>❌ Invalid URL</h1><p>Paste the full URL from the browser address bar.</p>");
+            res.end(
+              "<h1>❌ Invalid URL</h1><p>Paste the full URL from the browser address bar.</p>",
+            );
             return;
           }
 
@@ -283,7 +295,9 @@ export async function authenticateAccount(
               resolve(result);
             } catch (err) {
               res.writeHead(200, { "Content-Type": "text/html" });
-              res.end(`<h1>❌ Error</h1><pre>${err instanceof Error ? err.message : String(err)}</pre>`);
+              res.end(
+                `<h1>❌ Error</h1><pre>${err instanceof Error ? err.message : String(err)}</pre>`,
+              );
               server.close();
               reject(err instanceof Error ? err : new Error(String(err)));
             }
@@ -326,10 +340,13 @@ button{padding:10px 20px;font-size:16px;cursor:pointer;background:#0078d4;color:
       }, 1000);
     });
 
-    setTimeout(() => {
-      server.close();
-      reject(new Error("Authentication timed out (5 minutes)"));
-    }, 5 * 60 * 1000);
+    setTimeout(
+      () => {
+        server.close();
+        reject(new Error("Authentication timed out (5 minutes)"));
+      },
+      5 * 60 * 1000,
+    );
   });
 }
 
@@ -344,9 +361,7 @@ function extractEmail(jwt: string): string | null {
       string,
       unknown
     >;
-    return (decoded["upn"] ?? decoded["preferred_username"] ?? decoded["email"] ?? null) as
-      | string
-      | null;
+    return (decoded.upn ?? decoded.preferred_username ?? decoded.email ?? null) as string | null;
   } catch {
     return null;
   }

@@ -73,7 +73,8 @@ export class GraphMailConnector implements MailConnector {
     const h = await this.headers();
     const url = `${this.base}/messages/${messageId}/attachments/${attachmentId}/$value`;
     const res = await fetch(url, { headers: h });
-    if (!res.ok) throw new Error(`Graph downloadAttachment: ${String(res.status)} ${await res.text()}`);
+    if (!res.ok)
+      throw new Error(`Graph downloadAttachment: ${String(res.status)} ${await res.text()}`);
     return Buffer.from(await res.arrayBuffer());
   }
 
@@ -112,11 +113,50 @@ export class GraphMailConnector implements MailConnector {
     if (!res.ok) throw new Error(`Graph replyToMessage: ${String(res.status)} ${await res.text()}`);
   }
 
+  async forwardMessage(id: string, to: string[], body?: string): Promise<void> {
+    const h = await this.headers();
+    const res = await fetch(`${this.base}/messages/${id}/forward`, {
+      method: "POST",
+      headers: h,
+      body: JSON.stringify({
+        comment: body ?? "",
+        toRecipients: to.map((addr) => ({ emailAddress: { address: addr } })),
+      }),
+    });
+    if (!res.ok) throw new Error(`Graph forwardMessage: ${String(res.status)} ${await res.text()}`);
+  }
+
+  async markRead(id: string, isRead: boolean): Promise<void> {
+    const h = await this.headers();
+    const res = await fetch(`${this.base}/messages/${id}`, {
+      method: "PATCH",
+      headers: h,
+      body: JSON.stringify({ isRead }),
+    });
+    if (!res.ok) throw new Error(`Graph markRead: ${String(res.status)} ${await res.text()}`);
+  }
+
+  async moveMessage(id: string, folder: string): Promise<void> {
+    const h = await this.headers();
+    const res = await fetch(`${this.base}/messages/${id}/move`, {
+      method: "POST",
+      headers: h,
+      body: JSON.stringify({ destinationId: folder }),
+    });
+    if (!res.ok) throw new Error(`Graph moveMessage: ${String(res.status)} ${await res.text()}`);
+  }
+
+  async deleteMessage(id: string): Promise<void> {
+    const h = await this.headers();
+    const res = await fetch(`${this.base}/messages/${id}`, { method: "DELETE", headers: h });
+    if (!res.ok) throw new Error(`Graph deleteMessage: ${String(res.status)} ${await res.text()}`);
+  }
+
   private mapMessage(m: GraphMessage): MailMessage {
     return {
       id: m.id,
       account: this.account,
-      subject: m.subject ?? "",
+      subject: m.subject,
       from: m.from?.emailAddress?.address ?? "",
       to: (m.toRecipients ?? []).map((r) => r.emailAddress?.address ?? ""),
       receivedAt: m.receivedDateTime ?? "",

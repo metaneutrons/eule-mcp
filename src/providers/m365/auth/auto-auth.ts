@@ -34,14 +34,24 @@ function extractEmail(jwt: string): string | null {
   const payload = parts[1];
   if (!payload) return null;
   try {
-    const decoded = JSON.parse(Buffer.from(payload, "base64url").toString()) as Record<string, unknown>;
-    return (decoded["upn"] ?? decoded["preferred_username"] ?? decoded["email"] ?? null) as string | null;
+    const decoded = JSON.parse(Buffer.from(payload, "base64url").toString()) as Record<
+      string,
+      unknown
+    >;
+    return (decoded.upn ?? decoded.preferred_username ?? decoded.email ?? null) as string | null;
   } catch {
     return null;
   }
 }
 
-async function saveDebug(page: { url: () => string; content: () => Promise<string>; screenshot: (opts: { path: string }) => Promise<unknown> }, label: string): Promise<void> {
+async function saveDebug(
+  page: {
+    url: () => string;
+    content: () => Promise<string>;
+    screenshot: (opts: { path: string }) => Promise<unknown>;
+  },
+  label: string,
+): Promise<void> {
   try {
     writeFileSync(join(DEBUG_DIR, `auto-auth-debug-${label}.html`), await page.content(), "utf-8");
     await page.screenshot({ path: join(DEBUG_DIR, `auto-auth-debug-${label}.png`) });
@@ -101,10 +111,17 @@ export async function autoAuthenticate(
 
     // Step 2: Fill email if visible.
     try {
-      const emailInput = page.locator('input[type="email"], input[name="loginfmt"], input[name="UserName"], input[id="userNameInput"], input[id="i0116"]').first();
+      const emailInput = page
+        .locator(
+          'input[type="email"], input[name="loginfmt"], input[name="UserName"], input[id="userNameInput"], input[id="i0116"]',
+        )
+        .first();
       if (await emailInput.isVisible({ timeout: 3000 })) {
         await emailInput.fill(credentials.account);
-        await page.locator('input[type="submit"], button[type="submit"], button[id="idSIButton9"]').first().click();
+        await page
+          .locator('input[type="submit"], button[type="submit"], button[id="idSIButton9"]')
+          .first()
+          .click();
         await page.waitForLoadState("networkidle");
         await page.waitForTimeout(2000);
       }
@@ -118,7 +135,10 @@ export async function autoAuthenticate(
       const passwordInput = page.locator('input[type="password"]').first();
       await passwordInput.waitFor({ state: "visible", timeout: 10000 });
       await passwordInput.fill(credentials.password);
-      await page.locator('input[type="submit"], button[type="submit"], button[id="idSIButton9"]').first().click();
+      await page
+        .locator('input[type="submit"], button[type="submit"], button[id="idSIButton9"]')
+        .first()
+        .click();
       await page.waitForLoadState("networkidle");
       await page.waitForTimeout(3000);
     } catch (err) {
@@ -171,12 +191,21 @@ export async function autoAuthenticate(
 
     // Step 6: Enter TOTP code.
     try {
-      const totpInput = page.locator('input[name="otc"], input[id="idTxtBx_SAOTCC_OTC"], input[aria-label*="code"], input[placeholder*="Code"], input[placeholder*="code"]').first();
+      const totpInput = page
+        .locator(
+          'input[name="otc"], input[id="idTxtBx_SAOTCC_OTC"], input[aria-label*="code"], input[placeholder*="Code"], input[placeholder*="code"]',
+        )
+        .first();
       await totpInput.waitFor({ state: "visible", timeout: 10000 });
       const code = generateTotp(credentials.totpSecret);
       console.log("  Entering TOTP code...");
       await totpInput.fill(code);
-      await page.locator('input[type="submit"], button[type="submit"], button:has-text("Verify"), button:has-text("Überprüfen")').first().click();
+      await page
+        .locator(
+          'input[type="submit"], button[type="submit"], button:has-text("Verify"), button:has-text("Überprüfen")',
+        )
+        .first()
+        .click();
       await page.waitForLoadState("networkidle");
       await page.waitForTimeout(2000);
     } catch (err) {
@@ -188,7 +217,9 @@ export async function autoAuthenticate(
 
     // Step 7: Handle "Stay signed in?" / "Angemeldet bleiben?" prompt.
     try {
-      const btn = page.locator('input[type="submit"], button[id="idSIButton9"], button[id="idBtn_Back"]').first();
+      const btn = page
+        .locator('input[type="submit"], button[id="idSIButton9"], button[id="idBtn_Back"]')
+        .first();
       if (await btn.isVisible({ timeout: 3000 })) {
         await btn.click();
         await page.waitForLoadState("networkidle");

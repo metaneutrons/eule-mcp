@@ -227,28 +227,30 @@ server.tool(
 // --- mail_list tool ---
 server.tool(
   "mail_list",
-  "List recent emails from connected accounts, optionally filtered by role",
+  "List recent emails from a folder (default: inbox)",
   {
-    role: z.string().optional().describe("Filter by role ID (e.g. VPDIT, lexICT)"),
+    role: z.string().optional().describe("Filter by role ID"),
+    folder: z
+      .string()
+      .optional()
+      .describe("Folder name (inbox, sentitems, drafts, deleteditems, junkemail)"),
     limit: z.number().optional().describe("Max messages per account (default 10)"),
   },
-  async ({ role, limit }) => {
+  async ({ role, folder, limit }) => {
     const connectors = registry.getMailConnectors(role);
-    if (connectors.length === 0) {
+    if (connectors.length === 0)
       return {
         content: [
           { type: "text" as const, text: "No mail connectors available. Run auth_login first." },
         ],
       };
-    }
 
-    const allMessages: MailMessage[] = [];
+    const all: MailMessage[] = [];
     for (const c of connectors) {
       try {
-        const msgs = await c.listMessages(undefined, limit ?? 10);
-        allMessages.push(...msgs);
+        all.push(...(await c.listMessages(folder ?? "inbox", limit ?? 10)));
       } catch (err) {
-        allMessages.push({
+        all.push({
           id: "error",
           account: c.account,
           subject: `Error: ${err instanceof Error ? err.message : String(err)}`,
@@ -260,14 +262,11 @@ server.tool(
         });
       }
     }
-
-    allMessages.sort((a, b) => b.receivedAt.localeCompare(a.receivedAt));
-
-    const lines = allMessages.map(
+    all.sort((a, b) => b.receivedAt.localeCompare(a.receivedAt));
+    const lines = all.map(
       (m) =>
-        `[${m.account}] ${m.isRead ? " " : "●"} ${m.receivedAt.slice(0, 16)} | ${m.from} | ${m.subject}${m.snippet ? `\n  ${m.snippet.slice(0, 100)}${m.snippet.length > 100 ? "..." : ""}` : ""}\n  ID: ${m.id}`,
+        `[${m.account}] ${m.isRead ? " " : "●"} ${m.receivedAt.slice(0, 16)} | ${m.from} | ${m.subject}${m.snippet ? `\n  ${m.snippet.slice(0, 100)}` : ""}\n  ID: ${m.id}`,
     );
-
     return {
       content: [{ type: "text" as const, text: lines.join("\n\n") || "No messages found." }],
     };
@@ -277,14 +276,11 @@ server.tool(
 // --- mail_read tool ---
 server.tool(
   "mail_read",
-  "Read a specific email by ID. Returns clean Markdown by default (latest reply only). Use depth=0 for full thread, format=raw for original HTML.",
+  "Read a specific email by ID. Returns clean Markdown with attachment metadata.",
   {
     id: z.string().describe("Message ID"),
     account: z.string().describe("Account email address"),
-    depth: z
-      .number()
-      .optional()
-      .describe("Thread depth: 1=latest reply (default), 0=full thread, N=last N replies"),
+    depth: z.number().optional().describe("Thread depth: 1=latest reply (default), 0=full thread"),
     maxLength: z.number().optional().describe("Max chars (default 4000). 0=unlimited"),
     format: z
       .enum(["markdown", "raw", "plain"])
@@ -293,26 +289,26 @@ server.tool(
   },
   async ({ id, account, depth, maxLength, format }) => {
     const connector = registry.getMailConnectorForAccount(account);
-    if (!connector) {
+    if (!connector)
       return {
         content: [{ type: "text" as const, text: `No connector for ${account}` }],
         isError: true,
       };
-    }
     try {
       const msg = await connector.getMessage(id);
+      const attachInfo =
+        msg.attachments.length > 0
+          ? `\nAttachments:\n${msg.attachments.map((a) => `  - ${a.name} (${String(Math.round(a.size / 1024))}KB, ${a.contentType}) ID: ${a.id}`).join("\n")}`
+          : "";
       const header = [
         `From: ${msg.from}`,
         `To: ${msg.to.join(", ")}`,
         `Subject: ${msg.subject}`,
         `Date: ${msg.receivedAt}`,
-        msg.attachments.length > 0
-          ? `Attachments: ${msg.attachments.map((a) => `${a.name} (${String(Math.round(a.size / 1024))}KB, ${a.contentType})`).join(", ")}`
-          : "",
+        attachInfo,
       ]
         .filter(Boolean)
         .join("\n");
-
       const body = renderMail({
         body: msg.body,
         bodyType: msg.bodyType,
@@ -320,7 +316,6 @@ server.tool(
         maxLength: maxLength ?? 4000,
         format: format ?? "markdown",
       });
-
       return { content: [{ type: "text" as const, text: `${header}\n\n${body}` }] };
     } catch (err) {
       return {
@@ -343,18 +338,18 @@ server.tool(
   {
     query: z.string().describe("Search query"),
     role: z.string().optional().describe("Filter by role ID"),
+    folder: z.string().optional().describe("Folder to search in (EWS/IMAP only, ignored by Graph)"),
     limit: z.number().optional().describe("Max results per account (default 10)"),
   },
-  async ({ query, role, limit }) => {
+  async ({ query, role, folder, limit }) => {
     const connectors = registry.getMailConnectors(role);
-    if (connectors.length === 0) {
+    if (connectors.length === 0)
       return { content: [{ type: "text" as const, text: "No mail connectors available." }] };
-    }
 
     const results: MailMessage[] = [];
     for (const c of connectors) {
       try {
-        results.push(...(await c.searchMessages(query, limit ?? 10)));
+        results.push(...(await c.searchMessages(query, limit ?? 10, folder)));
       } catch (err) {
         results.push({
           id: "error",
@@ -368,13 +363,11 @@ server.tool(
         });
       }
     }
-
     results.sort((a, b) => b.receivedAt.localeCompare(a.receivedAt));
     const lines = results.map(
       (m) =>
         `[${m.account}] ${m.receivedAt.slice(0, 16)} | ${m.from} | ${m.subject}\n  ID: ${m.id}`,
     );
-
     return { content: [{ type: "text" as const, text: lines.join("\n\n") || "No results." }] };
   },
 );
@@ -382,25 +375,43 @@ server.tool(
 // --- mail_send tool ---
 server.tool(
   "mail_send",
-  "Send an email",
+  "Send, reply to, or forward an email",
   {
     to: z.string().describe("Recipient(s), comma-separated"),
-    subject: z.string().describe("Email subject"),
+    subject: z.string().optional().describe("Email subject (ignored for reply)"),
     body: z.string().describe("Email body text"),
     role: z.string().optional().describe("Send from this role's first account"),
+    account: z.string().optional().describe("Send from specific account"),
+    reply_to: z.string().optional().describe("Message ID to reply to"),
+    forward_id: z.string().optional().describe("Message ID to forward"),
   },
-  async ({ to, subject, body, role }) => {
-    const connectors = registry.getMailConnectors(role);
-    const connector = connectors[0];
-    if (!connector) {
+  async ({ to, subject, body, role, account, reply_to, forward_id }) => {
+    const connector = account
+      ? registry.getMailConnectorForAccount(account)
+      : registry.getMailConnectors(role)[0];
+    if (!connector)
       return {
-        content: [{ type: "text" as const, text: "No mail connector available for sending." }],
+        content: [{ type: "text" as const, text: "No mail connector available." }],
         isError: true,
       };
-    }
+
     try {
       const recipients = to.split(",").map((s) => s.trim());
-      await connector.sendMessage(recipients, subject, body);
+      if (reply_to) {
+        await connector.replyToMessage(reply_to, body);
+        return {
+          content: [{ type: "text" as const, text: `✅ Reply sent from ${connector.account}` }],
+        };
+      }
+      if (forward_id) {
+        await connector.forwardMessage(forward_id, recipients, body);
+        return {
+          content: [
+            { type: "text" as const, text: `✅ Forwarded from ${connector.account} to ${to}` },
+          ],
+        };
+      }
+      await connector.sendMessage(recipients, subject ?? "(no subject)", body);
       return {
         content: [{ type: "text" as const, text: `✅ Sent from ${connector.account} to ${to}` }],
       };
@@ -409,7 +420,7 @@ server.tool(
         content: [
           {
             type: "text" as const,
-            text: `❌ Send failed: ${err instanceof Error ? err.message : String(err)}`,
+            text: `❌ Failed: ${err instanceof Error ? err.message : String(err)}`,
           },
         ],
         isError: true,
@@ -418,72 +429,46 @@ server.tool(
   },
 );
 
-// --- mail_reply tool ---
+// --- mail_update tool ---
 server.tool(
-  "mail_reply",
-  "Reply to an email",
-  {
-    id: z.string().describe("Original message ID"),
-    account: z.string().describe("Account email address"),
-    body: z.string().describe("Reply body text"),
-  },
-  async ({ id, account, body }) => {
-    const connector = registry.getMailConnectorForAccount(account);
-    if (!connector) {
-      return {
-        content: [{ type: "text" as const, text: `No connector for ${account}` }],
-        isError: true,
-      };
-    }
-    try {
-      await connector.replyToMessage(id, body);
-      return { content: [{ type: "text" as const, text: `✅ Reply sent from ${account}` }] };
-    } catch (err) {
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: `❌ Reply failed: ${err instanceof Error ? err.message : String(err)}`,
-          },
-        ],
-        isError: true,
-      };
-    }
-  },
-);
-
-// --- mail_attachment_list tool ---
-server.tool(
-  "mail_attachment_list",
-  "List attachments of an email",
+  "mail_update",
+  "Update an email: mark read/unread, move to folder, or delete",
   {
     id: z.string().describe("Message ID"),
     account: z.string().describe("Account email address"),
+    is_read: z.boolean().optional().describe("Mark as read (true) or unread (false)"),
+    move_to: z.string().optional().describe("Move to folder (inbox, archive, deleteditems, ...)"),
+    delete: z.boolean().optional().describe("Delete the message"),
   },
-  async ({ id, account }) => {
+  async ({ id, account, is_read, move_to, delete: del }) => {
     const connector = registry.getMailConnectorForAccount(account);
-    if (!connector) {
+    if (!connector)
       return {
         content: [{ type: "text" as const, text: `No connector for ${account}` }],
         isError: true,
       };
-    }
+
     try {
-      const msg = await connector.getMessage(id);
-      if (msg.attachments.length === 0) {
-        return { content: [{ type: "text" as const, text: "No attachments." }] };
+      const actions: string[] = [];
+      if (is_read !== undefined) {
+        await connector.markRead(id, is_read);
+        actions.push(is_read ? "marked read" : "marked unread");
       }
-      const lines = msg.attachments.map(
-        (a) =>
-          `- ${a.name} (${String(Math.round(a.size / 1024))}KB, ${a.contentType})\n  ID: ${a.id}`,
-      );
-      return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+      if (move_to) {
+        await connector.moveMessage(id, move_to);
+        actions.push(`moved to ${move_to}`);
+      }
+      if (del) {
+        await connector.deleteMessage(id);
+        actions.push("deleted");
+      }
+      return { content: [{ type: "text" as const, text: `✅ ${actions.join(", ")}` }] };
     } catch (err) {
       return {
         content: [
           {
             type: "text" as const,
-            text: `Error: ${err instanceof Error ? err.message : String(err)}`,
+            text: `❌ Failed: ${err instanceof Error ? err.message : String(err)}`,
           },
         ],
         isError: true,
@@ -495,37 +480,29 @@ server.tool(
 // --- mail_attachment_get tool ---
 server.tool(
   "mail_attachment_get",
-  "Download an email attachment to disk and return the file path",
+  "Download an email attachment to disk",
   {
     messageId: z.string().describe("Message ID"),
-    attachmentId: z.string().describe("Attachment ID (from mail_attachment_list)"),
+    attachmentId: z.string().describe("Attachment ID (from mail_read)"),
     account: z.string().describe("Account email address"),
     name: z.string().describe("Filename for saving"),
     path: z.string().optional().describe("Custom save path (default: ~/.eule/attachments/)"),
   },
   async ({ messageId, attachmentId, account, name, path: customPath }) => {
     const connector = registry.getMailConnectorForAccount(account);
-    if (!connector) {
+    if (!connector)
       return {
         content: [{ type: "text" as const, text: `No connector for ${account}` }],
         isError: true,
       };
-    }
     try {
       const data = await connector.downloadAttachment(messageId, attachmentId);
       const { join } = await import("node:path");
       const { homedir } = await import("node:os");
       const { mkdirSync, writeFileSync } = await import("node:fs");
-
-      let savePath: string;
-      if (customPath) {
-        savePath = customPath;
-      } else {
-        const dir = join(homedir(), ".eule", "attachments", messageId.slice(0, 32));
-        mkdirSync(dir, { recursive: true });
-        savePath = join(dir, name);
-      }
-
+      const dir = customPath ?? join(homedir(), ".eule", "attachments", messageId.slice(0, 32));
+      mkdirSync(dir, { recursive: true });
+      const savePath = customPath ?? join(dir, name);
       writeFileSync(savePath, data);
       return {
         content: [

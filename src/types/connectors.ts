@@ -55,10 +55,14 @@ export interface MailConnector {
   readonly tier: string;
   listMessages(folder?: string, limit?: number): Promise<MailMessage[]>;
   getMessage(id: string): Promise<MailMessageFull>;
-  searchMessages(query: string, limit?: number): Promise<MailMessage[]>;
+  searchMessages(query: string, limit?: number, folder?: string): Promise<MailMessage[]>;
   sendMessage(to: string[], subject: string, body: string): Promise<void>;
   replyToMessage(id: string, body: string): Promise<void>;
+  forwardMessage(id: string, to: string[], body?: string): Promise<void>;
   downloadAttachment(messageId: string, attachmentId: string): Promise<Buffer>;
+  markRead(id: string, isRead: boolean): Promise<void>;
+  moveMessage(id: string, folder: string): Promise<void>;
+  deleteMessage(id: string): Promise<void>;
 }
 
 /** Calendar connector interface — implemented per API tier. */

@@ -1,5 +1,10 @@
 import { XMLParser } from "fast-xml-parser";
-import type { MailConnector, MailMessage, MailMessageFull, MailAttachment } from "../../types/index.js";
+import type {
+  MailConnector,
+  MailMessage,
+  MailMessageFull,
+  MailAttachment,
+} from "../../types/index.js";
 
 const EWS_URL = "https://outlook.office365.com/EWS/Exchange.asmx";
 
@@ -23,7 +28,11 @@ function soap(body: string): string {
 }
 
 function escapeXml(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 /** Safely navigate a nested object path. */
@@ -42,7 +51,7 @@ function str(val: unknown): string {
   if (typeof val === "object" && "#text" in (val as Record<string, unknown>)) {
     return String((val as Record<string, unknown>)["#text"]);
   }
-  return String(val);
+  return JSON.stringify(val);
 }
 
 export class EwsMailConnector implements MailConnector {
@@ -118,26 +127,42 @@ export class EwsMailConnector implements MailConnector {
 
     const messages = this.extractMessages(data);
     const m = messages[0];
-    const msg = m ? this.mapMessage(m) : { id, account: this.account, subject: "", from: "", to: [], receivedAt: "", snippet: "", isRead: false };
+    const msg = m
+      ? this.mapMessage(m)
+      : {
+          id,
+          account: this.account,
+          subject: "",
+          from: "",
+          to: [],
+          receivedAt: "",
+          snippet: "",
+          isRead: false,
+        };
 
     const bodyNode = m ? dig(m, "Body") : undefined;
     const body = str(bodyNode);
-    const bodyType = (typeof bodyNode === "object" && bodyNode !== null && (bodyNode as Record<string, unknown>)["@_BodyType"] === "Text")
-      ? "text" as const
-      : "html" as const;
+    const bodyType =
+      typeof bodyNode === "object" &&
+      bodyNode !== null &&
+      (bodyNode as Record<string, unknown>)["@_BodyType"] === "Text"
+        ? ("text" as const)
+        : ("html" as const);
 
-    const fileAttachments = (m ? dig(m, "Attachments", "FileAttachment") : undefined) as Record<string, unknown>[] | undefined;
+    const fileAttachments = (m ? dig(m, "Attachments", "FileAttachment") : undefined) as
+      | Record<string, unknown>[]
+      | undefined;
     const attachments: MailAttachment[] = (fileAttachments ?? []).map((a) => ({
       id: str(dig(a, "AttachmentId", "@_Id")),
-      name: str(a["Name"]),
-      size: parseInt(str(a["Size"]) || "0", 10),
-      contentType: str(a["ContentType"]) || "application/octet-stream",
+      name: str(a.Name),
+      size: parseInt(str(a.Size) || "0", 10),
+      contentType: str(a.ContentType) || "application/octet-stream",
     }));
 
     return { ...msg, body, bodyType, attachments };
   }
 
-  async searchMessages(query: string, limit = 10): Promise<MailMessage[]> {
+  async searchMessages(query: string, limit = 10, folder = "inbox"): Promise<MailMessage[]> {
     const data = await this.post(`
     <m:FindItem Traversal="Shallow">
       <m:ItemShape>
@@ -154,7 +179,7 @@ export class EwsMailConnector implements MailConnector {
         <t:FieldOrder Order="Descending"><t:FieldURI FieldURI="item:DateTimeReceived"/></t:FieldOrder>
       </m:SortOrder>
       <m:ParentFolderIds>
-        <t:DistinguishedFolderId Id="inbox"/>
+        <t:DistinguishedFolderId Id="${folder}"/>
       </m:ParentFolderIds>
       <m:QueryString>${escapeXml(query)}</m:QueryString>
     </m:FindItem>`);
@@ -190,6 +215,60 @@ export class EwsMailConnector implements MailConnector {
     </m:CreateItem>`);
   }
 
+  async forwardMessage(id: string, to: string[], body?: string): Promise<void> {
+    const toRecipients = to
+      .map((addr) => `<t:Mailbox><t:EmailAddress>${escapeXml(addr)}</t:EmailAddress></t:Mailbox>`)
+      .join("");
+    await this.post(`
+    <m:CreateItem MessageDisposition="SendAndSaveCopy">
+      <m:Items>
+        <t:ForwardItem>
+          <t:ReferenceItemId Id="${id}"/>
+          <t:NewBodyContent BodyType="Text">${escapeXml(body ?? "")}</t:NewBodyContent>
+          <t:ToRecipients>${toRecipients}</t:ToRecipients>
+        </t:ForwardItem>
+      </m:Items>
+    </m:CreateItem>`);
+  }
+
+  async markRead(id: string, isRead: boolean): Promise<void> {
+    await this.post(`
+    <m:UpdateItem MessageDisposition="SaveOnly" ConflictResolution="AlwaysOverwrite">
+      <m:ItemChanges>
+        <t:ItemChange>
+          <t:ItemId Id="${id}"/>
+          <t:Updates>
+            <t:SetItemField>
+              <t:FieldURI FieldURI="message:IsRead"/>
+              <t:Message><t:IsRead>${String(isRead)}</t:IsRead></t:Message>
+            </t:SetItemField>
+          </t:Updates>
+        </t:ItemChange>
+      </m:ItemChanges>
+    </m:UpdateItem>`);
+  }
+
+  async moveMessage(id: string, folder: string): Promise<void> {
+    await this.post(`
+    <m:MoveItem>
+      <m:ToFolderId>
+        <t:DistinguishedFolderId Id="${folder}"/>
+      </m:ToFolderId>
+      <m:ItemIds>
+        <t:ItemId Id="${id}"/>
+      </m:ItemIds>
+    </m:MoveItem>`);
+  }
+
+  async deleteMessage(id: string): Promise<void> {
+    await this.post(`
+    <m:DeleteItem DeleteType="MoveToDeletedItems">
+      <m:ItemIds>
+        <t:ItemId Id="${id}"/>
+      </m:ItemIds>
+    </m:DeleteItem>`);
+  }
+
   async downloadAttachment(_messageId: string, attachmentId: string): Promise<Buffer> {
     const data = await this.post(`
     <m:GetAttachment>
@@ -198,12 +277,33 @@ export class EwsMailConnector implements MailConnector {
       </m:AttachmentIds>
     </m:GetAttachment>`);
 
-    const content = str(dig(data, "Envelope", "Body", "GetAttachmentResponse", "ResponseMessages", "GetAttachmentResponseMessage", "Attachments", "FileAttachment", "Content"));
+    const content = str(
+      dig(
+        data,
+        "Envelope",
+        "Body",
+        "GetAttachmentResponse",
+        "ResponseMessages",
+        "GetAttachmentResponseMessage",
+        "Attachments",
+        "FileAttachment",
+        "Content",
+      ),
+    );
     if (!content) {
       // Try array form.
-      const attachments = dig(data, "Envelope", "Body", "GetAttachmentResponse", "ResponseMessages", "GetAttachmentResponseMessage", "Attachments", "FileAttachment") as Record<string, unknown>[] | undefined;
+      const attachments = dig(
+        data,
+        "Envelope",
+        "Body",
+        "GetAttachmentResponse",
+        "ResponseMessages",
+        "GetAttachmentResponseMessage",
+        "Attachments",
+        "FileAttachment",
+      ) as Record<string, unknown>[] | undefined;
       const first = attachments?.[0];
-      if (first) return Buffer.from(str(first["Content"]), "base64");
+      if (first) return Buffer.from(str(first.Content), "base64");
       throw new Error("No attachment content found");
     }
     return Buffer.from(content, "base64");
@@ -218,17 +318,21 @@ export class EwsMailConnector implements MailConnector {
     // Find the response message (works for FindItem, GetItem, etc.)
     for (const key of Object.keys(body)) {
       const response = body[key] as Record<string, unknown>;
-      const responseMessages = dig(response, "ResponseMessages") as Record<string, unknown> | undefined;
+      const responseMessages = dig(response, "ResponseMessages") as
+        | Record<string, unknown>
+        | undefined;
       if (!responseMessages) continue;
 
       for (const rmKey of Object.keys(responseMessages)) {
         const rm = responseMessages[rmKey] as Record<string, unknown>;
         // FindItem has RootFolder > Items > Message
-        const rootFolder = rm["RootFolder"] as Record<string, unknown> | undefined;
-        const items = (rootFolder ? dig(rootFolder, "Items") : dig(rm, "Items")) as Record<string, unknown> | undefined;
+        const rootFolder = rm.RootFolder as Record<string, unknown> | undefined;
+        const items = (rootFolder ? dig(rootFolder, "Items") : dig(rm, "Items")) as
+          | Record<string, unknown>
+          | undefined;
         if (!items) continue;
 
-        const messages = items["Message"];
+        const messages = items.Message;
         if (Array.isArray(messages)) return messages as Record<string, unknown>[];
         if (messages && typeof messages === "object") return [messages as Record<string, unknown>];
       }
@@ -240,20 +344,20 @@ export class EwsMailConnector implements MailConnector {
   private mapMessage(m: Record<string, unknown>): MailMessage {
     // Mailbox is always an array due to isArray config.
     const fromMailboxes = dig(m, "From", "Mailbox") as Record<string, unknown>[] | undefined;
-    const fromAddr = fromMailboxes?.[0] ? str(fromMailboxes[0]["EmailAddress"]) : "";
+    const fromAddr = fromMailboxes?.[0] ? str(fromMailboxes[0].EmailAddress) : "";
 
     const toMailboxes = dig(m, "ToRecipients", "Mailbox") as Record<string, unknown>[] | undefined;
-    const toList = (toMailboxes ?? []).map((r) => str(r["EmailAddress"]));
+    const toList = (toMailboxes ?? []).map((r) => str(r.EmailAddress));
 
     return {
       id: str(dig(m, "ItemId", "@_Id")),
       account: this.account,
-      subject: str(m["Subject"]),
+      subject: str(m.Subject),
       from: fromAddr,
       to: toList,
-      receivedAt: str(m["DateTimeReceived"]),
-      snippet: str(m["Preview"] ?? m["BodyPreview"] ?? ""),
-      isRead: str(m["IsRead"]) === "true",
+      receivedAt: str(m.DateTimeReceived),
+      snippet: str(m.Preview ?? m.BodyPreview ?? ""),
+      isRead: str(m.IsRead) === "true",
     };
   }
 }

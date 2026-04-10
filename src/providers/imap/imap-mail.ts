@@ -52,7 +52,7 @@ export class ImapMailConnector implements MailConnector {
       try {
         const messages: MailMessage[] = [];
         const mailbox = client.mailbox;
-        const total = mailbox && typeof mailbox === "object" ? (mailbox.exists) : 0;
+        const total = mailbox && typeof mailbox === "object" ? mailbox.exists : 0;
         const from = Math.max(1, total - limit + 1);
 
         for await (const raw of client.fetch(`${String(from)}:*`, {
@@ -154,10 +154,10 @@ export class ImapMailConnector implements MailConnector {
     }
   }
 
-  async searchMessages(query: string, limit = 10): Promise<MailMessage[]> {
+  async searchMessages(query: string, limit = 10, folder = "INBOX"): Promise<MailMessage[]> {
     const client = await this.connect();
     try {
-      const lock = await client.getMailboxLock("INBOX");
+      const lock = await client.getMailboxLock(folder);
       try {
         const results: MailMessage[] = [];
         for await (const raw of client.fetch({ text: query } as unknown as string, {
@@ -238,5 +238,72 @@ export class ImapMailConnector implements MailConnector {
       text: body,
       inReplyTo: id,
     });
+  }
+
+  async forwardMessage(id: string, to: string[], body?: string): Promise<void> {
+    const original = await this.getMessage(id);
+    const auth =
+      this.cfg.auth === "oauth"
+        ? {
+            type: "OAuth2" as const,
+            user: this.cfg.account,
+            accessToken: await this.getTokenOrThrow(),
+          }
+        : { user: this.cfg.account, pass: this.cfg.password ?? "" };
+    const transport = createTransport({
+      host: this.cfg.smtpHost,
+      port: this.cfg.smtpPort ?? 587,
+      secure: false,
+      auth,
+    });
+    await transport.sendMail({
+      from: this.account,
+      to: to.join(", "),
+      subject: `Fwd: ${original.subject}`,
+      text: `${body ?? ""}\n\n---------- Forwarded message ----------\nFrom: ${original.from}\nSubject: ${original.subject}\n\n${original.body}`,
+    });
+  }
+
+  async markRead(id: string, isRead: boolean): Promise<void> {
+    const client = await this.connect();
+    try {
+      const lock = await client.getMailboxLock("INBOX");
+      try {
+        await client.messageFlagsAdd(id, ["\\Seen"], { uid: true });
+        if (!isRead) await client.messageFlagsRemove(id, ["\\Seen"], { uid: true });
+      } finally {
+        lock.release();
+      }
+    } finally {
+      await client.logout();
+    }
+  }
+
+  async moveMessage(id: string, folder: string): Promise<void> {
+    const client = await this.connect();
+    try {
+      const lock = await client.getMailboxLock("INBOX");
+      try {
+        await client.messageMove(id, folder, { uid: true });
+      } finally {
+        lock.release();
+      }
+    } finally {
+      await client.logout();
+    }
+  }
+
+  async deleteMessage(id: string): Promise<void> {
+    const client = await this.connect();
+    try {
+      const lock = await client.getMailboxLock("INBOX");
+      try {
+        await client.messageFlagsAdd(id, ["\\Deleted"], { uid: true });
+      } finally {
+        lock.release();
+      }
+    } finally {
+      await client.logout();
+    }
   }
 }
