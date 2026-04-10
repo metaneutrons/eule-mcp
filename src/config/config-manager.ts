@@ -120,7 +120,6 @@ function parseConnectorList(raw: unknown): RoleConfig["connectors"]["mail"] {
         ? String(c.type)
         : "m365") as ConnectorConfig["type"],
       account: String(c.account ?? ""),
-      shared: c.shared === true,
       mailbox: typeof c.mailbox === "string" ? c.mailbox : undefined,
       host: typeof c.host === "string" ? c.host : undefined,
       port: typeof c.port === "number" ? c.port : undefined,

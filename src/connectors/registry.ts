@@ -57,13 +57,14 @@ export class ConnectorRegistry {
 
         const getToken = () => getAccessToken(mc.account, oauth);
         const target = mc.mailbox ?? mc.account;
+        const isShared = !!mc.mailbox;
 
         switch (token.tier) {
           case "graph":
-            connectors.push(new GraphMailConnector(target, getToken, mc.shared));
+            connectors.push(new GraphMailConnector(target, getToken, isShared));
             break;
           case "ews":
-            connectors.push(new EwsMailConnector(target, getToken, mc.shared));
+            connectors.push(new EwsMailConnector(target, getToken, isShared));
             break;
           case "imap":
             connectors.push(
@@ -164,7 +165,7 @@ export class ConnectorRegistry {
         const getToken = () => getAccessToken(cc.account, oauth);
         switch (token.tier) {
           case "graph":
-            connectors.push(new GraphCalendarConnector(cc.account, getToken, cc.shared));
+            connectors.push(new GraphCalendarConnector(cc.account, getToken, !!cc.mailbox));
             break;
           case "ews":
             connectors.push(new EwsCalendarConnector(cc.account, getToken));
@@ -206,7 +207,7 @@ export class ConnectorRegistry {
         const getToken = () => getAccessToken(cc.account, oauth);
         switch (token.tier) {
           case "graph":
-            connectors.push(new GraphContactConnector(cc.account, getToken, cc.shared));
+            connectors.push(new GraphContactConnector(cc.account, getToken, !!cc.mailbox));
             break;
           case "ews":
             connectors.push(new EwsContactConnector(cc.account, getToken));

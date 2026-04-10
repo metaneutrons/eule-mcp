@@ -207,7 +207,7 @@ server.tool(
         if (role.connectors.mail && role.connectors.mail.length > 0) {
           lines.push(`  Mail connectors:`);
           for (const c of role.connectors.mail) {
-            lines.push(`    - ${c.id}: ${c.account}${c.shared ? " (shared)" : ""}`);
+            lines.push(`    - ${c.id}: ${c.mailbox ?? c.account}${c.mailbox ? " (shared)" : ""}`);
           }
         }
         if (role.connectors.calendar && role.connectors.calendar.length > 0) {
