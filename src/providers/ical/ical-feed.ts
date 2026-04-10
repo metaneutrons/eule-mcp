@@ -1,4 +1,9 @@
-import type { CalendarConnector, CalendarEvent, CalendarEventInput } from "../../types/index.js";
+import type {
+  CalendarConnector,
+  CalendarEvent,
+  CalendarEventInput,
+  CalendarInfo,
+} from "../../types/index.js";
 
 function ical(block: string, key: string): string {
   const re = new RegExp(`${key}[^:]*:([^\\r\\n]+)`, "i");
@@ -19,6 +24,12 @@ export class ICalFeedConnector implements CalendarConnector {
     readonly account: string,
     private readonly url: string,
   ) {}
+
+  listCalendars(): Promise<CalendarInfo[]> {
+    return Promise.resolve([
+      { id: this.url, name: this.account, account: this.account, isDefault: true },
+    ]);
+  }
 
   async listEvents(start: string, end: string): Promise<CalendarEvent[]> {
     const res = await fetch(this.url);

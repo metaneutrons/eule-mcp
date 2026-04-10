@@ -1,5 +1,10 @@
 import { XMLParser } from "fast-xml-parser";
-import type { CalendarConnector, CalendarEvent, CalendarEventInput } from "../../types/index.js";
+import type {
+  CalendarConnector,
+  CalendarEvent,
+  CalendarEventInput,
+  CalendarInfo,
+} from "../../types/index.js";
 
 const EWS_URL = "https://outlook.office365.com/EWS/Exchange.asmx";
 
@@ -67,6 +72,38 @@ export class EwsCalendarConnector implements CalendarConnector {
     });
     if (!res.ok) throw new Error(`EWS ${String(res.status)}: ${await res.text()}`);
     return parser.parse(await res.text());
+  }
+
+  async listCalendars(): Promise<CalendarInfo[]> {
+    const data = await this.post(`
+    <m:FindFolder Traversal="Shallow">
+      <m:FolderShape><t:BaseShape>Default</t:BaseShape></m:FolderShape>
+      <m:ParentFolderIds><t:DistinguishedFolderId Id="calendar"/></m:ParentFolderIds>
+    </m:FindFolder>`);
+    const body = dig(
+      data,
+      "Envelope",
+      "Body",
+      "FindFolderResponse",
+      "ResponseMessages",
+      "FindFolderResponseMessage",
+      "RootFolder",
+      "Folders",
+    ) as Record<string, unknown> | undefined;
+    const folders = body?.CalendarFolder;
+    const arr = Array.isArray(folders) ? folders : folders ? [folders] : [];
+    const result: CalendarInfo[] = [
+      { id: "calendar", name: "Calendar", account: this.account, isDefault: true },
+    ];
+    for (const f of arr as Record<string, unknown>[]) {
+      const fid = f.FolderId as Record<string, unknown> | undefined;
+      result.push({
+        id: str(fid?.["@_Id"] ?? fid),
+        name: str(f.DisplayName),
+        account: this.account,
+      });
+    }
+    return result;
   }
 
   async listEvents(start: string, end: string): Promise<CalendarEvent[]> {

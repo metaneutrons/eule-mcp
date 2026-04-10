@@ -1,4 +1,9 @@
-import type { CalendarConnector, CalendarEvent, CalendarEventInput } from "../../types/index.js";
+import type {
+  CalendarConnector,
+  CalendarEvent,
+  CalendarEventInput,
+  CalendarInfo,
+} from "../../types/index.js";
 
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
 
@@ -33,6 +38,24 @@ export class GraphCalendarConnector implements CalendarConnector {
     return { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
   }
 
+  async listCalendars(): Promise<CalendarInfo[]> {
+    const h = await this.headers();
+    const res = await fetch(`${this.base}/calendars?$select=id,name,color,isDefaultCalendar`, {
+      headers: h,
+    });
+    if (!res.ok) throw new Error(`Graph calendars: ${String(res.status)} ${await res.text()}`);
+    const data = (await res.json()) as {
+      value: { id?: string; name?: string; color?: string; isDefaultCalendar?: boolean }[];
+    };
+    return data.value.map((c) => ({
+      id: c.id ?? "",
+      name: c.name ?? "",
+      account: this.account,
+      color: c.color,
+      isDefault: c.isDefaultCalendar,
+    }));
+  }
+
   async listEvents(start: string, end: string): Promise<CalendarEvent[]> {
     const h = await this.headers();
     const url = `${this.base}/calendarView?startDateTime=${encodeURIComponent(start)}&endDateTime=${encodeURIComponent(end)}&$orderby=start/dateTime&$top=50&$select=id,subject,start,end,location,isAllDay,attendees`;
@@ -58,7 +81,8 @@ export class GraphCalendarConnector implements CalendarConnector {
       }));
     }
 
-    const res = await fetch(`${this.base}/events`, {
+    const calPath = event.calendarId ? `calendars/${event.calendarId}/events` : "events";
+    const res = await fetch(`${this.base}/${calPath}`, {
       method: "POST",
       headers: h,
       body: JSON.stringify(body),

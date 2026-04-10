@@ -855,6 +855,32 @@ server.tool(
 );
 
 server.tool(
+  "calendar_calendars",
+  "List available calendars across all sources",
+  { role: z.string().optional().describe("Filter by role ID") },
+  async ({ role }) => {
+    const connectors = registry.getCalendarConnectors(role);
+    if (connectors.length === 0)
+      return { content: [{ type: "text" as const, text: "No calendar connectors configured." }] };
+    const lines: string[] = [];
+    for (const c of connectors) {
+      try {
+        const cals = await c.listCalendars();
+        for (const cal of cals)
+          lines.push(
+            `[${c.account}] ${cal.name}${cal.isDefault ? " (default)" : ""}${c.readOnly ? " (read-only)" : ""}\n  ID: ${cal.id}`,
+          );
+      } catch (err) {
+        lines.push(`[${c.account}] Error: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    return {
+      content: [{ type: "text" as const, text: lines.join("\n\n") || "No calendars found." }],
+    };
+  },
+);
+
+server.tool(
   "calendar_create",
   "Create a new calendar event",
   {
@@ -864,19 +890,21 @@ server.tool(
     location: z.string().optional().describe("Location"),
     body: z.string().optional().describe("Event description"),
     attendees: z.array(z.string()).optional().describe("Attendee email addresses"),
-    role: z.string().optional().describe("Role ID (uses first calendar connector)"),
+    calendarId: z
+      .string()
+      .optional()
+      .describe("Calendar ID (from calendar_calendars). Default: primary calendar"),
+    role: z.string().optional().describe("Role ID (uses first writable calendar connector)"),
+    account: z.string().optional().describe("Specific account to create on"),
   },
-  async ({ role, ...event }) => {
+  async ({ role, account, ...event }) => {
     const connectors = registry.getCalendarConnectors(role);
-    if (connectors.length === 0)
-      return {
-        content: [{ type: "text" as const, text: "No calendar connectors configured." }],
-        isError: true,
-      };
-    const c = connectors[0];
+    const c = account
+      ? connectors.find((cc) => cc.account === account)
+      : connectors.find((cc) => !cc.readOnly);
     if (!c)
       return {
-        content: [{ type: "text" as const, text: "No calendar connectors configured." }],
+        content: [{ type: "text" as const, text: "No writable calendar connector found." }],
         isError: true,
       };
     const created = await c.createEvent(event);

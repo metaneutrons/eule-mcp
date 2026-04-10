@@ -1,5 +1,10 @@
 import { DAVClient } from "tsdav";
-import type { CalendarConnector, CalendarEvent, CalendarEventInput } from "../../types/index.js";
+import type {
+  CalendarConnector,
+  CalendarEvent,
+  CalendarEventInput,
+  CalendarInfo,
+} from "../../types/index.js";
 
 export interface CalDavConfig {
   account: string;
@@ -42,6 +47,17 @@ export class CalDavCalendarConnector implements CalendarConnector {
     return c;
   }
 
+  async listCalendars(): Promise<CalendarInfo[]> {
+    const c = await this.client();
+    const calendars = await c.fetchCalendars();
+    return calendars.map((cal, i) => ({
+      id: cal.url,
+      name: typeof cal.displayName === "string" ? cal.displayName : `Calendar ${String(i + 1)}`,
+      account: this.account,
+      isDefault: i === 0,
+    }));
+  }
+
   async listEvents(start: string, end: string): Promise<CalendarEvent[]> {
     const c = await this.client();
     const calendars = await c.fetchCalendars();
@@ -65,7 +81,9 @@ export class CalDavCalendarConnector implements CalendarConnector {
   async createEvent(event: CalendarEventInput): Promise<CalendarEvent> {
     const c = await this.client();
     const calendars = await c.fetchCalendars();
-    const cal = calendars[0];
+    const cal = event.calendarId
+      ? (calendars.find((cc) => cc.url === event.calendarId) ?? calendars[0])
+      : calendars[0];
     if (!cal) throw new Error("No calendars found");
 
     const uid = `eule-${String(Date.now())}@eule-mcp`;

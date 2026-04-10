@@ -27,10 +27,21 @@ export interface MailAttachment {
 }
 
 /** Calendar event representation. */
+/** Calendar info. */
+export interface CalendarInfo {
+  readonly id: string;
+  readonly name: string;
+  readonly account: string;
+  readonly color?: string;
+  readonly isDefault?: boolean;
+}
+
 export interface CalendarEvent {
   readonly id: string;
   readonly account: string;
   readonly role?: string;
+  readonly calendarId?: string;
+  readonly calendarName?: string;
   readonly subject: string;
   readonly start: string;
   readonly end: string;
@@ -47,6 +58,7 @@ export interface CalendarEventInput {
   readonly location?: string;
   readonly body?: string;
   readonly attendees?: readonly string[];
+  readonly calendarId?: string;
 }
 
 /** Mail connector interface — implemented per API tier. */
@@ -70,6 +82,7 @@ export interface CalendarConnector {
   readonly account: string;
   readonly tier: string;
   readonly readOnly: boolean;
+  listCalendars(): Promise<CalendarInfo[]>;
   listEvents(start: string, end: string): Promise<CalendarEvent[]>;
   createEvent(event: CalendarEventInput): Promise<CalendarEvent>;
   updateEvent(id: string, updates: Partial<CalendarEventInput>): Promise<CalendarEvent>;
