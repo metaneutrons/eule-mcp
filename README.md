@@ -72,23 +72,22 @@ Eule is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) serve
 |---|---|
 | `role_list` | List all configured roles with connectors and weekly hours |
 
-### 📧 Mail (7)
+### 📧 Mail (6)
 
 | Tool | Description |
 |---|---|
-| `mail_list` | List recent emails, optionally filtered by role |
-| `mail_read` | Read email as Markdown, raw HTML, or plain text. Thread splitting with `depth` control |
-| `mail_search` | Search emails across accounts |
-| `mail_send` | Compose and send a new email |
-| `mail_reply` | Reply to an existing email |
-| `mail_attachment_list` | List attachments with ID, name, size, content type |
+| `mail_list` | List emails from any folder (inbox, sentitems, drafts, ...) |
+| `mail_read` | Read email as Markdown with attachment metadata |
+| `mail_search` | Search emails, optionally scoped to a folder (EWS/IMAP) |
+| `mail_send` | Send, reply, or forward an email |
+| `mail_update` | Mark read/unread, move to folder, or delete |
 | `mail_attachment_get` | Download attachment to disk |
 
 ### 📅 Calendar (5)
 
 | Tool | Description |
 |---|---|
-| `calendar_list` | List upcoming events (configurable days ahead) |
+| `calendar_list` | List upcoming events from all sources (M365, CalDAV, iCal feeds) |
 | `calendar_today` | Today's schedule with attendees and locations |
 | `calendar_create` | Create a new event with attendees |
 | `calendar_update` | Update an existing event |
@@ -112,12 +111,13 @@ Eule is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) serve
 | `note_list` | List notes |
 | `note_search` | Full-text search across notes |
 
-### 👤 Contacts (2)
+### 👤 Contacts (3)
 
 | Tool | Description |
 |---|---|
-| `contact_add` | Add a contact with organization and notes |
-| `contact_list` | List contacts |
+| `contact_add` | Add a local contact with notes |
+| `contact_list` | List contacts from all sources (Graph, EWS, CardDAV + local) |
+| `contact_search` | Search contacts across all sources |
 
 ### 🧠 Intelligence (1)
 
@@ -233,16 +233,17 @@ autoAuth:
 - [x] Mail tools (list, read, search, send, reply, attachments)
 - [x] HTML → Markdown rendering with thread splitting
 - [x] Provider-based architecture
-- [x] Calendar read/write (Graph + EWS)
+- [x] Calendar read/write (Graph + EWS + CalDAV)
 - [x] GTD task engine with SQLite + Markdown export
 - [x] Role & context CRUD
 - [x] Ideas, Notes, Contacts
 - [x] Daily briefing
-- [x] Graph API connectors (Mail + Calendar)
+- [x] Graph API connectors (Mail + Calendar + Contacts)
 - [x] Generic IMAP/SMTP provider (any mail server, password or OAuth)
+- [x] CalDAV/CardDAV provider (iCloud, Nextcloud, any CalDAV/CardDAV server)
+- [x] iCal feed subscriptions (read-only calendar feeds)
 - [ ] Resource planning & capacity tracking
 - [ ] Paperless-ngx connector
-- [ ] iCloud provider (CalDAV calendar, CalDAV reminders, CardDAV contacts, IMAP mail)
 - [ ] Apple Notes (macOS-only, AppleScript/SQLite)
 - [ ] Messengers — Signal (`signal-cli`), iMessage (macOS), WhatsApp (Business API), Telegram
 - [ ] Google Workspace (Gmail API, Google Calendar API)
