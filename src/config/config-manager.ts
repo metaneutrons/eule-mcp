@@ -121,6 +121,7 @@ function parseConnectorList(raw: unknown): RoleConfig["connectors"]["mail"] {
         : "m365") as ConnectorConfig["type"],
       account: String(c.account ?? ""),
       shared: c.shared === true,
+      tokenAccount: typeof c.tokenAccount === "string" ? c.tokenAccount : undefined,
       host: typeof c.host === "string" ? c.host : undefined,
       port: typeof c.port === "number" ? c.port : undefined,
       smtpHost: typeof c.smtpHost === "string" ? c.smtpHost : undefined,

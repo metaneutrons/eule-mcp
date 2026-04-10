@@ -4,6 +4,8 @@ export interface ConnectorConfig {
   readonly type: "m365" | "imap" | "caldav" | "carddav" | "ical" | "signal";
   readonly account: string;
   readonly shared?: boolean;
+  /** For shared mailboxes: the account whose token to use for auth. */
+  readonly tokenAccount?: string;
   // IMAP-specific fields (type: "imap").
   readonly host?: string;
   readonly port?: number;

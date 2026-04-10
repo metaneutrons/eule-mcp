@@ -60,7 +60,16 @@ export class EwsMailConnector implements MailConnector {
   constructor(
     readonly account: string,
     private readonly getToken: () => Promise<string | null>,
+    private readonly shared = false,
   ) {}
+
+  /** Build DistinguishedFolderId XML, with Mailbox for shared mailboxes. */
+  private folderId(folder: string): string {
+    if (this.shared) {
+      return `<t:DistinguishedFolderId Id="${folder}"><t:Mailbox><t:EmailAddress>${this.account}</t:EmailAddress></t:Mailbox></t:DistinguishedFolderId>`;
+    }
+    return `<t:DistinguishedFolderId Id="${folder}"/>`;
+  }
 
   private async post(body: string): Promise<unknown> {
     const token = await this.getToken();
@@ -96,7 +105,7 @@ export class EwsMailConnector implements MailConnector {
         <t:FieldOrder Order="Descending"><t:FieldURI FieldURI="item:DateTimeReceived"/></t:FieldOrder>
       </m:SortOrder>
       <m:ParentFolderIds>
-        <t:DistinguishedFolderId Id="${folder}"/>
+        ${this.folderId(folder)}
       </m:ParentFolderIds>
     </m:FindItem>`);
 
@@ -179,7 +188,7 @@ export class EwsMailConnector implements MailConnector {
         <t:FieldOrder Order="Descending"><t:FieldURI FieldURI="item:DateTimeReceived"/></t:FieldOrder>
       </m:SortOrder>
       <m:ParentFolderIds>
-        <t:DistinguishedFolderId Id="${folder}"/>
+        ${this.folderId(folder)}
       </m:ParentFolderIds>
       <m:QueryString>${escapeXml(query)}</m:QueryString>
     </m:FindItem>`);
@@ -252,7 +261,7 @@ export class EwsMailConnector implements MailConnector {
     await this.post(`
     <m:MoveItem>
       <m:ToFolderId>
-        <t:DistinguishedFolderId Id="${folder}"/>
+        ${this.folderId(folder)}
       </m:ToFolderId>
       <m:ItemIds>
         <t:ItemId Id="${id}"/>
