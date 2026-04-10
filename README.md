@@ -40,11 +40,15 @@ Eule is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) serve
 │  ┌─────────┐ ┌──────────┐ ┌─────────────┐   │
 │  │  Mail   │ │ Calendar │ │  GTD Tasks  │   │
 │  └────┬────┘ └────┬─────┘ └──────┬──────┘   │
-│       │           │              │          │
-│  ┌────▼───────────▼──────────────▼──────┐   │
-│  │          Provider Layer              │   │
-│  │  M365 (Graph/EWS) · IMAP/SMTP · iCloud · … │   │
-│  └──────────────────────────────────────┘   │
+│  ┌────┴──┐ ┌──────┴──┐ ┌────────┴───────┐   │
+│  │ Chat  │ │  Files  │ │   Contacts     │   │
+│  └───┬───┘ └────┬────┘ └───────┬────────┘   │
+│      │          │              │             │
+│  ┌───▼──────────▼──────────────▼─────────┐   │
+│  │          Provider Layer               │   │
+│  │  M365 (Graph/EWS) · IMAP · CalDAV ·  │   │
+│  │  CardDAV · iCal · Signal              │   │
+│  └───────────────────────────────────────┘   │
 └─────────────────────────────────────────────┘
 ```
 
@@ -56,7 +60,7 @@ Eule is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) serve
 - **Role-based context** — map accounts and connectors to professional roles
 - **LLM-optimized output** — HTML emails rendered as clean Markdown with thread splitting
 
-## Tools (27)
+## Tools (33)
 
 ### 🔐 Auth (3)
 
@@ -82,6 +86,22 @@ Eule is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) serve
 | `mail_send` | Send, reply, or forward an email |
 | `mail_update` | Mark read/unread, move to folder, or delete |
 | `mail_attachment_get` | Download attachment to disk |
+
+### 💬 Messenger (3)
+
+| Tool | Description |
+|---|---|
+| `chat_list` | List recent conversations (Signal, Teams) |
+| `chat_read` | Read messages from a conversation |
+| `chat_send` | Send a message to a conversation |
+
+### 📁 Files (3)
+
+| Tool | Description |
+|---|---|
+| `file_search` | Search files in SharePoint/OneDrive |
+| `file_read` | Read file content (text extraction) |
+| `file_list` | List recently modified files |
 
 ### 📅 Calendar (5)
 
@@ -166,6 +186,14 @@ roles:
         - id: work-cal
           type: m365
           account: "you@example.com"
+      messenger:
+        - id: teams
+          type: m365
+          account: "you@example.com"
+      files:
+        - id: sharepoint
+          type: m365
+          account: "you@example.com"
 ```
 
 **Generic IMAP** (iCloud, Gmail, Fastmail, any mail server):
@@ -184,6 +212,11 @@ roles:
           smtpHost: "smtp.mail.me.com"
           auth: password
           password: "xxxx-xxxx-xxxx-xxxx"  # app-specific password
+      messenger:
+        - id: signal
+          type: signal
+          account: "+491234567890"
+          signalCliUrl: "http://localhost:8080"
 ```
 
 ### Register with your AI assistant
@@ -245,7 +278,7 @@ autoAuth:
 - [ ] Resource planning & capacity tracking
 - [ ] Paperless-ngx connector
 - [ ] Apple Notes (macOS-only, AppleScript/SQLite)
-- [ ] Messengers — Signal (`signal-cli`), iMessage (macOS), WhatsApp (Business API), Telegram
+- [ ] Messengers — iMessage (macOS), WhatsApp (Business API), Telegram, Discord, Slack, Matrix
 - [ ] Google Workspace (Gmail API, Google Calendar API)
 - [ ] Auto-auth i18n resilience
 - [ ] IETF OAuth for Open Public Clients (`draft-ietf-mailmaint-oauth-public`) — provider-agnostic auth with dynamic client registration
