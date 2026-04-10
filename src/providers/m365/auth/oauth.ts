@@ -42,6 +42,7 @@ export const TIER_SCOPES: Record<ApiTier, string> = {
     "https://graph.microsoft.com/Mail.ReadWrite https://graph.microsoft.com/Calendars.ReadWrite https://graph.microsoft.com/Contacts.Read offline_access",
   ews: "https://outlook.office.com/EWS.AccessAsUser.All offline_access",
   imap: "https://outlook.office.com/IMAP.AccessAsUser.All https://outlook.office.com/SMTP.Send offline_access",
+  google: "", // Google scopes handled in google-auth.ts
 };
 
 /** Thrown when CA policy requires interactive re-authentication (e.g. sign-in frequency). */

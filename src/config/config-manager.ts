@@ -7,6 +7,7 @@ import type {
   AppConfig,
   AutoAuthConfig,
   OAuthConfig,
+  GoogleOAuthConfig,
   RoleConfig,
   ConnectorConfig,
 } from "../types/index.js";
@@ -69,7 +70,14 @@ function validate(raw: unknown): AppConfig {
     }
   }
 
-  return { language, oauth, autoAuth, roles };
+  return { language, oauth, google: parseGoogleOAuth(obj.google), autoAuth, roles };
+}
+
+function parseGoogleOAuth(raw: unknown): GoogleOAuthConfig | undefined {
+  if (typeof raw !== "object" || raw === null) return undefined;
+  const o = raw as Record<string, unknown>;
+  if (typeof o.clientId !== "string" || typeof o.clientSecret !== "string") return undefined;
+  return { clientId: o.clientId, clientSecret: o.clientSecret };
 }
 
 function parseAutoAuth(raw: unknown): AutoAuthConfig[] | undefined {
@@ -116,7 +124,7 @@ function parseConnectorList(raw: unknown): RoleConfig["connectors"]["mail"] {
     .filter((c): c is Record<string, unknown> => typeof c === "object" && c !== null)
     .map((c) => ({
       id: String(c.id ?? ""),
-      type: (["imap", "caldav", "carddav", "ical", "signal"].includes(String(c.type))
+      type: (["imap", "caldav", "carddav", "ical", "signal", "google"].includes(String(c.type))
         ? String(c.type)
         : "m365") as ConnectorConfig["type"],
       account: String(c.account ?? ""),

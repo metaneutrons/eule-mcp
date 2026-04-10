@@ -20,6 +20,11 @@ import { ICalFeedConnector } from "../providers/ical/index.js";
 import { GraphTeamsConnector } from "../providers/m365/graph-teams.js";
 import { GraphFileConnector } from "../providers/m365/graph-files.js";
 import { SignalMessengerConnector } from "../providers/signal/index.js";
+import { getGoogleAccessToken } from "../providers/google/index.js";
+import { GoogleMailConnector } from "../providers/google/google-mail.js";
+import { GoogleCalendarConnector } from "../providers/google/google-calendar.js";
+import { GoogleContactConnector } from "../providers/google/google-contacts.js";
+import { GoogleDriveConnector } from "../providers/google/google-drive.js";
 
 export class ConnectorRegistry {
   constructor(private readonly config: ConfigManager) {}
@@ -47,6 +52,15 @@ export class ConnectorRegistry {
               auth: mc.auth ?? "password",
               password: mc.password,
             }),
+          );
+          continue;
+        }
+
+        if (mc.type === "google") {
+          const gcfg = cfg.google;
+          if (!gcfg) continue;
+          connectors.push(
+            new GoogleMailConnector(mc.account, () => getGoogleAccessToken(mc.account, gcfg)),
           );
           continue;
         }
@@ -159,6 +173,15 @@ export class ConnectorRegistry {
           continue;
         }
 
+        if (cc.type === "google") {
+          const gcfg = cfg.google;
+          if (gcfg)
+            connectors.push(
+              new GoogleCalendarConnector(cc.account, () => getGoogleAccessToken(cc.account, gcfg)),
+            );
+          continue;
+        }
+
         // M365 provider.
         const token = tokens.accounts[cc.account];
         if (!token) continue;
@@ -201,7 +224,17 @@ export class ConnectorRegistry {
           continue;
         }
 
-        if (cc.type !== "m365") continue;
+        if (cc.type !== "m365" && cc.type !== "google") continue;
+
+        if (cc.type === "google") {
+          const gcfg = cfg.google;
+          if (gcfg)
+            connectors.push(
+              new GoogleContactConnector(cc.account, () => getGoogleAccessToken(cc.account, gcfg)),
+            );
+          continue;
+        }
+
         const token = tokens.accounts[cc.account];
         if (!token) continue;
         const getToken = () => getAccessToken(cc.account, oauth);
@@ -255,6 +288,14 @@ export class ConnectorRegistry {
 
     for (const r of roles) {
       for (const fc of r.connectors.files ?? []) {
+        if (fc.type === "google") {
+          const gcfg = cfg.google;
+          if (gcfg)
+            connectors.push(
+              new GoogleDriveConnector(fc.account, () => getGoogleAccessToken(fc.account, gcfg)),
+            );
+          continue;
+        }
         if (fc.type !== "m365") continue;
         const token = tokens.accounts[fc.account];
         if (token?.tier !== "graph") continue;

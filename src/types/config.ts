@@ -1,7 +1,7 @@
 /** Connector configuration for a single mail or calendar account. */
 export interface ConnectorConfig {
   readonly id: string;
-  readonly type: "m365" | "imap" | "caldav" | "carddav" | "ical" | "signal";
+  readonly type: "m365" | "imap" | "caldav" | "carddav" | "ical" | "signal" | "google";
   readonly account: string;
   /** For shared/delegate mailboxes. Auth uses `account`, access targets `mailbox`. */
   readonly mailbox?: string;
@@ -49,18 +49,24 @@ export interface OAuthConfig {
   readonly tenant: string;
 }
 
+export interface GoogleOAuthConfig {
+  readonly clientId: string;
+  readonly clientSecret: string;
+}
+
 /** Root application configuration loaded from config.yaml. */
 export interface AppConfig {
   readonly language: "de" | "en";
   readonly oauth: OAuthConfig;
+  readonly google?: GoogleOAuthConfig;
   readonly autoAuth?: readonly AutoAuthConfig[];
   readonly roles: readonly RoleConfig[];
 }
 
-/** M365 API tier determined by the auth probe. */
-export type ApiTier = "graph" | "ews" | "imap";
+/** API tier determined by the auth probe. */
+export type ApiTier = "graph" | "ews" | "imap" | "google";
 
-/** Stored token data for a single M365 account. */
+/** Stored token data for a single account. */
 export interface AccountToken {
   readonly account: string;
   readonly accessToken: string;
@@ -68,6 +74,7 @@ export interface AccountToken {
   readonly expiresAt: number;
   readonly tier: ApiTier;
   readonly icalUrl?: string;
+  readonly provider?: "m365" | "google";
 }
 
 /** Persisted token store (all accounts). */

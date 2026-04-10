@@ -5,6 +5,7 @@ import { z } from "zod";
 import { ConfigManager } from "../config/index.js";
 import { DatabaseManager, TaskManager, ContactManager } from "../db/index.js";
 import { loadTokens, authenticateAccount, getAccessToken } from "../providers/m365/index.js";
+import { authenticateGoogle } from "../providers/google/index.js";
 import { ConnectorRegistry } from "../connectors/index.js";
 import { renderMail } from "../renderer/index.js";
 import type { ApiTier, MailMessage, CalendarEvent } from "../types/index.js";
@@ -53,17 +54,34 @@ server.tool("auth_status", "Show authentication status and configuration summary
 // --- auth_login tool ---
 server.tool(
   "auth_login",
-  "Authenticate or re-authenticate an M365 account via browser OAuth flow",
+  "Authenticate an account via browser OAuth flow (M365 or Google)",
   {
     account: z.string().optional().describe("Email address hint for login"),
     tier: z
-      .enum(["graph", "ews", "imap"])
+      .enum(["graph", "ews", "imap", "google"])
       .optional()
-      .describe("API tier to authenticate for (default: graph)"),
+      .describe("API tier (default: graph). Use 'google' for Google Workspace."),
   },
   async ({ account, tier }) => {
-    const apiTier: ApiTier = tier ?? "graph";
     try {
+      if (tier === "google") {
+        const config = configManager.get();
+        if (!config.google)
+          return {
+            content: [{ type: "text" as const, text: "❌ No google OAuth config in config.yaml" }],
+            isError: true,
+          };
+        const token = await authenticateGoogle(config.google, account);
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `✅ Google authenticated: ${token.account}\nExpires: ${new Date(token.expiresAt).toLocaleString()}`,
+            },
+          ],
+        };
+      }
+      const apiTier: ApiTier = tier ?? "graph";
       const config = configManager.get();
       const autoAuth = account ? config.autoAuth?.find((a) => a.account === account) : undefined;
       const token = await authenticateAccount(apiTier, account, config.oauth, autoAuth);
