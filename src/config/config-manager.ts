@@ -105,6 +105,8 @@ function parseConnectors(raw: unknown): RoleConfig["connectors"] {
     mail: parseConnectorList(obj.mail),
     calendar: parseConnectorList(obj.calendar),
     contacts: parseConnectorList(obj.contacts),
+    messenger: parseConnectorList(obj.messenger),
+    files: parseConnectorList(obj.files),
   };
 }
 
@@ -114,7 +116,7 @@ function parseConnectorList(raw: unknown): RoleConfig["connectors"]["mail"] {
     .filter((c): c is Record<string, unknown> => typeof c === "object" && c !== null)
     .map((c) => ({
       id: String(c.id ?? ""),
-      type: (["imap", "caldav", "carddav", "ical"].includes(String(c.type))
+      type: (["imap", "caldav", "carddav", "ical", "signal"].includes(String(c.type))
         ? String(c.type)
         : "m365") as ConnectorConfig["type"],
       account: String(c.account ?? ""),
@@ -126,6 +128,7 @@ function parseConnectorList(raw: unknown): RoleConfig["connectors"]["mail"] {
       auth: c.auth === "oauth" || c.auth === "password" ? c.auth : undefined,
       password: typeof c.password === "string" ? c.password : undefined,
       url: typeof c.url === "string" ? c.url : undefined,
+      signalCliUrl: typeof c.signalCliUrl === "string" ? c.signalCliUrl : undefined,
     }));
 }
 

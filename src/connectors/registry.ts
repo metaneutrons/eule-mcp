@@ -1,4 +1,10 @@
-import type { MailConnector, CalendarConnector, ContactConnector } from "../types/index.js";
+import type {
+  MailConnector,
+  CalendarConnector,
+  ContactConnector,
+  MessengerConnector,
+  FileConnector,
+} from "../types/index.js";
 import type { ConfigManager } from "../config/index.js";
 import { loadTokens, getAccessToken } from "../providers/m365/index.js";
 import { GraphMailConnector } from "../providers/m365/graph-mail.js";
@@ -11,6 +17,9 @@ import { EwsContactConnector } from "../providers/m365/ews-contacts.js";
 import { CalDavCalendarConnector } from "../providers/caldav/index.js";
 import { CardDavContactConnector } from "../providers/caldav/index.js";
 import { ICalFeedConnector } from "../providers/ical/index.js";
+import { GraphTeamsConnector } from "../providers/m365/graph-teams.js";
+import { GraphFileConnector } from "../providers/m365/graph-files.js";
+import { SignalMessengerConnector } from "../providers/signal/index.js";
 
 export class ConnectorRegistry {
   constructor(private readonly config: ConfigManager) {}
@@ -205,6 +214,53 @@ export class ConnectorRegistry {
       }
     }
 
+    return connectors;
+  }
+
+  /** Get all messenger connectors, optionally filtered by role. */
+  getMessengerConnectors(role?: string): MessengerConnector[] {
+    const cfg = this.config.get();
+    const oauth = cfg.oauth;
+    const tokens = loadTokens();
+    const connectors: MessengerConnector[] = [];
+    const roles = role ? cfg.roles.filter((r) => r.id === role) : cfg.roles;
+
+    for (const r of roles) {
+      for (const mc of r.connectors.messenger ?? []) {
+        if (mc.type === "signal") {
+          if (mc.signalCliUrl)
+            connectors.push(new SignalMessengerConnector(mc.account, mc.signalCliUrl));
+          continue;
+        }
+        // M365 Teams.
+        const token = tokens.accounts[mc.account];
+        if (token?.tier !== "graph") continue;
+        connectors.push(
+          new GraphTeamsConnector(mc.account, () => getAccessToken(mc.account, oauth)),
+        );
+      }
+    }
+    return connectors;
+  }
+
+  /** Get all file connectors, optionally filtered by role. */
+  getFileConnectors(role?: string): FileConnector[] {
+    const cfg = this.config.get();
+    const oauth = cfg.oauth;
+    const tokens = loadTokens();
+    const connectors: FileConnector[] = [];
+    const roles = role ? cfg.roles.filter((r) => r.id === role) : cfg.roles;
+
+    for (const r of roles) {
+      for (const fc of r.connectors.files ?? []) {
+        if (fc.type !== "m365") continue;
+        const token = tokens.accounts[fc.account];
+        if (token?.tier !== "graph") continue;
+        connectors.push(
+          new GraphFileConnector(fc.account, () => getAccessToken(fc.account, oauth)),
+        );
+      }
+    }
     return connectors;
   }
 }

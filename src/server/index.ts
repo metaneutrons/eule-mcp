@@ -526,6 +526,246 @@ server.tool(
   },
 );
 
+// --- Chat tools (Messenger) ---
+server.tool(
+  "chat_list",
+  "List recent conversations from all messengers (Signal, Teams)",
+  {
+    role: z.string().optional().describe("Filter by role ID"),
+    limit: z.number().optional().describe("Max conversations per connector (default 20)"),
+  },
+  async ({ role, limit }) => {
+    const connectors = registry.getMessengerConnectors(role);
+    if (connectors.length === 0)
+      return { content: [{ type: "text" as const, text: "No messenger connectors configured." }] };
+    const all: {
+      platform: string;
+      id: string;
+      title: string;
+      participants: string;
+      lastTimestamp?: string;
+    }[] = [];
+    for (const c of connectors) {
+      try {
+        const convos = await c.listConversations(limit ?? 20);
+        for (const cv of convos)
+          all.push({
+            platform: cv.platform,
+            id: cv.id,
+            title: cv.title,
+            participants: cv.participants.join(", "),
+            lastTimestamp: cv.lastTimestamp,
+          });
+      } catch (err) {
+        all.push({
+          platform: c.platform,
+          id: "error",
+          title: `Error: ${err instanceof Error ? err.message : String(err)}`,
+          participants: "",
+        });
+      }
+    }
+    const lines = all.map(
+      (c) =>
+        `[${c.platform}] ${c.title}${c.participants ? ` (${c.participants})` : ""}${c.lastTimestamp ? ` — ${c.lastTimestamp.slice(0, 16)}` : ""}\n  ID: ${c.id}`,
+    );
+    return {
+      content: [{ type: "text" as const, text: lines.join("\n\n") || "No conversations." }],
+    };
+  },
+);
+
+server.tool(
+  "chat_read",
+  "Read messages from a conversation",
+  {
+    conversationId: z.string().describe("Conversation ID (from chat_list)"),
+    account: z.string().describe("Account identifier"),
+    limit: z.number().optional().describe("Max messages (default 20)"),
+  },
+  async ({ conversationId, account, limit }) => {
+    const connectors = registry.getMessengerConnectors();
+    const connector = connectors.find((c) => c.account === account);
+    if (!connector)
+      return {
+        content: [{ type: "text" as const, text: `No messenger connector for ${account}` }],
+        isError: true,
+      };
+    try {
+      const msgs = await connector.getMessages(conversationId, limit ?? 20);
+      const lines = msgs.map((m) => `[${m.timestamp.slice(0, 16)}] ${m.from}: ${m.body}`);
+      return { content: [{ type: "text" as const, text: lines.join("\n") || "No messages." }] };
+    } catch (err) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Error: ${err instanceof Error ? err.message : String(err)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
+  "chat_send",
+  "Send a message to a conversation",
+  {
+    conversationId: z.string().describe("Conversation ID"),
+    account: z.string().describe("Account identifier"),
+    body: z.string().describe("Message text"),
+  },
+  async ({ conversationId, account, body }) => {
+    const connectors = registry.getMessengerConnectors();
+    const connector = connectors.find((c) => c.account === account);
+    if (!connector)
+      return {
+        content: [{ type: "text" as const, text: `No messenger connector for ${account}` }],
+        isError: true,
+      };
+    try {
+      await connector.sendMessage(conversationId, body);
+      return { content: [{ type: "text" as const, text: `✅ Sent via ${connector.platform}` }] };
+    } catch (err) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `❌ Failed: ${err instanceof Error ? err.message : String(err)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  },
+);
+
+// --- File tools (SharePoint/OneDrive) ---
+server.tool(
+  "file_search",
+  "Search files in SharePoint/OneDrive",
+  {
+    query: z.string().describe("Search query"),
+    role: z.string().optional().describe("Filter by role ID"),
+    limit: z.number().optional().describe("Max results (default 20)"),
+  },
+  async ({ query, role, limit }) => {
+    const connectors = registry.getFileConnectors(role);
+    if (connectors.length === 0)
+      return { content: [{ type: "text" as const, text: "No file connectors configured." }] };
+    const results: {
+      name: string;
+      path: string;
+      size: string;
+      modified: string;
+      id: string;
+      webUrl?: string;
+    }[] = [];
+    for (const c of connectors) {
+      try {
+        const files = await c.search(query, limit ?? 20);
+        for (const f of files)
+          results.push({
+            name: f.name,
+            path: f.path,
+            size: `${String(Math.round(f.size / 1024))}KB`,
+            modified: f.lastModified.slice(0, 16),
+            id: f.id,
+            webUrl: f.webUrl,
+          });
+      } catch (err) {
+        results.push({
+          name: `Error: ${err instanceof Error ? err.message : String(err)}`,
+          path: "",
+          size: "",
+          modified: "",
+          id: "error",
+        });
+      }
+    }
+    const lines = results.map(
+      (f) =>
+        `${f.name} (${f.size}, ${f.modified})\n  ${f.path}${f.webUrl ? `\n  ${f.webUrl}` : ""}\n  ID: ${f.id}`,
+    );
+    return { content: [{ type: "text" as const, text: lines.join("\n\n") || "No files found." }] };
+  },
+);
+
+server.tool(
+  "file_read",
+  "Read file content from SharePoint/OneDrive (text files only)",
+  {
+    id: z.string().describe("File ID (from file_search or file_list)"),
+    account: z.string().describe("Account email address"),
+  },
+  async ({ id, account }) => {
+    const connectors = registry.getFileConnectors();
+    const connector = connectors.find((c) => c.account === account);
+    if (!connector)
+      return {
+        content: [{ type: "text" as const, text: `No file connector for ${account}` }],
+        isError: true,
+      };
+    try {
+      const content = await connector.getContent(id);
+      return { content: [{ type: "text" as const, text: content }] };
+    } catch (err) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Error: ${err instanceof Error ? err.message : String(err)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
+  "file_list",
+  "List recently modified files in SharePoint/OneDrive",
+  {
+    role: z.string().optional().describe("Filter by role ID"),
+    limit: z.number().optional().describe("Max results (default 20)"),
+  },
+  async ({ role, limit }) => {
+    const connectors = registry.getFileConnectors(role);
+    if (connectors.length === 0)
+      return { content: [{ type: "text" as const, text: "No file connectors configured." }] };
+    const results: { name: string; size: string; modified: string; id: string; webUrl?: string }[] =
+      [];
+    for (const c of connectors) {
+      try {
+        const files = await c.listRecent(limit ?? 20);
+        for (const f of files)
+          results.push({
+            name: f.name,
+            size: `${String(Math.round(f.size / 1024))}KB`,
+            modified: f.lastModified.slice(0, 16),
+            id: f.id,
+            webUrl: f.webUrl,
+          });
+      } catch (err) {
+        results.push({
+          name: `Error: ${err instanceof Error ? err.message : String(err)}`,
+          size: "",
+          modified: "",
+          id: "error",
+        });
+      }
+    }
+    const lines = results.map(
+      (f) =>
+        `${f.name} (${f.size}, ${f.modified})${f.webUrl ? `\n  ${f.webUrl}` : ""}\n  ID: ${f.id}`,
+    );
+    return { content: [{ type: "text" as const, text: lines.join("\n\n") || "No recent files." }] };
+  },
+);
+
 import { BriefingService } from "../services/index.js";
 
 // --- Calendar tools ---

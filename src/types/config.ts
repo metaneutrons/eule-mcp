@@ -1,7 +1,7 @@
 /** Connector configuration for a single mail or calendar account. */
 export interface ConnectorConfig {
   readonly id: string;
-  readonly type: "m365" | "imap" | "caldav" | "carddav" | "ical";
+  readonly type: "m365" | "imap" | "caldav" | "carddav" | "ical" | "signal";
   readonly account: string;
   readonly shared?: boolean;
   // IMAP-specific fields (type: "imap").
@@ -11,8 +11,10 @@ export interface ConnectorConfig {
   readonly smtpPort?: number;
   readonly auth?: "oauth" | "password";
   readonly password?: string;
-  // CalDAV/CardDAV fields (type: "caldav" | "carddav").
+  // CalDAV/CardDAV/iCal fields.
   readonly url?: string;
+  // Signal fields (type: "signal").
+  readonly signalCliUrl?: string;
 }
 
 /** Optional auto-authentication credentials for an account. */
@@ -27,6 +29,8 @@ export interface RoleConnectors {
   readonly mail?: readonly ConnectorConfig[];
   readonly calendar?: readonly ConnectorConfig[];
   readonly contacts?: readonly ConnectorConfig[];
+  readonly messenger?: readonly ConnectorConfig[];
+  readonly files?: readonly ConnectorConfig[];
 }
 
 /** A single role definition. */

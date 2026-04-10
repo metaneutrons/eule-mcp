@@ -17,7 +17,12 @@ export type {
   CalendarEvent,
   CalendarEventInput,
   RemoteContact,
+  Conversation,
+  ChatMessage,
+  FileResult,
   MailConnector,
   CalendarConnector,
   ContactConnector,
+  MessengerConnector,
+  FileConnector,
 } from "./connectors.js";

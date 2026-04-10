@@ -94,3 +94,53 @@ export interface ContactConnector {
   listContacts(limit?: number): Promise<RemoteContact[]>;
   searchContacts(query: string, limit?: number): Promise<RemoteContact[]>;
 }
+
+/** Chat conversation from a messenger. */
+export interface Conversation {
+  readonly id: string;
+  readonly account: string;
+  readonly platform: string;
+  readonly title: string;
+  readonly lastMessage?: string;
+  readonly lastTimestamp?: string;
+  readonly participants: readonly string[];
+}
+
+/** Single chat message. */
+export interface ChatMessage {
+  readonly id: string;
+  readonly conversationId: string;
+  readonly account: string;
+  readonly platform: string;
+  readonly from: string;
+  readonly body: string;
+  readonly timestamp: string;
+}
+
+/** Messenger connector interface. */
+export interface MessengerConnector {
+  readonly account: string;
+  readonly platform: string;
+  listConversations(limit?: number): Promise<Conversation[]>;
+  getMessages(conversationId: string, limit?: number): Promise<ChatMessage[]>;
+  sendMessage(conversationId: string, body: string): Promise<void>;
+}
+
+/** File search result. */
+export interface FileResult {
+  readonly id: string;
+  readonly account: string;
+  readonly name: string;
+  readonly path: string;
+  readonly size: number;
+  readonly lastModified: string;
+  readonly webUrl?: string;
+}
+
+/** File connector interface (SharePoint, OneDrive, etc.). */
+export interface FileConnector {
+  readonly account: string;
+  search(query: string, limit?: number): Promise<FileResult[]>;
+  getContent(id: string): Promise<string>;
+  listRecent(limit?: number): Promise<FileResult[]>;
+}
