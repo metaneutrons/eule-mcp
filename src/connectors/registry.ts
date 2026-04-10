@@ -10,6 +10,7 @@ import { GraphContactConnector } from "../providers/m365/graph-contacts.js";
 import { EwsContactConnector } from "../providers/m365/ews-contacts.js";
 import { CalDavCalendarConnector } from "../providers/caldav/index.js";
 import { CardDavContactConnector } from "../providers/caldav/index.js";
+import { ICalFeedConnector } from "../providers/ical/index.js";
 
 export class ConnectorRegistry {
   constructor(private readonly config: ConfigManager) {}
@@ -139,6 +140,11 @@ export class ConnectorRegistry {
               }),
             );
           }
+          continue;
+        }
+
+        if (cc.type === "ical") {
+          if (cc.url) connectors.push(new ICalFeedConnector(cc.account || cc.id, cc.url));
           continue;
         }
 

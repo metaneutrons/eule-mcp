@@ -114,7 +114,7 @@ function parseConnectorList(raw: unknown): RoleConfig["connectors"]["mail"] {
     .filter((c): c is Record<string, unknown> => typeof c === "object" && c !== null)
     .map((c) => ({
       id: String(c.id ?? ""),
-      type: (["imap", "caldav", "carddav"].includes(String(c.type))
+      type: (["imap", "caldav", "carddav", "ical"].includes(String(c.type))
         ? String(c.type)
         : "m365") as ConnectorConfig["type"],
       account: String(c.account ?? ""),

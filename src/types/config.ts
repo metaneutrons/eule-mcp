@@ -1,7 +1,7 @@
 /** Connector configuration for a single mail or calendar account. */
 export interface ConnectorConfig {
   readonly id: string;
-  readonly type: "m365" | "imap" | "caldav" | "carddav";
+  readonly type: "m365" | "imap" | "caldav" | "carddav" | "ical";
   readonly account: string;
   readonly shared?: boolean;
   // IMAP-specific fields (type: "imap").
