@@ -52,18 +52,18 @@ export class ConnectorRegistry {
         }
 
         // M365 provider — tier-based routing.
-        const authAccount = mc.tokenAccount ?? mc.account;
-        const token = tokens.accounts[authAccount];
+        const token = tokens.accounts[mc.account];
         if (!token) continue;
 
-        const getToken = () => getAccessToken(authAccount, oauth);
+        const getToken = () => getAccessToken(mc.account, oauth);
+        const target = mc.mailbox ?? mc.account;
 
         switch (token.tier) {
           case "graph":
-            connectors.push(new GraphMailConnector(mc.account, getToken, mc.shared));
+            connectors.push(new GraphMailConnector(target, getToken, mc.shared));
             break;
           case "ews":
-            connectors.push(new EwsMailConnector(mc.account, getToken, mc.shared));
+            connectors.push(new EwsMailConnector(target, getToken, mc.shared));
             break;
           case "imap":
             connectors.push(
