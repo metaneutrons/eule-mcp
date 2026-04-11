@@ -1371,9 +1371,18 @@ server.tool(
 
 server.tool(
   "doc_read",
-  "Read document metadata and OCR content",
-  { id: z.number().describe("Document ID"), role: z.string().optional().describe("Role ID") },
-  async ({ id, role }) => {
+  "Read document metadata and OCR content (optionally as Markdown via pymupdf4llm)",
+  {
+    id: z.number().describe("Document ID"),
+    format: z
+      .enum(["text", "markdown"])
+      .optional()
+      .describe(
+        "Output format (default: text). 'markdown' downloads PDF and converts via pymupdf4llm",
+      ),
+    role: z.string().optional().describe("Role ID"),
+  },
+  async ({ id, format, role }) => {
     const c = registry.getDocumentConnectors(role)[0];
     if (!c)
       return {
@@ -1384,7 +1393,34 @@ server.tool(
     const lines = [formatDoc(d)];
     if (d.originalFileName) lines.push(`File: ${d.originalFileName}`);
     if (d.archiveSerialNumber) lines.push(`ASN: ${String(d.archiveSerialNumber)}`);
-    if (d.content) lines.push("", "---", "", d.content.slice(0, 4000));
+
+    if (format === "markdown") {
+      try {
+        const { writeFileSync, unlinkSync } = await import("node:fs");
+        const { join } = await import("node:path");
+        const { tmpdir } = await import("node:os");
+        const { execFileSync } = await import("node:child_process");
+        const buf = await c.downloadDocument(id);
+        const tmp = join(tmpdir(), `eule-doc-${String(id)}.pdf`);
+        writeFileSync(tmp, buf);
+        const md = execFileSync(
+          "python3",
+          ["-c", `import pymupdf4llm; print(pymupdf4llm.to_markdown("${tmp}"))`],
+          { maxBuffer: 10 * 1024 * 1024 },
+        ).toString();
+        unlinkSync(tmp);
+        lines.push("", "---", "", md);
+      } catch (err) {
+        lines.push(
+          "",
+          "⚠️ pymupdf4llm not available, falling back to OCR text",
+          `(${err instanceof Error ? err.message : String(err)})`,
+        );
+        if (d.content) lines.push("", "---", "", d.content.slice(0, 4000));
+      }
+    } else {
+      if (d.content) lines.push("", "---", "", d.content.slice(0, 4000));
+    }
     return { content: [{ type: "text" as const, text: lines.join("\n") }] };
   },
 );
