@@ -12,8 +12,8 @@ const REDIRECT_URI = `http://localhost:${String(REDIRECT_PORT)}`;
 const SCOPES = [
   "https://www.googleapis.com/auth/gmail.modify",
   "https://www.googleapis.com/auth/calendar",
-  "https://www.googleapis.com/auth/contacts.readonly",
-  "https://www.googleapis.com/auth/drive.readonly",
+  "https://www.googleapis.com/auth/contacts",
+  "https://www.googleapis.com/auth/drive",
   "openid",
   "email",
 ].join(" ");

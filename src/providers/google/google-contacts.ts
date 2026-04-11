@@ -12,7 +12,7 @@ interface Person {
 
 export class GoogleContactConnector implements ContactConnector {
   readonly tier = "google";
-  readonly readOnly = true; // contacts.readonly scope
+  readonly readOnly = false;
 
   constructor(
     readonly account: string,
@@ -47,8 +47,20 @@ export class GoogleContactConnector implements ContactConnector {
     return (data.results ?? []).map((r) => this.map(r.person));
   }
 
-  createContact(_contact: ContactInput): Promise<RemoteContact> {
-    return Promise.reject(new Error("Google contacts are read-only (contacts.readonly scope)"));
+  async createContact(contact: ContactInput): Promise<RemoteContact> {
+    const h = await this.headers();
+    const body: Record<string, unknown> = { names: [{ givenName: contact.displayName }] };
+    if (contact.email) body.emailAddresses = [{ value: contact.email }];
+    if (contact.phone) body.phoneNumbers = [{ value: contact.phone }];
+    if (contact.organization || contact.jobTitle)
+      body.organizations = [{ name: contact.organization, title: contact.jobTitle }];
+    const res = await fetch(`${BASE}/people:createContact`, {
+      method: "POST",
+      headers: h,
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(`Google createContact: ${String(res.status)} ${await res.text()}`);
+    return this.map((await res.json()) as Person);
   }
 
   private map(p: Person): RemoteContact {
