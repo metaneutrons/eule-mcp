@@ -14,7 +14,7 @@ function vcard(data: string, key: string): string {
 
 export class CardDavContactConnector implements ContactConnector {
   readonly tier = "carddav";
-  readonly readOnly = true;
+  readonly readOnly = false;
 
   constructor(
     readonly account: string,
@@ -62,8 +62,32 @@ export class CardDavContactConnector implements ContactConnector {
       .slice(0, limit);
   }
 
-  createContact(_contact: ContactInput): Promise<RemoteContact> {
-    return Promise.reject(new Error("CardDAV contacts are read-only"));
+  async createContact(contact: ContactInput): Promise<RemoteContact> {
+    const c = await this.client();
+    const addressBooks = await c.fetchAddressBooks();
+    const ab = addressBooks[0];
+    if (!ab) throw new Error("No address book found");
+    const uid = `eule-${String(Date.now())}`;
+    const lines = ["BEGIN:VCARD", "VERSION:3.0", `UID:${uid}`, `FN:${contact.displayName}`];
+    if (contact.email) lines.push(`EMAIL:${contact.email}`);
+    if (contact.phone) lines.push(`TEL:${contact.phone}`);
+    if (contact.organization) lines.push(`ORG:${contact.organization}`);
+    if (contact.jobTitle) lines.push(`TITLE:${contact.jobTitle}`);
+    lines.push("END:VCARD");
+    await c.createVCard({
+      addressBook: ab,
+      filename: `${uid}.vcf`,
+      vCardString: lines.join("\r\n"),
+    });
+    return {
+      id: uid,
+      account: this.account,
+      displayName: contact.displayName,
+      email: contact.email,
+      phone: contact.phone,
+      organization: contact.organization,
+      jobTitle: contact.jobTitle,
+    };
   }
 
   private parse(data: string, url: string): RemoteContact {
