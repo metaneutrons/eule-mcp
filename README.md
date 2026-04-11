@@ -139,7 +139,7 @@ Eule is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) serve
 |---|---|
 | `doc_search` | Full-text search across documents (Paperless-NGX) |
 | `doc_list` | List recent documents with metadata |
-| `doc_read` | Read document metadata and OCR content |
+| `doc_read` | Read document metadata and content (OCR text or Markdown via pymupdf4llm) |
 | `doc_download` | Download a document file |
 | `doc_upload` | Upload a document (with title, tags, correspondent, type) |
 | `doc_tag` | Update document metadata (title, tags, correspondent, type) |
