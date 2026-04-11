@@ -54,20 +54,20 @@ Eule is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) serve
 
 **Key design decisions:**
 
-- **Multi-provider architecture** — M365 today, iCloud/Google/CalDAV tomorrow
+- **Multi-provider architecture** — M365, Google Workspace, CalDAV, CardDAV, IMAP, iCal, Signal
 - **Tiered API access** — Graph API → EWS → IMAP/SMTP, auto-detected per tenant
 - **Headless re-authentication** — optional TOTP auto-auth via Playwright when tokens expire
 - **Role-based context** — map accounts and connectors to professional roles
 - **LLM-optimized output** — HTML emails rendered as clean Markdown with thread splitting
 
-## Tools (29)
+## Tools (31)
 
 ### 🔐 Auth (3)
 
 | Tool | Description |
 |---|---|
 | `auth_status` | Show authentication status and configuration |
-| `auth_login` | Authenticate or re-authenticate an M365 account |
+| `auth_login` | Authenticate an account (M365 or Google) via browser OAuth |
 | `auth_probe` | Test which API tier works for an account |
 
 ### 👤 Roles (1)
@@ -80,11 +80,11 @@ Eule is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) serve
 
 | Tool | Description |
 |---|---|
-| `mail_list` | List emails from any folder (inbox, sentitems, drafts, ...) |
+| `mail_list` | List emails from any folder (inbox, sentitems, archive, ...) |
 | `mail_read` | Read email as Markdown with attachment metadata |
-| `mail_search` | Search emails, optionally scoped to a folder (EWS/IMAP) |
+| `mail_search` | Search emails, optionally scoped to a folder |
 | `mail_send` | Send, reply, or forward an email |
-| `mail_update` | Mark read/unread, move to folder, or delete |
+| `mail_update` | Mark read/unread, move to folder (archive, spam, ...), or delete |
 | `mail_attachment_get` | Download attachment to disk |
 
 ### 💬 Messenger (3)
@@ -95,21 +95,23 @@ Eule is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) serve
 | `chat_read` | Read messages from a conversation |
 | `chat_send` | Send a message to a conversation |
 
-### 📁 Files (3)
+### 📁 Files (4)
 
 | Tool | Description |
 |---|---|
-| `file_search` | Search files in SharePoint/OneDrive |
+| `file_search` | Search files in OneDrive/SharePoint/Google Drive |
 | `file_read` | Read file content (text extraction) |
 | `file_list` | List recently modified files |
+| `file_upload` | Upload a file to OneDrive or Google Drive |
 
-### 📅 Calendar (5)
+### 📅 Calendar (6)
 
 | Tool | Description |
 |---|---|
-| `calendar_list` | List upcoming events from all sources (M365, CalDAV, iCal feeds) |
+| `calendar_calendars` | List available calendars across all sources |
+| `calendar_list` | List upcoming events from all sources (M365, Google, CalDAV, iCal) |
 | `calendar_today` | Today's schedule with attendees and locations |
-| `calendar_create` | Create a new event with attendees |
+| `calendar_create` | Create event with optional calendar selection |
 | `calendar_update` | Update an existing event |
 | `calendar_delete` | Delete an event |
 
@@ -127,16 +129,29 @@ Eule is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) serve
 
 | Tool | Description |
 |---|---|
-| `contact_add` | Add contact to remote address book (Graph, EWS) or locally |
-| `contact_list` | List contacts from all sources (Graph, EWS, CardDAV + local) |
+| `contact_add` | Add contact to remote address book (Graph, EWS, Google) or locally |
+| `contact_list` | List contacts from all sources |
 | `contact_search` | Search contacts across all sources |
+
+## Provider Matrix
+
+| | Mail | Calendar | Contacts | Chat | Files |
+|---|---|---|---|---|---|
+| **M365 Graph** | ✅ rw | ✅ rw | ✅ rw | ✅ Teams | ✅ rw |
+| **M365 EWS** | ✅ rw | ✅ rw | ✅ rw | — | — |
+| **Google** | ✅ rw | ✅ rw | ✅ rw | — | ✅ rw |
+| **IMAP/SMTP** | ✅ rw | — | — | — | — |
+| **CalDAV** | — | ✅ rw | — | — | — |
+| **CardDAV** | — | — | ro | — | — |
+| **iCal Feed** | — | ro | — | — | — |
+| **Signal** | — | — | — | ✅ rw | — |
 
 ## Quickstart
 
 ### Prerequisites
 
 - Node.js 22+
-- An M365 account (Exchange Online)
+- An M365 or Google Workspace account
 
 ### Install
 
