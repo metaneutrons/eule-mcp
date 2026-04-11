@@ -58,6 +58,25 @@ export class GoogleDriveConnector implements FileConnector {
     return (data.files ?? []).map((f) => this.map(f));
   }
 
+  async uploadFile(name: string, content: Buffer, parentId?: string): Promise<FileResult> {
+    const h = await this.headers();
+    const metadata: Record<string, unknown> = { name };
+    if (parentId) metadata.parents = [parentId];
+    const boundary = "eule_upload";
+    const body = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n--${boundary}\r\nContent-Type: application/octet-stream\r\n\r\n${content.toString()}\r\n--${boundary}--`;
+    const res = await fetch(
+      "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,size,modifiedTime,webViewLink,parents",
+      {
+        method: "POST",
+        headers: { ...h, "Content-Type": `multipart/related; boundary=${boundary}` },
+        body,
+      },
+    );
+    if (!res.ok) throw new Error(`Drive upload: ${String(res.status)} ${await res.text()}`);
+    const f = (await res.json()) as DriveFile;
+    return this.map(f);
+  }
+
   private map(f: DriveFile): FileResult {
     return {
       id: f.id ?? "",

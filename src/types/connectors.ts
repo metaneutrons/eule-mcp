@@ -161,10 +161,12 @@ export interface FileResult {
   readonly webUrl?: string;
 }
 
-/** File connector interface (SharePoint, OneDrive, etc.). */
+/** File connector interface (SharePoint, OneDrive, Google Drive, etc.). */
 export interface FileConnector {
   readonly account: string;
+  readonly readOnly?: boolean;
   search(query: string, limit?: number): Promise<FileResult[]>;
   getContent(id: string): Promise<string>;
   listRecent(limit?: number): Promise<FileResult[]>;
+  uploadFile?(name: string, content: Buffer, parentId?: string): Promise<FileResult>;
 }

@@ -784,6 +784,47 @@ server.tool(
   },
 );
 
+server.tool(
+  "file_upload",
+  "Upload a file to OneDrive or Google Drive",
+  {
+    path: z.string().describe("Local file path to upload"),
+    name: z.string().optional().describe("Remote filename (default: same as local)"),
+    parentId: z.string().optional().describe("Parent folder ID (default: root)"),
+    role: z.string().optional().describe("Role ID"),
+    account: z.string().optional().describe("Specific account"),
+  },
+  async ({ path: filePath, name, parentId, role, account }) => {
+    const { readFileSync, existsSync } = await import("node:fs");
+    const { basename } = await import("node:path");
+    if (!existsSync(filePath))
+      return {
+        content: [{ type: "text" as const, text: `❌ File not found: ${filePath}` }],
+        isError: true,
+      };
+    const connectors = registry.getFileConnectors(role);
+    const c = account
+      ? connectors.find((cc) => cc.account === account)
+      : connectors.find((cc) => cc.uploadFile != null);
+    if (!c?.uploadFile)
+      return {
+        content: [{ type: "text" as const, text: "No writable file connector found." }],
+        isError: true,
+      };
+    const content = readFileSync(filePath);
+    const fileName = name ?? basename(filePath);
+    const result = await c.uploadFile(fileName, content, parentId);
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: `📁 Uploaded: ${result.name}${result.webUrl ? `\n${result.webUrl}` : ""}\nID: ${result.id}`,
+        },
+      ],
+    };
+  },
+);
+
 // --- Calendar tools ---
 
 server.tool(

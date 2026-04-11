@@ -56,6 +56,20 @@ export class GraphFileConnector implements FileConnector {
     return data.value.map((d) => this.map(d));
   }
 
+  async uploadFile(name: string, content: Buffer, parentId?: string): Promise<FileResult> {
+    const h = await this.headers();
+    const path = parentId
+      ? `me/drive/items/${parentId}:/${encodeURIComponent(name)}:/content`
+      : `me/drive/root:/${encodeURIComponent(name)}:/content`;
+    const res = await fetch(`${GRAPH_BASE}/${path}`, {
+      method: "PUT",
+      headers: { ...h, "Content-Type": "application/octet-stream" },
+      body: content,
+    });
+    if (!res.ok) throw new Error(`Graph upload: ${String(res.status)} ${await res.text()}`);
+    return this.map((await res.json()) as DriveItem);
+  }
+
   private map(d: DriveItem): FileResult {
     return {
       id: d.id ?? "",
