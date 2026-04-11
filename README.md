@@ -60,7 +60,7 @@ Eule is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) serve
 - **Role-based context** — map accounts and connectors to professional roles
 - **LLM-optimized output** — HTML emails rendered as clean Markdown with thread splitting
 
-## Tools (31)
+## Tools (38)
 
 ### 🔐 Auth (3)
 
@@ -133,18 +133,31 @@ Eule is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) serve
 | `contact_list` | List contacts from all sources |
 | `contact_search` | Search contacts across all sources |
 
+### 📄 Documents (7)
+
+| Tool | Description |
+|---|---|
+| `doc_search` | Full-text search across documents (Paperless-NGX) |
+| `doc_list` | List recent documents with metadata |
+| `doc_read` | Read document metadata and OCR content |
+| `doc_download` | Download a document file |
+| `doc_upload` | Upload a document (with title, tags, correspondent, type) |
+| `doc_tag` | Update document metadata (title, tags, correspondent, type) |
+| `doc_bulk` | Bulk operations (add/remove tag, set type, delete, merge, reprocess) |
+
 ## Provider Matrix
 
-| | Mail | Calendar | Contacts | Chat | Files |
-|---|---|---|---|---|---|
-| **M365 Graph** | ✅ rw | ✅ rw | ✅ rw | ✅ Teams | ✅ rw |
-| **M365 EWS** | ✅ rw | ✅ rw | ✅ rw | — | — |
-| **Google** | ✅ rw | ✅ rw | ✅ rw | — | ✅ rw |
-| **IMAP/SMTP** | ✅ rw | — | — | — | — |
-| **CalDAV** | — | ✅ rw | — | — | — |
-| **CardDAV** | — | — | ro | — | — |
-| **iCal Feed** | — | ro | — | — | — |
-| **Signal** | — | — | — | ✅ rw | — |
+| | Mail | Calendar | Contacts | Chat | Files | Documents |
+|---|---|---|---|---|---|---|
+| **M365 Graph** | ✅ rw | ✅ rw | ✅ rw | ✅ Teams | ✅ rw | — |
+| **M365 EWS** | ✅ rw | ✅ rw | ✅ rw | — | — | — |
+| **Google** | ✅ rw | ✅ rw | ✅ rw | — | ✅ rw | — |
+| **IMAP/SMTP** | ✅ rw | — | — | — | — | — |
+| **CalDAV** | — | ✅ rw | — | — | — | — |
+| **CardDAV** | — | — | ✅ rw | — | — | — |
+| **iCal Feed** | — | ro | — | — | — | — |
+| **Signal** | — | — | — | ✅ rw | — | — |
+| **Paperless-NGX** | — | — | — | — | — | ✅ rw |
 
 ## Quickstart
 
@@ -233,6 +246,12 @@ roles:
           type: signal
           account: "+491234567890"
           signalCliUrl: "http://localhost:8080"
+      documents:
+        - id: paperless
+          type: paperless
+          account: "paperless.local"
+          url: "http://paperless:8000"
+          token: "your-api-token"
 ```
 
 ### Register with your AI assistant
@@ -291,7 +310,7 @@ autoAuth:
 - [x] CalDAV/CardDAV provider (iCloud, Nextcloud, any CalDAV/CardDAV server)
 - [x] iCal feed subscriptions (read-only calendar feeds)
 - [ ] Resource planning & capacity tracking
-- [ ] Paperless-ngx connector
+- [x] Paperless-ngx connector
 - [ ] Apple Notes (macOS-only, AppleScript/SQLite)
 - [ ] Messengers — iMessage (macOS), WhatsApp (Business API), Telegram, Discord, Slack, Matrix
 - [ ] Google Workspace (Gmail API, Google Calendar API)
