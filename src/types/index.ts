@@ -28,4 +28,10 @@ export type {
   ContactConnector,
   MessengerConnector,
   FileConnector,
+  DocTag,
+  DocCorrespondent,
+  DocDocumentType,
+  DocDocument,
+  DocBulkMethod,
+  DocumentConnector,
 } from "./connectors.js";

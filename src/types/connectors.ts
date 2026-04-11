@@ -170,3 +170,85 @@ export interface FileConnector {
   listRecent(limit?: number): Promise<FileResult[]>;
   uploadFile?(name: string, content: Buffer, parentId?: string): Promise<FileResult>;
 }
+
+/** DMS tag. */
+export interface DocTag {
+  readonly id: number;
+  readonly name: string;
+  readonly color?: string;
+  readonly match?: string;
+  readonly matchingAlgorithm?: string;
+}
+
+/** DMS correspondent. */
+export interface DocCorrespondent {
+  readonly id: number;
+  readonly name: string;
+  readonly match?: string;
+}
+
+/** DMS document type. */
+export interface DocDocumentType {
+  readonly id: number;
+  readonly name: string;
+  readonly match?: string;
+}
+
+/** DMS document. */
+export interface DocDocument {
+  readonly id: number;
+  readonly title: string;
+  readonly content?: string;
+  readonly correspondent?: DocCorrespondent | null;
+  readonly documentType?: DocDocumentType | null;
+  readonly tags: readonly DocTag[];
+  readonly created?: string;
+  readonly modified?: string;
+  readonly added?: string;
+  readonly archiveSerialNumber?: number | null;
+  readonly originalFileName?: string;
+}
+
+/** Bulk edit method. */
+export type DocBulkMethod =
+  | "add_tag"
+  | "remove_tag"
+  | "set_correspondent"
+  | "set_document_type"
+  | "delete"
+  | "reprocess"
+  | "merge";
+
+/** Document management connector (Paperless-NGX, etc.). */
+export interface DocumentConnector {
+  readonly account: string;
+  readonly tier: string;
+  searchDocuments(query: string, limit?: number): Promise<DocDocument[]>;
+  listDocuments(page?: number, pageSize?: number): Promise<DocDocument[]>;
+  getDocument(id: number): Promise<DocDocument>;
+  downloadDocument(id: number, original?: boolean): Promise<Buffer>;
+  uploadDocument(
+    file: Buffer,
+    filename: string,
+    meta?: { title?: string; correspondent?: number; documentType?: number; tags?: number[] },
+  ): Promise<DocDocument>;
+  updateDocument(
+    id: number,
+    updates: {
+      title?: string;
+      correspondent?: number | null;
+      documentType?: number | null;
+      tags?: number[];
+    },
+  ): Promise<DocDocument>;
+  bulkEdit(ids: number[], method: DocBulkMethod, params?: Record<string, unknown>): Promise<void>;
+  listTags(): Promise<DocTag[]>;
+  createTag(
+    name: string,
+    opts?: { color?: string; match?: string; matchingAlgorithm?: string },
+  ): Promise<DocTag>;
+  listCorrespondents(): Promise<DocCorrespondent[]>;
+  createCorrespondent(name: string, opts?: { match?: string }): Promise<DocCorrespondent>;
+  listDocumentTypes(): Promise<DocDocumentType[]>;
+  createDocumentType(name: string, opts?: { match?: string }): Promise<DocDocumentType>;
+}

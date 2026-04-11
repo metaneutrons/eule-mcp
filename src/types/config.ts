@@ -1,7 +1,15 @@
 /** Connector configuration for a single mail or calendar account. */
 export interface ConnectorConfig {
   readonly id: string;
-  readonly type: "m365" | "imap" | "caldav" | "carddav" | "ical" | "signal" | "google";
+  readonly type:
+    | "m365"
+    | "imap"
+    | "caldav"
+    | "carddav"
+    | "ical"
+    | "signal"
+    | "google"
+    | "paperless";
   readonly account: string;
   /** For shared/delegate mailboxes. Auth uses `account`, access targets `mailbox`. */
   readonly mailbox?: string;
@@ -14,6 +22,8 @@ export interface ConnectorConfig {
   readonly password?: string;
   // CalDAV/CardDAV/iCal fields.
   readonly url?: string;
+  // Paperless-NGX fields (type: "paperless").
+  readonly token?: string;
   // Signal fields (type: "signal").
   readonly signalCliUrl?: string;
 }
@@ -32,6 +42,7 @@ export interface RoleConnectors {
   readonly contacts?: readonly ConnectorConfig[];
   readonly messenger?: readonly ConnectorConfig[];
   readonly files?: readonly ConnectorConfig[];
+  readonly documents?: readonly ConnectorConfig[];
 }
 
 /** A single role definition. */

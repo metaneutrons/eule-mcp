@@ -4,6 +4,7 @@ import type {
   ContactConnector,
   MessengerConnector,
   FileConnector,
+  DocumentConnector,
 } from "../types/index.js";
 import type { ConfigManager } from "../config/index.js";
 import { loadTokens, getAccessToken } from "../providers/m365/index.js";
@@ -25,6 +26,7 @@ import { GoogleMailConnector } from "../providers/google/google-mail.js";
 import { GoogleCalendarConnector } from "../providers/google/google-calendar.js";
 import { GoogleContactConnector } from "../providers/google/google-contacts.js";
 import { GoogleDriveConnector } from "../providers/google/google-drive.js";
+import { PaperlessConnector } from "../providers/paperless/index.js";
 
 export class ConnectorRegistry {
   constructor(private readonly config: ConfigManager) {}
@@ -302,6 +304,21 @@ export class ConnectorRegistry {
         connectors.push(
           new GraphFileConnector(fc.account, () => getAccessToken(fc.account, oauth)),
         );
+      }
+    }
+    return connectors;
+  }
+
+  /** Get all document connectors, optionally filtered by role. */
+  getDocumentConnectors(role?: string): DocumentConnector[] {
+    const cfg = this.config.get();
+    const connectors: DocumentConnector[] = [];
+    const roles = role ? cfg.roles.filter((r) => r.id === role) : cfg.roles;
+    for (const r of roles) {
+      for (const dc of r.connectors.documents ?? []) {
+        if (dc.type === "paperless" && dc.url && dc.token) {
+          connectors.push(new PaperlessConnector(dc.account || dc.id, dc.url, dc.token));
+        }
       }
     }
     return connectors;

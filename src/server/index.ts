@@ -1311,6 +1311,231 @@ server.tool(
   },
 );
 
+// --- Document tools (Paperless-NGX, etc.) ---
+
+function formatDoc(d: {
+  id: number;
+  title: string;
+  correspondent?: { name: string } | null;
+  documentType?: { name: string } | null;
+  tags: readonly { name: string }[];
+  created?: string;
+}): string {
+  const tags = d.tags.map((t) => t.name).join(", ");
+  return `#${String(d.id)} ${d.title}${d.correspondent ? ` | ${d.correspondent.name}` : ""}${d.documentType ? ` [${d.documentType.name}]` : ""}${tags ? ` {${tags}}` : ""}${d.created ? ` (${d.created.slice(0, 10)})` : ""}`;
+}
+
+server.tool(
+  "doc_search",
+  "Full-text search across documents (Paperless-NGX)",
+  {
+    query: z.string().describe("Search query"),
+    limit: z.number().optional().describe("Max results (default 20)"),
+    role: z.string().optional().describe("Role ID"),
+  },
+  async ({ query, limit, role }) => {
+    const connectors = registry.getDocumentConnectors(role);
+    if (connectors.length === 0)
+      return { content: [{ type: "text" as const, text: "No document connectors configured." }] };
+    const results: string[] = [];
+    for (const c of connectors) {
+      const docs = await c.searchDocuments(query, limit ?? 20);
+      for (const d of docs) results.push(formatDoc(d));
+    }
+    return {
+      content: [{ type: "text" as const, text: results.join("\n") || "No documents found." }],
+    };
+  },
+);
+
+server.tool(
+  "doc_list",
+  "List recent documents",
+  {
+    page: z.number().optional().describe("Page number (default 1)"),
+    page_size: z.number().optional().describe("Page size (default 25)"),
+    role: z.string().optional().describe("Role ID"),
+  },
+  async ({ page, page_size, role }) => {
+    const connectors = registry.getDocumentConnectors(role);
+    if (connectors.length === 0)
+      return { content: [{ type: "text" as const, text: "No document connectors configured." }] };
+    const results: string[] = [];
+    for (const c of connectors) {
+      const docs = await c.listDocuments(page ?? 1, page_size ?? 25);
+      for (const d of docs) results.push(formatDoc(d));
+    }
+    return { content: [{ type: "text" as const, text: results.join("\n") || "No documents." }] };
+  },
+);
+
+server.tool(
+  "doc_read",
+  "Read document metadata and OCR content",
+  { id: z.number().describe("Document ID"), role: z.string().optional().describe("Role ID") },
+  async ({ id, role }) => {
+    const c = registry.getDocumentConnectors(role)[0];
+    if (!c)
+      return {
+        content: [{ type: "text" as const, text: "No document connector." }],
+        isError: true,
+      };
+    const d = await c.getDocument(id);
+    const lines = [formatDoc(d)];
+    if (d.originalFileName) lines.push(`File: ${d.originalFileName}`);
+    if (d.archiveSerialNumber) lines.push(`ASN: ${String(d.archiveSerialNumber)}`);
+    if (d.content) lines.push("", "---", "", d.content.slice(0, 4000));
+    return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+  },
+);
+
+server.tool(
+  "doc_download",
+  "Download a document file",
+  {
+    id: z.number().describe("Document ID"),
+    original: z.boolean().optional().describe("Download original (not archived) version"),
+    path: z.string().optional().describe("Save path (default: ~/.eule/attachments/)"),
+    role: z.string().optional().describe("Role ID"),
+  },
+  async ({ id, original, path: savePath, role }) => {
+    const { writeFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const { homedir } = await import("node:os");
+    const c = registry.getDocumentConnectors(role)[0];
+    if (!c)
+      return {
+        content: [{ type: "text" as const, text: "No document connector." }],
+        isError: true,
+      };
+    const doc = await c.getDocument(id);
+    const buf = await c.downloadDocument(id, original);
+    const dir = savePath ?? join(homedir(), ".eule", "attachments");
+    const filename = doc.originalFileName ?? `document-${String(id)}.pdf`;
+    const fullPath = join(dir, filename);
+    writeFileSync(fullPath, buf);
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: `📄 Downloaded: ${fullPath} (${String(Math.round(buf.length / 1024))}KB)`,
+        },
+      ],
+    };
+  },
+);
+
+server.tool(
+  "doc_upload",
+  "Upload a document to Paperless-NGX",
+  {
+    path: z.string().describe("Local file path"),
+    title: z.string().optional().describe("Document title"),
+    correspondent: z.number().optional().describe("Correspondent ID"),
+    document_type: z.number().optional().describe("Document type ID"),
+    tags: z.array(z.number()).optional().describe("Tag IDs"),
+    role: z.string().optional().describe("Role ID"),
+  },
+  async ({ path: filePath, title, correspondent, document_type, tags, role }) => {
+    const { readFileSync, existsSync } = await import("node:fs");
+    const { basename } = await import("node:path");
+    if (!existsSync(filePath))
+      return {
+        content: [{ type: "text" as const, text: `❌ File not found: ${filePath}` }],
+        isError: true,
+      };
+    const c = registry.getDocumentConnectors(role)[0];
+    if (!c)
+      return {
+        content: [{ type: "text" as const, text: "No document connector." }],
+        isError: true,
+      };
+    const buf = readFileSync(filePath);
+    const doc = await c.uploadDocument(buf, basename(filePath), {
+      title,
+      correspondent,
+      documentType: document_type,
+      tags,
+    });
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: `📄 Uploaded: ${doc.title} — document is being processed by Paperless`,
+        },
+      ],
+    };
+  },
+);
+
+server.tool(
+  "doc_tag",
+  "Update document metadata (title, tags, correspondent, type)",
+  {
+    id: z.number().describe("Document ID"),
+    title: z.string().optional().describe("New title"),
+    correspondent: z.number().optional().nullable().describe("Correspondent ID (null to clear)"),
+    document_type: z.number().optional().nullable().describe("Document type ID (null to clear)"),
+    tags: z.array(z.number()).optional().describe("Replace all tags with these IDs"),
+    role: z.string().optional().describe("Role ID"),
+  },
+  async ({ id, title, correspondent, document_type, tags, role }) => {
+    const c = registry.getDocumentConnectors(role)[0];
+    if (!c)
+      return {
+        content: [{ type: "text" as const, text: "No document connector." }],
+        isError: true,
+      };
+    const updated = await c.updateDocument(id, {
+      title,
+      correspondent,
+      documentType: document_type,
+      tags,
+    });
+    return { content: [{ type: "text" as const, text: `✅ Updated: ${formatDoc(updated)}` }] };
+  },
+);
+
+server.tool(
+  "doc_bulk",
+  "Bulk operations on multiple documents",
+  {
+    ids: z.array(z.number()).describe("Document IDs"),
+    method: z
+      .enum([
+        "add_tag",
+        "remove_tag",
+        "set_correspondent",
+        "set_document_type",
+        "delete",
+        "reprocess",
+        "merge",
+      ])
+      .describe("Bulk method"),
+    tag: z.number().optional().describe("Tag ID (for add_tag/remove_tag)"),
+    correspondent: z.number().optional().describe("Correspondent ID"),
+    document_type: z.number().optional().describe("Document type ID"),
+    role: z.string().optional().describe("Role ID"),
+  },
+  async ({ ids, method, tag, correspondent, document_type, role }) => {
+    const c = registry.getDocumentConnectors(role)[0];
+    if (!c)
+      return {
+        content: [{ type: "text" as const, text: "No document connector." }],
+        isError: true,
+      };
+    await c.bulkEdit(ids, method, { tag, correspondent, document_type });
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: `✅ Bulk ${method} applied to ${String(ids.length)} documents`,
+        },
+      ],
+    };
+  },
+);
+
 // --- Server start ---
 
 // --- Server startup ---
