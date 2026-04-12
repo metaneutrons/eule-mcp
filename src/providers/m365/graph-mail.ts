@@ -135,6 +135,12 @@ export class GraphMailConnector implements MailConnector {
     };
   }
 
+  async sendDraft(id: string): Promise<void> {
+    const h = await this.headers();
+    const res = await fetch(`${this.base}/messages/${id}/send`, { method: "POST", headers: h });
+    if (!res.ok) throw new Error(`Graph sendDraft: ${String(res.status)} ${await res.text()}`);
+  }
+
   async replyToMessage(id: string, body: string): Promise<void> {
     const h = await this.headers();
     const res = await fetch(`${this.base}/messages/${id}/reply`, {

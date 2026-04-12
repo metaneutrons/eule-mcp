@@ -238,6 +238,16 @@ export class EwsMailConnector implements MailConnector {
     };
   }
 
+  async sendDraft(id: string): Promise<void> {
+    await this.post(`
+    <m:SendItem SaveItemToFolder="true">
+      <m:ItemIds>
+        <t:ItemId Id="${id}" />
+      </m:ItemIds>
+      <m:SavedItemFolderId><t:DistinguishedFolderId Id="sentitems" /></m:SavedItemFolderId>
+    </m:SendItem>`);
+  }
+
   async replyToMessage(id: string, body: string): Promise<void> {
     await this.post(`
     <m:CreateItem MessageDisposition="SendAndSaveCopy">

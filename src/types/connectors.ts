@@ -70,6 +70,7 @@ export interface MailConnector {
   searchMessages(query: string, limit?: number, folder?: string): Promise<MailMessage[]>;
   sendMessage(to: string[], subject: string, body: string): Promise<void>;
   createDraft?(to: string[], subject: string, body: string): Promise<MailMessage>;
+  sendDraft?(id: string): Promise<void>;
   replyToMessage(id: string, body: string): Promise<void>;
   forwardMessage(id: string, to: string[], body?: string): Promise<void>;
   downloadAttachment(messageId: string, attachmentId: string): Promise<Buffer>;

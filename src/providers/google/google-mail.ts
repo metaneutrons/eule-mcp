@@ -125,6 +125,16 @@ export class GoogleMailConnector implements MailConnector {
     };
   }
 
+  async sendDraft(id: string): Promise<void> {
+    const h = await this.headers();
+    const res = await fetch(`${BASE}/drafts/send`, {
+      method: "POST",
+      headers: { ...h, "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+    if (!res.ok) throw new Error(`Gmail sendDraft: ${String(res.status)} ${await res.text()}`);
+  }
+
   async replyToMessage(id: string, body: string): Promise<void> {
     const h = await this.headers();
     const orig = await this.fetchMsg(id, h);

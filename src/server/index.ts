@@ -481,6 +481,31 @@ server.tool(
   },
 );
 
+// --- mail_send_draft tool ---
+server.tool(
+  "mail_send_draft",
+  "Send an existing draft email",
+  {
+    id: z.string().describe("Draft message ID (from mail_draft or mail_list folder:drafts)"),
+    account: z.string().describe("Account email address"),
+  },
+  async ({ id, account }) => {
+    const connector = registry.getMailConnectorForAccount(account);
+    if (!connector)
+      return {
+        content: [{ type: "text" as const, text: `No connector for ${account}` }],
+        isError: true,
+      };
+    if (!connector.sendDraft)
+      return {
+        content: [{ type: "text" as const, text: `sendDraft not supported for ${connector.tier}` }],
+        isError: true,
+      };
+    await connector.sendDraft(id);
+    return { content: [{ type: "text" as const, text: `✅ Draft sent successfully` }] };
+  },
+);
+
 // --- mail_update tool ---
 server.tool(
   "mail_update",
