@@ -212,6 +212,32 @@ export class EwsMailConnector implements MailConnector {
     </m:CreateItem>`);
   }
 
+  async createDraft(to: string[], subject: string, body: string): Promise<MailMessage> {
+    const xml = await this.post(`
+    <m:CreateItem MessageDisposition="SaveOnly">
+      <m:Items>
+        <t:Message>
+          <t:Subject>${escapeXml(subject)}</t:Subject>
+          <t:Body BodyType="Text">${escapeXml(body)}</t:Body>
+          <t:ToRecipients>
+            ${to.map((addr) => `<t:Mailbox><t:EmailAddress>${escapeXml(addr)}</t:EmailAddress></t:Mailbox>`).join("")}
+          </t:ToRecipients>
+        </t:Message>
+      </m:Items>
+    </m:CreateItem>`);
+    const id = /<t:ItemId Id="([^"]+)"/.exec(String(xml))?.[1] ?? "";
+    return {
+      id,
+      account: this.account,
+      subject,
+      from: this.account,
+      to,
+      receivedAt: new Date().toISOString(),
+      snippet: body.slice(0, 100),
+      isRead: true,
+    };
+  }
+
   async replyToMessage(id: string, body: string): Promise<void> {
     await this.post(`
     <m:CreateItem MessageDisposition="SendAndSaveCopy">

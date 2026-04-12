@@ -447,6 +447,40 @@ server.tool(
   },
 );
 
+// --- mail_draft tool ---
+server.tool(
+  "mail_draft",
+  "Create an email draft (saved to Drafts folder, not sent)",
+  {
+    to: z.string().describe("Recipient(s), comma-separated"),
+    subject: z.string().describe("Email subject"),
+    body: z.string().describe("Email body text"),
+    role: z.string().optional().describe("Send from this role's first account"),
+    account: z.string().optional().describe("Send from specific account"),
+  },
+  async ({ to, subject, body, role, account }) => {
+    const connectors = registry.getMailConnectors(role);
+    const c = account ? connectors.find((cc) => cc.account === account) : connectors[0];
+    if (!c)
+      return {
+        content: [{ type: "text" as const, text: "No mail connector found." }],
+        isError: true,
+      };
+    if (!c.createDraft)
+      return {
+        content: [{ type: "text" as const, text: `Draft not supported for ${c.tier} connector.` }],
+        isError: true,
+      };
+    const recipients = to.split(",").map((s) => s.trim());
+    const draft = await c.createDraft(recipients, subject, body);
+    return {
+      content: [
+        { type: "text" as const, text: `📝 Draft created: "${subject}" → ${to}\nID: ${draft.id}` },
+      ],
+    };
+  },
+);
+
 // --- mail_update tool ---
 server.tool(
   "mail_update",

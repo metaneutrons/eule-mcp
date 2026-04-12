@@ -103,6 +103,38 @@ export class GraphMailConnector implements MailConnector {
     if (!res.ok) throw new Error(`Graph sendMessage: ${String(res.status)} ${await res.text()}`);
   }
 
+  async createDraft(to: string[], subject: string, body: string): Promise<MailMessage> {
+    const h = await this.headers();
+    const res = await fetch(`${this.base}/messages`, {
+      method: "POST",
+      headers: h,
+      body: JSON.stringify({
+        subject,
+        body: { contentType: "Text", content: body },
+        toRecipients: to.map((addr) => ({ emailAddress: { address: addr } })),
+        isDraft: true,
+      }),
+    });
+    if (!res.ok) throw new Error(`Graph createDraft: ${String(res.status)} ${await res.text()}`);
+    const data = (await res.json()) as {
+      id?: string;
+      subject?: string;
+      from?: { emailAddress?: { address?: string } };
+      toRecipients?: { emailAddress?: { address?: string } }[];
+      receivedDateTime?: string;
+    };
+    return {
+      id: data.id ?? "",
+      account: this.account,
+      subject: data.subject ?? subject,
+      from: this.account,
+      to,
+      receivedAt: data.receivedDateTime ?? new Date().toISOString(),
+      snippet: body.slice(0, 100),
+      isRead: true,
+    };
+  }
+
   async replyToMessage(id: string, body: string): Promise<void> {
     const h = await this.headers();
     const res = await fetch(`${this.base}/messages/${id}/reply`, {

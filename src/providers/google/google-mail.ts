@@ -101,6 +101,30 @@ export class GoogleMailConnector implements MailConnector {
     if (!res.ok) throw new Error(`Gmail send: ${String(res.status)} ${await res.text()}`);
   }
 
+  async createDraft(to: string[], subject: string, body: string): Promise<MailMessage> {
+    const h = await this.headers();
+    const raw = Buffer.from(
+      `To: ${to.join(", ")}\r\nSubject: ${subject}\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n${body}`,
+    ).toString("base64url");
+    const res = await fetch(`${BASE}/drafts`, {
+      method: "POST",
+      headers: { ...h, "Content-Type": "application/json" },
+      body: JSON.stringify({ message: { raw } }),
+    });
+    if (!res.ok) throw new Error(`Gmail createDraft: ${String(res.status)} ${await res.text()}`);
+    const data = (await res.json()) as { id?: string; message?: { id?: string } };
+    return {
+      id: data.message?.id ?? data.id ?? "",
+      account: this.account,
+      subject,
+      from: this.account,
+      to,
+      receivedAt: new Date().toISOString(),
+      snippet: body.slice(0, 100),
+      isRead: true,
+    };
+  }
+
   async replyToMessage(id: string, body: string): Promise<void> {
     const h = await this.headers();
     const orig = await this.fetchMsg(id, h);
