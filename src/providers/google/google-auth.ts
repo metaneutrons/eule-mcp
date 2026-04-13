@@ -73,7 +73,7 @@ export async function authenticateGoogle(
     });
 
     server.listen(REDIRECT_PORT, () => {
-      console.log(`\nOpen this URL to authenticate:\n${authUrl}\n`);
+      console.error(`\nOpen this URL to authenticate:\n${authUrl}\n`);
       void open(authUrl);
     });
   });

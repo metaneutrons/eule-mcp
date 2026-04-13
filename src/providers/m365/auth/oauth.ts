@@ -209,13 +209,13 @@ export async function authenticateAccount(
       const { autoAuthenticate } = await import("./auto-auth.js");
       const result = await autoAuthenticate(tier, autoAuthCredentials, oauth);
       if (result) {
-        console.log(`✅ Auto-authenticated: ${result.account} (headless)`);
+        console.error(`✅ Auto-authenticated: ${result.account} (headless)`);
         return result;
       }
     } catch (err) {
-      console.log(`Auto-auth unavailable: ${err instanceof Error ? err.message : String(err)}`);
+      console.error(`Auto-auth unavailable: ${err instanceof Error ? err.message : String(err)}`);
     }
-    console.log("Falling back to manual browser auth...\n");
+    console.error("Falling back to manual browser auth...\n");
   }
 
   const { verifier, challenge } = generatePkce();
@@ -330,9 +330,9 @@ button{padding:10px 20px;font-size:16px;cursor:pointer;background:#0078d4;color:
       const addr = server.address();
       const port = typeof addr === "object" && addr !== null ? addr.port : 0;
 
-      console.log(`\nOpening browser for authentication...`);
-      console.log(`After login, paste the redirect URL at: http://localhost:${String(port)}\n`);
-      console.log(`If the browser doesn't open, visit:\n${authUrl}\n`);
+      console.error(`\nOpening browser for authentication...`);
+      console.error(`After login, paste the redirect URL at: http://localhost:${String(port)}\n`);
+      console.error(`If the browser doesn't open, visit:\n${authUrl}\n`);
       void open(authUrl);
 
       // Also open the capture page.
