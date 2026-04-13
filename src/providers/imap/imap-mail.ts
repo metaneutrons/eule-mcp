@@ -1,5 +1,6 @@
 import { ImapFlow } from "imapflow";
 import { createTransport } from "nodemailer";
+import { assembleHtml } from "../../utils/mail-html.js";
 import type { MailConnector, MailMessage, MailMessageFull } from "../../types/index.js";
 
 export interface ImapConfig {
@@ -15,6 +16,7 @@ export interface ImapConfig {
 
 export class ImapMailConnector implements MailConnector {
   readonly tier = "imap";
+  signature?: string;
 
   constructor(
     readonly account: string,
@@ -211,7 +213,12 @@ export class ImapMailConnector implements MailConnector {
       secure: false,
       auth,
     });
-    await transport.sendMail({ from: this.account, to: to.join(", "), subject, text: body });
+    await transport.sendMail({
+      from: this.account,
+      to: to.join(", "),
+      subject,
+      html: assembleHtml(body, this.signature),
+    });
   }
 
   async replyToMessage(id: string, body: string): Promise<void> {
@@ -235,7 +242,7 @@ export class ImapMailConnector implements MailConnector {
       from: this.account,
       to: original.from,
       subject: `Re: ${original.subject}`,
-      text: body,
+      html: assembleHtml(body, this.signature),
       inReplyTo: id,
     });
   }
@@ -260,7 +267,11 @@ export class ImapMailConnector implements MailConnector {
       from: this.account,
       to: to.join(", "),
       subject: `Fwd: ${original.subject}`,
-      text: `${body ?? ""}\n\n---------- Forwarded message ----------\nFrom: ${original.from}\nSubject: ${original.subject}\n\n${original.body}`,
+      html: assembleHtml(
+        body ?? "",
+        this.signature,
+        `<p><b>Von:</b> ${original.from}<br><b>Betreff:</b> ${original.subject}</p><pre>${original.body}</pre>`,
+      ),
     });
   }
 

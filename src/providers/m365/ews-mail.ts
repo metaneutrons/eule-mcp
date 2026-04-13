@@ -1,4 +1,5 @@
 import { XMLParser } from "fast-xml-parser";
+import { assembleHtml } from "../../utils/mail-html.js";
 import type {
   MailConnector,
   MailMessage,
@@ -56,6 +57,7 @@ function str(val: unknown): string {
 
 export class EwsMailConnector implements MailConnector {
   readonly tier = "ews";
+  signature?: string;
 
   constructor(
     readonly account: string,
@@ -198,12 +200,13 @@ export class EwsMailConnector implements MailConnector {
   }
 
   async sendMessage(to: string[], subject: string, body: string): Promise<void> {
+    const html = assembleHtml(body, this.signature);
     await this.post(`
     <m:CreateItem MessageDisposition="SendAndSaveCopy">
       <m:Items>
         <t:Message>
           <t:Subject>${escapeXml(subject)}</t:Subject>
-          <t:Body BodyType="Text">${escapeXml(body)}</t:Body>
+          <t:Body BodyType="HTML">${escapeXml(html)}</t:Body>
           <t:ToRecipients>
             ${to.map((addr) => `<t:Mailbox><t:EmailAddress>${escapeXml(addr)}</t:EmailAddress></t:Mailbox>`).join("")}
           </t:ToRecipients>
@@ -213,12 +216,13 @@ export class EwsMailConnector implements MailConnector {
   }
 
   async createDraft(to: string[], subject: string, body: string): Promise<MailMessage> {
+    const html = assembleHtml(body, this.signature);
     const xml = await this.post(`
     <m:CreateItem MessageDisposition="SaveOnly">
       <m:Items>
         <t:Message>
           <t:Subject>${escapeXml(subject)}</t:Subject>
-          <t:Body BodyType="Text">${escapeXml(body)}</t:Body>
+          <t:Body BodyType="HTML">${escapeXml(html)}</t:Body>
           <t:ToRecipients>
             ${to.map((addr) => `<t:Mailbox><t:EmailAddress>${escapeXml(addr)}</t:EmailAddress></t:Mailbox>`).join("")}
           </t:ToRecipients>
@@ -249,12 +253,13 @@ export class EwsMailConnector implements MailConnector {
   }
 
   async replyToMessage(id: string, body: string): Promise<void> {
+    const html = assembleHtml(body, this.signature);
     await this.post(`
     <m:CreateItem MessageDisposition="SendAndSaveCopy">
       <m:Items>
         <t:ReplyToItem>
           <t:ReferenceItemId Id="${id}"/>
-          <t:NewBodyContent BodyType="Text">${escapeXml(body)}</t:NewBodyContent>
+          <t:NewBodyContent BodyType="HTML">${escapeXml(html)}</t:NewBodyContent>
         </t:ReplyToItem>
       </m:Items>
     </m:CreateItem>`);
@@ -269,7 +274,7 @@ export class EwsMailConnector implements MailConnector {
       <m:Items>
         <t:ForwardItem>
           <t:ReferenceItemId Id="${id}"/>
-          <t:NewBodyContent BodyType="Text">${escapeXml(body ?? "")}</t:NewBodyContent>
+          <t:NewBodyContent BodyType="HTML">${escapeXml(assembleHtml(body ?? "", this.signature))}</t:NewBodyContent>
           <t:ToRecipients>${toRecipients}</t:ToRecipients>
         </t:ForwardItem>
       </m:Items>

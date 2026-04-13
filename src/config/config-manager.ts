@@ -66,11 +66,22 @@ function validate(raw: unknown): AppConfig {
         weeklyHours: Number(role.weeklyHours ?? 0),
         contexts: Array.isArray(role.contexts) ? (role.contexts as unknown[]).map(String) : [],
         connectors: parseConnectors(role.connectors),
+        signature:
+          typeof role.signature === "string" ? resolveSignature(role.signature) : undefined,
       });
     }
   }
 
   return { language, oauth, google: parseGoogleOAuth(obj.google), autoAuth, roles };
+}
+
+/** If value looks like a file path and exists, read it; otherwise treat as inline HTML. */
+function resolveSignature(value: string): string {
+  const expanded = value.startsWith("~") ? join(homedir(), value.slice(1)) : value;
+  if ((expanded.endsWith(".html") || expanded.endsWith(".htm")) && existsSync(expanded)) {
+    return readFileSync(expanded, "utf-8");
+  }
+  return value;
 }
 
 function parseGoogleOAuth(raw: unknown): GoogleOAuthConfig | undefined {

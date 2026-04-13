@@ -1,4 +1,5 @@
 import type { MailConnector, MailMessage, MailMessageFull } from "../../types/index.js";
+import { assembleHtml } from "../../utils/mail-html.js";
 
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
 
@@ -24,6 +25,7 @@ interface GraphMessage {
 
 export class GraphMailConnector implements MailConnector {
   readonly tier = "graph";
+  signature?: string;
 
   constructor(
     readonly account: string,
@@ -89,13 +91,14 @@ export class GraphMailConnector implements MailConnector {
 
   async sendMessage(to: string[], subject: string, body: string): Promise<void> {
     const h = await this.headers();
+    const html = assembleHtml(body, this.signature);
     const res = await fetch(`${this.base}/sendMail`, {
       method: "POST",
       headers: h,
       body: JSON.stringify({
         message: {
           subject,
-          body: { contentType: "Text", content: body },
+          body: { contentType: "HTML", content: html },
           toRecipients: to.map((addr) => ({ emailAddress: { address: addr } })),
         },
       }),
@@ -105,12 +108,13 @@ export class GraphMailConnector implements MailConnector {
 
   async createDraft(to: string[], subject: string, body: string): Promise<MailMessage> {
     const h = await this.headers();
+    const html = assembleHtml(body, this.signature);
     const res = await fetch(`${this.base}/messages`, {
       method: "POST",
       headers: h,
       body: JSON.stringify({
         subject,
-        body: { contentType: "Text", content: body },
+        body: { contentType: "HTML", content: html },
         toRecipients: to.map((addr) => ({ emailAddress: { address: addr } })),
         isDraft: true,
       }),
@@ -143,25 +147,58 @@ export class GraphMailConnector implements MailConnector {
 
   async replyToMessage(id: string, body: string): Promise<void> {
     const h = await this.headers();
-    const res = await fetch(`${this.base}/messages/${id}/reply`, {
+    // Create reply draft (Graph includes quoted original automatically)
+    const r1 = await fetch(`${this.base}/messages/${id}/createReply`, {
       method: "POST",
       headers: h,
-      body: JSON.stringify({ comment: body }),
     });
-    if (!res.ok) throw new Error(`Graph replyToMessage: ${String(res.status)} ${await res.text()}`);
+    if (!r1.ok) throw new Error(`Graph createReply: ${String(r1.status)} ${await r1.text()}`);
+    const draft = (await r1.json()) as { id: string; body?: { content?: string } };
+    // Assemble HTML: our reply + signature + Graph's quoted original
+    const html = assembleHtml(body, this.signature, draft.body?.content);
+    // Update draft body
+    const r2 = await fetch(`${this.base}/messages/${draft.id}`, {
+      method: "PATCH",
+      headers: h,
+      body: JSON.stringify({ body: { contentType: "HTML", content: html } }),
+    });
+    if (!r2.ok) throw new Error(`Graph updateReply: ${String(r2.status)} ${await r2.text()}`);
+    // Send
+    const r3 = await fetch(`${this.base}/messages/${draft.id}/send`, {
+      method: "POST",
+      headers: h,
+    });
+    if (!r3.ok) throw new Error(`Graph sendReply: ${String(r3.status)} ${await r3.text()}`);
   }
 
   async forwardMessage(id: string, to: string[], body?: string): Promise<void> {
     const h = await this.headers();
-    const res = await fetch(`${this.base}/messages/${id}/forward`, {
+    // Create forward draft (Graph includes original)
+    const r1 = await fetch(`${this.base}/messages/${id}/createForward`, {
       method: "POST",
       headers: h,
+    });
+    if (!r1.ok) throw new Error(`Graph createForward: ${String(r1.status)} ${await r1.text()}`);
+    const draft = (await r1.json()) as { id: string; body?: { content?: string } };
+    const html = body
+      ? assembleHtml(body, this.signature, draft.body?.content)
+      : assembleHtml("", this.signature, draft.body?.content);
+    // Update draft
+    const r2 = await fetch(`${this.base}/messages/${draft.id}`, {
+      method: "PATCH",
+      headers: h,
       body: JSON.stringify({
-        comment: body ?? "",
+        body: { contentType: "HTML", content: html },
         toRecipients: to.map((addr) => ({ emailAddress: { address: addr } })),
       }),
     });
-    if (!res.ok) throw new Error(`Graph forwardMessage: ${String(res.status)} ${await res.text()}`);
+    if (!r2.ok) throw new Error(`Graph updateForward: ${String(r2.status)} ${await r2.text()}`);
+    // Send
+    const r3 = await fetch(`${this.base}/messages/${draft.id}/send`, {
+      method: "POST",
+      headers: h,
+    });
+    if (!r3.ok) throw new Error(`Graph sendForward: ${String(r3.status)} ${await r3.text()}`);
   }
 
   async markRead(id: string, isRead: boolean): Promise<void> {

@@ -41,6 +41,8 @@ export class ConnectorRegistry {
     const roles = role ? cfg.roles.filter((r) => r.id === role) : cfg.roles;
 
     for (const r of roles) {
+      const sig = r.signature;
+      const startIdx = connectors.length;
       for (const mc of r.connectors.mail ?? []) {
         if (mc.type === "imap") {
           // Generic IMAP provider — host/auth from config.
@@ -95,6 +97,11 @@ export class ConnectorRegistry {
             break;
         }
       }
+      if (sig)
+        for (let i = startIdx; i < connectors.length; i++) {
+          const c = connectors[i];
+          if (c) c.signature = sig;
+        }
     }
 
     return connectors;

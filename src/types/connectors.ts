@@ -65,6 +65,8 @@ export interface CalendarEventInput {
 export interface MailConnector {
   readonly account: string;
   readonly tier: string;
+  /** HTML signature for outgoing mail. Set by registry from role config. */
+  signature?: string;
   listMessages(folder?: string, limit?: number): Promise<MailMessage[]>;
   getMessage(id: string): Promise<MailMessageFull>;
   searchMessages(query: string, limit?: number, folder?: string): Promise<MailMessage[]>;

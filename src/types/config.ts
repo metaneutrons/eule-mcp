@@ -52,6 +52,8 @@ export interface RoleConfig {
   readonly weeklyHours: number;
   readonly contexts?: readonly string[];
   readonly connectors: RoleConnectors;
+  /** HTML signature appended to outgoing emails. Inline HTML or path to .html file. */
+  readonly signature?: string;
 }
 
 /** OAuth configuration with sensible defaults. */

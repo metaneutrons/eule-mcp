@@ -1,4 +1,5 @@
 import type { MailConnector, MailMessage, MailMessageFull } from "../../types/index.js";
+import { assembleHtml } from "../../utils/mail-html.js";
 
 const BASE = "https://gmail.googleapis.com/gmail/v1/users/me";
 
@@ -31,6 +32,7 @@ const FOLDER_MAP: Record<string, string> = {
 
 export class GoogleMailConnector implements MailConnector {
   readonly tier = "google";
+  signature?: string;
 
   constructor(
     readonly account: string,
@@ -90,8 +92,9 @@ export class GoogleMailConnector implements MailConnector {
 
   async sendMessage(to: string[], subject: string, body: string): Promise<void> {
     const h = await this.headers();
+    const html = assembleHtml(body, this.signature);
     const raw = Buffer.from(
-      `To: ${to.join(", ")}\r\nSubject: ${subject}\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n${body}`,
+      `To: ${to.join(", ")}\r\nSubject: ${subject}\r\nContent-Type: text/html; charset=utf-8\r\n\r\n${html}`,
     ).toString("base64url");
     const res = await fetch(`${BASE}/messages/send`, {
       method: "POST",
@@ -103,8 +106,9 @@ export class GoogleMailConnector implements MailConnector {
 
   async createDraft(to: string[], subject: string, body: string): Promise<MailMessage> {
     const h = await this.headers();
+    const html = assembleHtml(body, this.signature);
     const raw = Buffer.from(
-      `To: ${to.join(", ")}\r\nSubject: ${subject}\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n${body}`,
+      `To: ${to.join(", ")}\r\nSubject: ${subject}\r\nContent-Type: text/html; charset=utf-8\r\n\r\n${html}`,
     ).toString("base64url");
     const res = await fetch(`${BASE}/drafts`, {
       method: "POST",
@@ -141,8 +145,9 @@ export class GoogleMailConnector implements MailConnector {
     if (!orig) throw new Error("Original not found");
     const from = getHeader(orig.payload, "From") ?? "";
     const subject = getHeader(orig.payload, "Subject") ?? "";
+    const html = assembleHtml(body, this.signature);
     const raw = Buffer.from(
-      `To: ${from}\r\nSubject: Re: ${subject}\r\nIn-Reply-To: ${getHeader(orig.payload, "Message-ID") ?? ""}\r\nReferences: ${getHeader(orig.payload, "Message-ID") ?? ""}\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n${body}`,
+      `To: ${from}\r\nSubject: Re: ${subject}\r\nIn-Reply-To: ${getHeader(orig.payload, "Message-ID") ?? ""}\r\nReferences: ${getHeader(orig.payload, "Message-ID") ?? ""}\r\nContent-Type: text/html; charset=utf-8\r\n\r\n${html}`,
     ).toString("base64url");
     const res = await fetch(`${BASE}/messages/send`, {
       method: "POST",
@@ -154,8 +159,14 @@ export class GoogleMailConnector implements MailConnector {
 
   async forwardMessage(id: string, to: string[], body?: string): Promise<void> {
     const orig = await this.getMessage(id);
+    const origBody = orig.bodyType === "html" ? orig.body : `<pre>${orig.body}</pre>`;
+    const html = assembleHtml(
+      body ?? "",
+      this.signature,
+      `<p><b>Von:</b> ${orig.from}<br><b>Betreff:</b> ${orig.subject}</p>${origBody}`,
+    );
     const raw = Buffer.from(
-      `To: ${to.join(", ")}\r\nSubject: Fwd: ${orig.subject}\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n${body ?? ""}\n\n---------- Forwarded ----------\nFrom: ${orig.from}\nSubject: ${orig.subject}\n\n${orig.body}`,
+      `To: ${to.join(", ")}\r\nSubject: Fwd: ${orig.subject}\r\nContent-Type: text/html; charset=utf-8\r\n\r\n${html}`,
     ).toString("base64url");
     const h = await this.headers();
     const res = await fetch(`${BASE}/messages/send`, {
