@@ -405,8 +405,9 @@ server.tool(
     account: z.string().optional().describe("Send from specific account"),
     reply_to: z.string().optional().describe("Message ID to reply to"),
     forward_id: z.string().optional().describe("Message ID to forward"),
+    signature: z.boolean().optional().describe("Include signature (default: true)"),
   },
-  async ({ to, subject, body, role, account, reply_to, forward_id }) => {
+  async ({ to, subject, body, role, account, reply_to, forward_id, signature }) => {
     const connector = account
       ? registry.getMailConnectorForAccount(account)
       : registry.getMailConnectors(role)[0];
@@ -415,6 +416,8 @@ server.tool(
         content: [{ type: "text" as const, text: "No mail connector available." }],
         isError: true,
       };
+    const savedSig = connector.signature;
+    if (signature === false) connector.signature = undefined;
 
     try {
       const recipients = to.split(",").map((s) => s.trim());
@@ -446,6 +449,8 @@ server.tool(
         ],
         isError: true,
       };
+    } finally {
+      connector.signature = savedSig;
     }
   },
 );
@@ -460,8 +465,9 @@ server.tool(
     body: z.string().describe("Email body text"),
     role: z.string().optional().describe("Send from this role's first account"),
     account: z.string().optional().describe("Send from specific account"),
+    signature: z.boolean().optional().describe("Include signature (default: true)"),
   },
-  async ({ to, subject, body, role, account }) => {
+  async ({ to, subject, body, role, account, signature }) => {
     const connectors = registry.getMailConnectors(role);
     const c = account ? connectors.find((cc) => cc.account === account) : connectors[0];
     if (!c)
@@ -474,8 +480,11 @@ server.tool(
         content: [{ type: "text" as const, text: `Draft not supported for ${c.tier} connector.` }],
         isError: true,
       };
+    const savedSig = c.signature;
+    if (signature === false) c.signature = undefined;
     const recipients = to.split(",").map((s) => s.trim());
     const draft = await c.createDraft(recipients, subject, body);
+    c.signature = savedSig;
     return {
       content: [
         { type: "text" as const, text: `📝 Draft created: "${subject}" → ${to}\nID: ${draft.id}` },
@@ -1643,6 +1652,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((error: unknown) => {
-  console.error("Eule MCP server failed to start:", error);  
+  console.error("Eule MCP server failed to start:", error);
   process.exit(1);
 });
