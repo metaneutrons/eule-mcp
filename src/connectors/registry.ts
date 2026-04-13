@@ -102,6 +102,11 @@ export class ConnectorRegistry {
           const c = connectors[i];
           if (c) c.signature = sig;
         }
+      if (r.displayName)
+        for (let i = startIdx; i < connectors.length; i++) {
+          const c = connectors[i];
+          if (c) c.displayName = r.displayName;
+        }
     }
 
     return connectors;
@@ -137,6 +142,7 @@ export class ConnectorRegistry {
             getGoogleAccessToken(mc.account, gcfg),
           );
           c.signature = r.signature;
+          c.displayName = r.displayName;
           return c;
         }
 

@@ -2,7 +2,12 @@ import { ImapFlow } from "imapflow";
 import { createTransport } from "nodemailer";
 import { assembleHtml } from "../../utils/mail-html.js";
 import { mimeEncode } from "../../utils/mime.js";
-import type { MailConnector, MailMessage, MailMessageFull } from "../../types/index.js";
+import type {
+  MailConnector,
+  MailMessage,
+  MailMessageFull,
+  MailSendOpts,
+} from "../../types/index.js";
 
 export interface ImapConfig {
   account: string;
@@ -18,6 +23,7 @@ export interface ImapConfig {
 export class ImapMailConnector implements MailConnector {
   readonly tier = "imap";
   signature?: string;
+  displayName?: string;
 
   constructor(
     readonly account: string,
@@ -198,7 +204,16 @@ export class ImapMailConnector implements MailConnector {
     }
   }
 
-  async sendMessage(to: string[], subject: string, body: string): Promise<void> {
+  private get fromAddress(): string {
+    return this.displayName ? `${this.displayName} <${this.account}>` : this.account;
+  }
+
+  async sendMessage(
+    to: string[],
+    subject: string,
+    body: string,
+    opts?: MailSendOpts,
+  ): Promise<void> {
     const auth =
       this.cfg.auth === "oauth"
         ? {
@@ -215,14 +230,16 @@ export class ImapMailConnector implements MailConnector {
       auth,
     });
     await transport.sendMail({
-      from: this.account,
+      from: this.fromAddress,
       to: to.join(", "),
+      cc: opts?.cc?.join(", "),
+      bcc: opts?.bcc?.join(", "),
       subject,
       html: assembleHtml(body, this.signature),
     });
   }
 
-  async replyToMessage(id: string, body: string): Promise<void> {
+  async replyToMessage(id: string, body: string, opts?: MailSendOpts): Promise<void> {
     const original = await this.getMessage(id);
     const auth =
       this.cfg.auth === "oauth"
@@ -240,8 +257,10 @@ export class ImapMailConnector implements MailConnector {
       auth,
     });
     await transport.sendMail({
-      from: this.account,
+      from: this.fromAddress,
       to: original.from,
+      cc: opts?.cc?.join(", "),
+      bcc: opts?.bcc?.join(", "),
       subject: `Re: ${original.subject}`,
       html: assembleHtml(body, this.signature),
       inReplyTo: id,
@@ -276,9 +295,17 @@ export class ImapMailConnector implements MailConnector {
     });
   }
 
-  async createDraft(to: string[], subject: string, body: string): Promise<MailMessage> {
+  async createDraft(
+    to: string[],
+    subject: string,
+    body: string,
+    opts?: MailSendOpts,
+  ): Promise<MailMessage> {
     const html = assembleHtml(body, this.signature);
-    const mime = `From: ${this.account}\r\nTo: ${to.join(", ")}\r\nSubject: ${mimeEncode(subject)}\r\nContent-Type: text/html; charset=utf-8\r\nMIME-Version: 1.0\r\n\r\n${html}`;
+    let mime = `From: ${this.fromAddress}\r\nTo: ${to.join(", ")}`;
+    if (opts?.cc?.length) mime += `\r\nCc: ${opts.cc.join(", ")}`;
+    if (opts?.bcc?.length) mime += `\r\nBcc: ${opts.bcc.join(", ")}`;
+    mime += `\r\nSubject: ${mimeEncode(subject)}\r\nContent-Type: text/html; charset=utf-8\r\nMIME-Version: 1.0\r\n\r\n${html}`;
     const client = await this.connect();
     try {
       const result = await client.append("Drafts", Buffer.from(mime), ["\\Draft", "\\Seen"]);

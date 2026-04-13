@@ -406,8 +406,10 @@ server.tool(
     reply_to: z.string().optional().describe("Message ID to reply to"),
     forward_id: z.string().optional().describe("Message ID to forward"),
     signature: z.boolean().optional().describe("Include signature (default: true)"),
+    cc: z.string().optional().describe("CC recipient(s), comma-separated"),
+    bcc: z.string().optional().describe("BCC recipient(s), comma-separated"),
   },
-  async ({ to, subject, body, role, account, reply_to, forward_id, signature }) => {
+  async ({ to, subject, body, role, account, reply_to, forward_id, signature, cc, bcc }) => {
     const connector = account
       ? registry.getMailConnectorForAccount(account)
       : registry.getMailConnectors(role)[0];
@@ -421,8 +423,12 @@ server.tool(
 
     try {
       const recipients = to.split(",").map((s) => s.trim());
+      const opts = {
+        cc: cc?.split(",").map((s) => s.trim()),
+        bcc: bcc?.split(",").map((s) => s.trim()),
+      };
       if (reply_to) {
-        await connector.replyToMessage(reply_to, body);
+        await connector.replyToMessage(reply_to, body, opts);
         return {
           content: [{ type: "text" as const, text: `✅ Reply sent from ${connector.account}` }],
         };
@@ -435,7 +441,7 @@ server.tool(
           ],
         };
       }
-      await connector.sendMessage(recipients, subject ?? "(no subject)", body);
+      await connector.sendMessage(recipients, subject ?? "(no subject)", body, opts);
       return {
         content: [{ type: "text" as const, text: `✅ Sent from ${connector.account} to ${to}` }],
       };
@@ -466,8 +472,10 @@ server.tool(
     role: z.string().optional().describe("Send from this role's first account"),
     account: z.string().optional().describe("Send from specific account"),
     signature: z.boolean().optional().describe("Include signature (default: true)"),
+    cc: z.string().optional().describe("CC recipient(s), comma-separated"),
+    bcc: z.string().optional().describe("BCC recipient(s), comma-separated"),
   },
-  async ({ to, subject, body, role, account, signature }) => {
+  async ({ to, subject, body, role, account, signature, cc, bcc }) => {
     const connectors = registry.getMailConnectors(role);
     const c = account ? connectors.find((cc) => cc.account === account) : connectors[0];
     if (!c)
@@ -483,7 +491,11 @@ server.tool(
     const savedSig = c.signature;
     if (signature === false) c.signature = undefined;
     const recipients = to.split(",").map((s) => s.trim());
-    const draft = await c.createDraft(recipients, subject, body);
+    const opts = {
+      cc: cc?.split(",").map((s) => s.trim()),
+      bcc: bcc?.split(",").map((s) => s.trim()),
+    };
+    const draft = await c.createDraft(recipients, subject, body, opts);
     c.signature = savedSig;
     return {
       content: [

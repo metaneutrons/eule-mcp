@@ -1,4 +1,9 @@
-import type { MailConnector, MailMessage, MailMessageFull } from "../../types/index.js";
+import type {
+  MailConnector,
+  MailMessage,
+  MailMessageFull,
+  MailSendOpts,
+} from "../../types/index.js";
 import { assembleHtml } from "../../utils/mail-html.js";
 
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
@@ -26,6 +31,7 @@ interface GraphMessage {
 export class GraphMailConnector implements MailConnector {
   readonly tier = "graph";
   signature?: string;
+  displayName?: string;
 
   constructor(
     readonly account: string,
@@ -89,35 +95,53 @@ export class GraphMailConnector implements MailConnector {
     return data.value.map((m) => this.mapMessage(m));
   }
 
-  async sendMessage(to: string[], subject: string, body: string): Promise<void> {
+  async sendMessage(
+    to: string[],
+    subject: string,
+    body: string,
+    opts?: MailSendOpts,
+  ): Promise<void> {
     const h = await this.headers();
     const html = assembleHtml(body, this.signature);
+    const message: Record<string, unknown> = {
+      subject,
+      body: { contentType: "HTML", content: html },
+      toRecipients: to.map((addr) => ({ emailAddress: { address: addr } })),
+    };
+    if (opts?.cc?.length)
+      message.ccRecipients = opts.cc.map((addr) => ({ emailAddress: { address: addr } }));
+    if (opts?.bcc?.length)
+      message.bccRecipients = opts.bcc.map((addr) => ({ emailAddress: { address: addr } }));
     const res = await fetch(`${this.base}/sendMail`, {
       method: "POST",
       headers: h,
-      body: JSON.stringify({
-        message: {
-          subject,
-          body: { contentType: "HTML", content: html },
-          toRecipients: to.map((addr) => ({ emailAddress: { address: addr } })),
-        },
-      }),
+      body: JSON.stringify({ message }),
     });
     if (!res.ok) throw new Error(`Graph sendMessage: ${String(res.status)} ${await res.text()}`);
   }
 
-  async createDraft(to: string[], subject: string, body: string): Promise<MailMessage> {
+  async createDraft(
+    to: string[],
+    subject: string,
+    body: string,
+    opts?: MailSendOpts,
+  ): Promise<MailMessage> {
     const h = await this.headers();
     const html = assembleHtml(body, this.signature);
+    const message: Record<string, unknown> = {
+      subject,
+      body: { contentType: "HTML", content: html },
+      toRecipients: to.map((addr) => ({ emailAddress: { address: addr } })),
+      isDraft: true,
+    };
+    if (opts?.cc?.length)
+      message.ccRecipients = opts.cc.map((addr) => ({ emailAddress: { address: addr } }));
+    if (opts?.bcc?.length)
+      message.bccRecipients = opts.bcc.map((addr) => ({ emailAddress: { address: addr } }));
     const res = await fetch(`${this.base}/messages`, {
       method: "POST",
       headers: h,
-      body: JSON.stringify({
-        subject,
-        body: { contentType: "HTML", content: html },
-        toRecipients: to.map((addr) => ({ emailAddress: { address: addr } })),
-        isDraft: true,
-      }),
+      body: JSON.stringify(message),
     });
     if (!res.ok) throw new Error(`Graph createDraft: ${String(res.status)} ${await res.text()}`);
     const data = (await res.json()) as {
@@ -145,7 +169,7 @@ export class GraphMailConnector implements MailConnector {
     if (!res.ok) throw new Error(`Graph sendDraft: ${String(res.status)} ${await res.text()}`);
   }
 
-  async replyToMessage(id: string, body: string): Promise<void> {
+  async replyToMessage(id: string, body: string, _opts?: MailSendOpts): Promise<void> {
     const h = await this.headers();
     // Create reply draft (Graph includes quoted original automatically)
     const r1 = await fetch(`${this.base}/messages/${id}/createReply`, {

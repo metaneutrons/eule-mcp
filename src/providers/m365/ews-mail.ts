@@ -5,6 +5,7 @@ import type {
   MailMessage,
   MailMessageFull,
   MailAttachment,
+  MailSendOpts,
 } from "../../types/index.js";
 
 const EWS_URL = "https://outlook.office365.com/EWS/Exchange.asmx";
@@ -58,6 +59,7 @@ function str(val: unknown): string {
 export class EwsMailConnector implements MailConnector {
   readonly tier = "ews";
   signature?: string;
+  displayName?: string;
 
   constructor(
     readonly account: string,
@@ -199,8 +201,19 @@ export class EwsMailConnector implements MailConnector {
     return messages.map((m) => this.mapMessage(m));
   }
 
-  async sendMessage(to: string[], subject: string, body: string): Promise<void> {
+  async sendMessage(
+    to: string[],
+    subject: string,
+    body: string,
+    opts?: MailSendOpts,
+  ): Promise<void> {
     const html = assembleHtml(body, this.signature);
+    const ccXml = opts?.cc?.length
+      ? `<t:CcRecipients>${opts.cc.map((addr) => `<t:Mailbox><t:EmailAddress>${escapeXml(addr)}</t:EmailAddress></t:Mailbox>`).join("")}</t:CcRecipients>`
+      : "";
+    const bccXml = opts?.bcc?.length
+      ? `<t:BccRecipients>${opts.bcc.map((addr) => `<t:Mailbox><t:EmailAddress>${escapeXml(addr)}</t:EmailAddress></t:Mailbox>`).join("")}</t:BccRecipients>`
+      : "";
     await this.post(`
     <m:CreateItem MessageDisposition="SendAndSaveCopy">
       <m:Items>
@@ -210,13 +223,25 @@ export class EwsMailConnector implements MailConnector {
           <t:ToRecipients>
             ${to.map((addr) => `<t:Mailbox><t:EmailAddress>${escapeXml(addr)}</t:EmailAddress></t:Mailbox>`).join("")}
           </t:ToRecipients>
+          ${ccXml}${bccXml}
         </t:Message>
       </m:Items>
     </m:CreateItem>`);
   }
 
-  async createDraft(to: string[], subject: string, body: string): Promise<MailMessage> {
+  async createDraft(
+    to: string[],
+    subject: string,
+    body: string,
+    opts?: MailSendOpts,
+  ): Promise<MailMessage> {
     const html = assembleHtml(body, this.signature);
+    const ccXml = opts?.cc?.length
+      ? `<t:CcRecipients>${opts.cc.map((addr) => `<t:Mailbox><t:EmailAddress>${escapeXml(addr)}</t:EmailAddress></t:Mailbox>`).join("")}</t:CcRecipients>`
+      : "";
+    const bccXml = opts?.bcc?.length
+      ? `<t:BccRecipients>${opts.bcc.map((addr) => `<t:Mailbox><t:EmailAddress>${escapeXml(addr)}</t:EmailAddress></t:Mailbox>`).join("")}</t:BccRecipients>`
+      : "";
     const xml = await this.post(`
     <m:CreateItem MessageDisposition="SaveOnly">
       <m:Items>
@@ -226,6 +251,7 @@ export class EwsMailConnector implements MailConnector {
           <t:ToRecipients>
             ${to.map((addr) => `<t:Mailbox><t:EmailAddress>${escapeXml(addr)}</t:EmailAddress></t:Mailbox>`).join("")}
           </t:ToRecipients>
+          ${ccXml}${bccXml}
         </t:Message>
       </m:Items>
     </m:CreateItem>`);
@@ -252,7 +278,7 @@ export class EwsMailConnector implements MailConnector {
     </m:SendItem>`);
   }
 
-  async replyToMessage(id: string, body: string): Promise<void> {
+  async replyToMessage(id: string, body: string, _opts?: MailSendOpts): Promise<void> {
     const html = assembleHtml(body, this.signature);
     await this.post(`
     <m:CreateItem MessageDisposition="SendAndSaveCopy">

@@ -1,4 +1,9 @@
-import type { MailConnector, MailMessage, MailMessageFull } from "../../types/index.js";
+import type {
+  MailConnector,
+  MailMessage,
+  MailMessageFull,
+  MailSendOpts,
+} from "../../types/index.js";
 import { assembleHtml } from "../../utils/mail-html.js";
 import { mimeEncode } from "../../utils/mime.js";
 
@@ -34,11 +39,16 @@ const FOLDER_MAP: Record<string, string> = {
 export class GoogleMailConnector implements MailConnector {
   readonly tier = "google";
   signature?: string;
+  displayName?: string;
 
   constructor(
     readonly account: string,
     private readonly getToken: () => Promise<string | null>,
   ) {}
+
+  private get fromHeader(): string {
+    return this.displayName ? `${this.displayName} <${this.account}>` : this.account;
+  }
 
   private async headers(): Promise<Record<string, string>> {
     const token = await this.getToken();
@@ -91,12 +101,19 @@ export class GoogleMailConnector implements MailConnector {
     return msgs;
   }
 
-  async sendMessage(to: string[], subject: string, body: string): Promise<void> {
+  async sendMessage(
+    to: string[],
+    subject: string,
+    body: string,
+    opts?: MailSendOpts,
+  ): Promise<void> {
     const h = await this.headers();
     const html = assembleHtml(body, this.signature);
-    const raw = Buffer.from(
-      `To: ${to.join(", ")}\r\nSubject: ${mimeEncode(subject)}\r\nContent-Type: text/html; charset=utf-8\r\n\r\n${html}`,
-    ).toString("base64url");
+    let mime = `From: ${this.fromHeader}\r\nTo: ${to.join(", ")}`;
+    if (opts?.cc?.length) mime += `\r\nCc: ${opts.cc.join(", ")}`;
+    if (opts?.bcc?.length) mime += `\r\nBcc: ${opts.bcc.join(", ")}`;
+    mime += `\r\nSubject: ${mimeEncode(subject)}\r\nContent-Type: text/html; charset=utf-8\r\n\r\n${html}`;
+    const raw = Buffer.from(mime).toString("base64url");
     const res = await fetch(`${BASE}/messages/send`, {
       method: "POST",
       headers: { ...h, "Content-Type": "application/json" },
@@ -105,12 +122,19 @@ export class GoogleMailConnector implements MailConnector {
     if (!res.ok) throw new Error(`Gmail send: ${String(res.status)} ${await res.text()}`);
   }
 
-  async createDraft(to: string[], subject: string, body: string): Promise<MailMessage> {
+  async createDraft(
+    to: string[],
+    subject: string,
+    body: string,
+    opts?: MailSendOpts,
+  ): Promise<MailMessage> {
     const h = await this.headers();
     const html = assembleHtml(body, this.signature);
-    const raw = Buffer.from(
-      `To: ${to.join(", ")}\r\nSubject: ${mimeEncode(subject)}\r\nContent-Type: text/html; charset=utf-8\r\n\r\n${html}`,
-    ).toString("base64url");
+    let mime = `From: ${this.fromHeader}\r\nTo: ${to.join(", ")}`;
+    if (opts?.cc?.length) mime += `\r\nCc: ${opts.cc.join(", ")}`;
+    if (opts?.bcc?.length) mime += `\r\nBcc: ${opts.bcc.join(", ")}`;
+    mime += `\r\nSubject: ${mimeEncode(subject)}\r\nContent-Type: text/html; charset=utf-8\r\n\r\n${html}`;
+    const raw = Buffer.from(mime).toString("base64url");
     const res = await fetch(`${BASE}/drafts`, {
       method: "POST",
       headers: { ...h, "Content-Type": "application/json" },
@@ -140,16 +164,18 @@ export class GoogleMailConnector implements MailConnector {
     if (!res.ok) throw new Error(`Gmail sendDraft: ${String(res.status)} ${await res.text()}`);
   }
 
-  async replyToMessage(id: string, body: string): Promise<void> {
+  async replyToMessage(id: string, body: string, opts?: MailSendOpts): Promise<void> {
     const h = await this.headers();
     const orig = await this.fetchMsg(id, h);
     if (!orig) throw new Error("Original not found");
     const from = getHeader(orig.payload, "From") ?? "";
     const subject = getHeader(orig.payload, "Subject") ?? "";
     const html = assembleHtml(body, this.signature);
-    const raw = Buffer.from(
-      `To: ${from}\r\nSubject: ${mimeEncode(`Re: ${subject}`)}\r\nIn-Reply-To: ${getHeader(orig.payload, "Message-ID") ?? ""}\r\nReferences: ${getHeader(orig.payload, "Message-ID") ?? ""}\r\nContent-Type: text/html; charset=utf-8\r\n\r\n${html}`,
-    ).toString("base64url");
+    let mime = `From: ${this.fromHeader}\r\nTo: ${from}`;
+    if (opts?.cc?.length) mime += `\r\nCc: ${opts.cc.join(", ")}`;
+    if (opts?.bcc?.length) mime += `\r\nBcc: ${opts.bcc.join(", ")}`;
+    mime += `\r\nSubject: ${mimeEncode(`Re: ${subject}`)}\r\nIn-Reply-To: ${getHeader(orig.payload, "Message-ID") ?? ""}\r\nReferences: ${getHeader(orig.payload, "Message-ID") ?? ""}\r\nContent-Type: text/html; charset=utf-8\r\n\r\n${html}`;
+    const raw = Buffer.from(mime).toString("base64url");
     const res = await fetch(`${BASE}/messages/send`, {
       method: "POST",
       headers: { ...h, "Content-Type": "application/json" },

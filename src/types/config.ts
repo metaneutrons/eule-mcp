@@ -54,6 +54,8 @@ export interface RoleConfig {
   readonly connectors: RoleConnectors;
   /** HTML signature appended to outgoing emails. Inline HTML or path to .html file. */
   readonly signature?: string;
+  /** Display name for outgoing emails, e.g. "Dr. Fabian Schmieder". */
+  readonly displayName?: string;
 }
 
 /** OAuth configuration with sensible defaults. */

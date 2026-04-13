@@ -24,6 +24,7 @@ export type {
   ChatMessage,
   FileResult,
   MailConnector,
+  MailSendOpts,
   CalendarConnector,
   ContactConnector,
   MessengerConnector,

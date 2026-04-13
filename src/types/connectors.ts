@@ -67,18 +67,30 @@ export interface MailConnector {
   readonly tier: string;
   /** HTML signature for outgoing mail. Set by registry from role config. */
   signature?: string;
+  /** Display name for From header, e.g. "Dr. Fabian Schmieder". Set by registry from role config. */
+  displayName?: string;
   listMessages(folder?: string, limit?: number): Promise<MailMessage[]>;
   getMessage(id: string): Promise<MailMessageFull>;
   searchMessages(query: string, limit?: number, folder?: string): Promise<MailMessage[]>;
-  sendMessage(to: string[], subject: string, body: string): Promise<void>;
-  createDraft?(to: string[], subject: string, body: string): Promise<MailMessage>;
+  sendMessage(to: string[], subject: string, body: string, opts?: MailSendOpts): Promise<void>;
+  createDraft?(
+    to: string[],
+    subject: string,
+    body: string,
+    opts?: MailSendOpts,
+  ): Promise<MailMessage>;
   sendDraft?(id: string): Promise<void>;
-  replyToMessage(id: string, body: string): Promise<void>;
+  replyToMessage(id: string, body: string, opts?: MailSendOpts): Promise<void>;
   forwardMessage(id: string, to: string[], body?: string): Promise<void>;
   downloadAttachment(messageId: string, attachmentId: string): Promise<Buffer>;
   markRead(id: string, isRead: boolean): Promise<void>;
   moveMessage(id: string, folder: string): Promise<void>;
   deleteMessage(id: string): Promise<void>;
+}
+
+export interface MailSendOpts {
+  cc?: string[];
+  bcc?: string[];
 }
 
 /** Calendar connector interface — implemented per API tier. */
