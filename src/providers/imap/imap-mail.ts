@@ -1,6 +1,7 @@
 import { ImapFlow } from "imapflow";
 import { createTransport } from "nodemailer";
 import { assembleHtml } from "../../utils/mail-html.js";
+import { mimeEncode } from "../../utils/mime.js";
 import type { MailConnector, MailMessage, MailMessageFull } from "../../types/index.js";
 
 export interface ImapConfig {
@@ -277,7 +278,7 @@ export class ImapMailConnector implements MailConnector {
 
   async createDraft(to: string[], subject: string, body: string): Promise<MailMessage> {
     const html = assembleHtml(body, this.signature);
-    const mime = `From: ${this.account}\r\nTo: ${to.join(", ")}\r\nSubject: ${subject}\r\nContent-Type: text/html; charset=utf-8\r\nMIME-Version: 1.0\r\n\r\n${html}`;
+    const mime = `From: ${this.account}\r\nTo: ${to.join(", ")}\r\nSubject: ${mimeEncode(subject)}\r\nContent-Type: text/html; charset=utf-8\r\nMIME-Version: 1.0\r\n\r\n${html}`;
     const client = await this.connect();
     try {
       const result = await client.append("Drafts", Buffer.from(mime), ["\\Draft", "\\Seen"]);
@@ -307,7 +308,7 @@ export class ImapMailConnector implements MailConnector {
       const msg = await client.fetchOne(id, { source: true }, { uid: true });
       if (!msg || typeof msg !== "object" || !("source" in msg) || !msg.source)
         throw new Error(`Draft ${id} not found`);
-      const raw = (msg.source).toString();
+      const raw = msg.source.toString();
 
       const auth =
         this.cfg.auth === "oauth"

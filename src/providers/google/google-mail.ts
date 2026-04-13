@@ -1,5 +1,6 @@
 import type { MailConnector, MailMessage, MailMessageFull } from "../../types/index.js";
 import { assembleHtml } from "../../utils/mail-html.js";
+import { mimeEncode } from "../../utils/mime.js";
 
 const BASE = "https://gmail.googleapis.com/gmail/v1/users/me";
 
@@ -94,7 +95,7 @@ export class GoogleMailConnector implements MailConnector {
     const h = await this.headers();
     const html = assembleHtml(body, this.signature);
     const raw = Buffer.from(
-      `To: ${to.join(", ")}\r\nSubject: ${subject}\r\nContent-Type: text/html; charset=utf-8\r\n\r\n${html}`,
+      `To: ${to.join(", ")}\r\nSubject: ${mimeEncode(subject)}\r\nContent-Type: text/html; charset=utf-8\r\n\r\n${html}`,
     ).toString("base64url");
     const res = await fetch(`${BASE}/messages/send`, {
       method: "POST",
@@ -108,7 +109,7 @@ export class GoogleMailConnector implements MailConnector {
     const h = await this.headers();
     const html = assembleHtml(body, this.signature);
     const raw = Buffer.from(
-      `To: ${to.join(", ")}\r\nSubject: ${subject}\r\nContent-Type: text/html; charset=utf-8\r\n\r\n${html}`,
+      `To: ${to.join(", ")}\r\nSubject: ${mimeEncode(subject)}\r\nContent-Type: text/html; charset=utf-8\r\n\r\n${html}`,
     ).toString("base64url");
     const res = await fetch(`${BASE}/drafts`, {
       method: "POST",
@@ -147,7 +148,7 @@ export class GoogleMailConnector implements MailConnector {
     const subject = getHeader(orig.payload, "Subject") ?? "";
     const html = assembleHtml(body, this.signature);
     const raw = Buffer.from(
-      `To: ${from}\r\nSubject: Re: ${subject}\r\nIn-Reply-To: ${getHeader(orig.payload, "Message-ID") ?? ""}\r\nReferences: ${getHeader(orig.payload, "Message-ID") ?? ""}\r\nContent-Type: text/html; charset=utf-8\r\n\r\n${html}`,
+      `To: ${from}\r\nSubject: ${mimeEncode(`Re: ${subject}`)}\r\nIn-Reply-To: ${getHeader(orig.payload, "Message-ID") ?? ""}\r\nReferences: ${getHeader(orig.payload, "Message-ID") ?? ""}\r\nContent-Type: text/html; charset=utf-8\r\n\r\n${html}`,
     ).toString("base64url");
     const res = await fetch(`${BASE}/messages/send`, {
       method: "POST",
@@ -166,7 +167,7 @@ export class GoogleMailConnector implements MailConnector {
       `<p><b>Von:</b> ${orig.from}<br><b>Betreff:</b> ${orig.subject}</p>${origBody}`,
     );
     const raw = Buffer.from(
-      `To: ${to.join(", ")}\r\nSubject: Fwd: ${orig.subject}\r\nContent-Type: text/html; charset=utf-8\r\n\r\n${html}`,
+      `To: ${to.join(", ")}\r\nSubject: ${mimeEncode(`Fwd: ${orig.subject}`)}\r\nContent-Type: text/html; charset=utf-8\r\n\r\n${html}`,
     ).toString("base64url");
     const h = await this.headers();
     const res = await fetch(`${BASE}/messages/send`, {
