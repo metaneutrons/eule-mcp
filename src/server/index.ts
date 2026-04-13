@@ -8,6 +8,9 @@ import { loadTokens, authenticateAccount, getAccessToken } from "../providers/m3
 import { authenticateGoogle } from "../providers/google/index.js";
 import { ConnectorRegistry } from "../connectors/index.js";
 import { renderMail } from "../renderer/index.js";
+import { setLogOutput } from "../utils/logger.js";
+
+setLogOutput("stderr");
 import type { ApiTier, MailMessage, CalendarEvent } from "../types/index.js";
 
 const configManager = new ConfigManager();
@@ -1640,6 +1643,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((error: unknown) => {
-  console.error("Eule MCP server failed to start:", error);
+  console.error("Eule MCP server failed to start:", error);  
   process.exit(1);
 });

@@ -1,3 +1,4 @@
+import { logger } from "../../utils/logger.js";
 import { createServer } from "node:http";
 import { randomBytes, createHash } from "node:crypto";
 import open from "open";
@@ -73,7 +74,7 @@ export async function authenticateGoogle(
     });
 
     server.listen(REDIRECT_PORT, () => {
-      console.error(`\nOpen this URL to authenticate:\n${authUrl}\n`);
+      logger.info(`\nOpen this URL to authenticate:\n${authUrl}\n`);
       void open(authUrl);
     });
   });

@@ -1,3 +1,4 @@
+import { logger } from "../../../utils/logger.js";
 import { TOTP } from "otpauth";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -55,7 +56,7 @@ async function saveDebug(
   try {
     writeFileSync(join(DEBUG_DIR, `auto-auth-debug-${label}.html`), await page.content(), "utf-8");
     await page.screenshot({ path: join(DEBUG_DIR, `auto-auth-debug-${label}.png`) });
-    console.error(`  Debug saved: ~/.eule/auto-auth-debug-${label}.{html,png}`);
+    logger.info(`  Debug saved: ~/.eule/auto-auth-debug-${label}.{html,png}`);
   } catch {
     // Ignore debug save errors.
   }
@@ -94,7 +95,7 @@ export async function autoAuthenticate(
     const pw = await import("playwright");
     chromium = pw.chromium;
   } catch {
-    console.error("  Playwright not available, falling back to manual auth.");
+    logger.info("  Playwright not available, falling back to manual auth.");
     return null;
   }
 
@@ -107,7 +108,7 @@ export async function autoAuthenticate(
     // Step 1: Navigate to auth URL.
     await page.goto(authUrl, { waitUntil: "networkidle" });
     await page.waitForTimeout(2000);
-    console.error(`  Step 1 (email): ${page.url()}`);
+    logger.info(`  Step 1 (email): ${page.url()}`);
 
     // Step 2: Fill email if visible.
     try {
@@ -128,7 +129,7 @@ export async function autoAuthenticate(
     } catch {
       // Email pre-filled via login_hint.
     }
-    console.error(`  Step 2 (after email): ${page.url()}`);
+    logger.info(`  Step 2 (after email): ${page.url()}`);
 
     // Step 3: Fill password.
     try {
@@ -142,24 +143,24 @@ export async function autoAuthenticate(
       await page.waitForLoadState("networkidle");
       await page.waitForTimeout(3000);
     } catch (err) {
-      console.error(`  Password step failed: ${err instanceof Error ? err.message : String(err)}`);
+      logger.info(`  Password step failed: ${err instanceof Error ? err.message : String(err)}`);
       await saveDebug(page, "password");
       return null;
     }
-    console.error(`  Step 3 (after password): ${page.url()}`);
+    logger.info(`  Step 3 (after password): ${page.url()}`);
 
     // Step 4: Handle FIDO/passkey MFA prompt — click "Auf andere Weise anmelden" / "Sign in another way".
     if (page.url().includes("/fido/")) {
-      console.error("  FIDO MFA detected, clicking 'Sign in another way'...");
+      logger.info("  FIDO MFA detected, clicking 'Sign in another way'...");
       try {
         const link = page.locator('a:has-text("andere Weise"), a:has-text("another way")').first();
         await link.waitFor({ state: "visible", timeout: 5000 });
         await link.click();
         await page.waitForLoadState("networkidle");
         await page.waitForTimeout(2000);
-        console.error(`  Step 4 (after FIDO bypass): ${page.url()}`);
+        logger.info(`  Step 4 (after FIDO bypass): ${page.url()}`);
       } catch (err) {
-        console.error(`  FIDO bypass failed: ${err instanceof Error ? err.message : String(err)}`);
+        logger.info(`  FIDO bypass failed: ${err instanceof Error ? err.message : String(err)}`);
         await saveDebug(page, "fido");
         return null;
       }
@@ -170,24 +171,24 @@ export async function autoAuthenticate(
       const codeOption = page.getByText("Use a verification code");
       const codeOptionDe = page.getByText("Verwenden eines Prüfcodes");
       if (await codeOption.isVisible({ timeout: 5000 })) {
-        console.error("  Selecting 'Use a verification code'...");
+        logger.info("  Selecting 'Use a verification code'...");
         await codeOption.click();
       } else if (await codeOptionDe.isVisible({ timeout: 2000 })) {
-        console.error("  Selecting 'Verwenden eines Prüfcodes'...");
+        logger.info("  Selecting 'Verwenden eines Prüfcodes'...");
         await codeOptionDe.click();
       } else {
-        console.error("  No TOTP option found in MFA picker.");
+        logger.info("  No TOTP option found in MFA picker.");
         await saveDebug(page, "picker");
         return null;
       }
       await page.waitForLoadState("networkidle");
       await page.waitForTimeout(2000);
     } catch (err) {
-      console.error(`  MFA picker failed: ${err instanceof Error ? err.message : String(err)}`);
+      logger.info(`  MFA picker failed: ${err instanceof Error ? err.message : String(err)}`);
       await saveDebug(page, "picker");
       return null;
     }
-    console.error(`  Step 5 (after MFA picker): ${page.url()}`);
+    logger.info(`  Step 5 (after MFA picker): ${page.url()}`);
 
     // Step 6: Enter TOTP code.
     try {
@@ -198,7 +199,7 @@ export async function autoAuthenticate(
         .first();
       await totpInput.waitFor({ state: "visible", timeout: 10000 });
       const code = generateTotp(credentials.totpSecret);
-      console.error("  Entering TOTP code...");
+      logger.info("  Entering TOTP code...");
       await totpInput.fill(code);
       await page
         .locator(
@@ -209,11 +210,11 @@ export async function autoAuthenticate(
       await page.waitForLoadState("networkidle");
       await page.waitForTimeout(2000);
     } catch (err) {
-      console.error(`  TOTP step failed: ${err instanceof Error ? err.message : String(err)}`);
+      logger.info(`  TOTP step failed: ${err instanceof Error ? err.message : String(err)}`);
       await saveDebug(page, "totp");
       return null;
     }
-    console.error(`  Step 6 (after TOTP): ${page.url()}`);
+    logger.info(`  Step 6 (after TOTP): ${page.url()}`);
 
     // Step 7: Handle "Stay signed in?" / "Angemeldet bleiben?" prompt.
     try {
@@ -233,7 +234,7 @@ export async function autoAuthenticate(
     try {
       await page.waitForURL("**/nativeclient**", { timeout: 15000 });
     } catch {
-      console.error(`  Timeout waiting for redirect. URL: ${page.url()}`);
+      logger.info(`  Timeout waiting for redirect. URL: ${page.url()}`);
       await saveDebug(page, "final");
       return null;
     }
@@ -245,7 +246,7 @@ export async function autoAuthenticate(
     const returnedState = parsed.searchParams.get("state");
 
     if (!code || returnedState !== state) {
-      console.error("  No code in redirect URL.");
+      logger.info("  No code in redirect URL.");
       return null;
     }
 
@@ -265,7 +266,7 @@ export async function autoAuthenticate(
     });
 
     if (!res.ok) {
-      console.error(`  Token exchange failed: ${String(res.status)}`);
+      logger.info(`  Token exchange failed: ${String(res.status)}`);
       return null;
     }
 
@@ -290,7 +291,7 @@ export async function autoAuthenticate(
 
     return tokenData;
   } catch (err) {
-    console.error(`  Auto-auth failed: ${err instanceof Error ? err.message : String(err)}`);
+    logger.info(`  Auto-auth failed: ${err instanceof Error ? err.message : String(err)}`);
     return null;
   } finally {
     if (browser) {

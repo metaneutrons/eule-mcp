@@ -1,3 +1,4 @@
+import { logger } from "../../../utils/logger.js";
 import { createServer } from "node:http";
 import { randomBytes, createHash } from "node:crypto";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
@@ -209,13 +210,13 @@ export async function authenticateAccount(
       const { autoAuthenticate } = await import("./auto-auth.js");
       const result = await autoAuthenticate(tier, autoAuthCredentials, oauth);
       if (result) {
-        console.error(`✅ Auto-authenticated: ${result.account} (headless)`);
+        logger.info(`✅ Auto-authenticated: ${result.account} (headless)`);
         return result;
       }
     } catch (err) {
-      console.error(`Auto-auth unavailable: ${err instanceof Error ? err.message : String(err)}`);
+      logger.info(`Auto-auth unavailable: ${err instanceof Error ? err.message : String(err)}`);
     }
-    console.error("Falling back to manual browser auth...\n");
+    logger.info("Falling back to manual browser auth...\n");
   }
 
   const { verifier, challenge } = generatePkce();
@@ -330,9 +331,9 @@ button{padding:10px 20px;font-size:16px;cursor:pointer;background:#0078d4;color:
       const addr = server.address();
       const port = typeof addr === "object" && addr !== null ? addr.port : 0;
 
-      console.error(`\nOpening browser for authentication...`);
-      console.error(`After login, paste the redirect URL at: http://localhost:${String(port)}\n`);
-      console.error(`If the browser doesn't open, visit:\n${authUrl}\n`);
+      logger.info(`\nOpening browser for authentication...`);
+      logger.info(`After login, paste the redirect URL at: http://localhost:${String(port)}\n`);
+      logger.info(`If the browser doesn't open, visit:\n${authUrl}\n`);
       void open(authUrl);
 
       // Also open the capture page.
