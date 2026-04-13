@@ -743,10 +743,10 @@ server.tool(
   },
 );
 
-// --- File tools (SharePoint/OneDrive) ---
+// --- File tools (SharePoint/OneDrive/Google Drive) ---
 server.tool(
   "file_search",
-  "Search files in SharePoint/OneDrive",
+  "Search files in SharePoint/OneDrive/Google Drive",
   {
     query: z.string().describe("Search query"),
     role: z.string().optional().describe("Filter by role ID"),
@@ -796,7 +796,7 @@ server.tool(
 
 server.tool(
   "file_read",
-  "Read file content from SharePoint/OneDrive (text files only)",
+  "Read file content from SharePoint/OneDrive/Google Drive (text files only)",
   {
     id: z.string().describe("File ID (from file_search or file_list)"),
     account: z.string().describe("Account email address"),
@@ -828,7 +828,7 @@ server.tool(
 
 server.tool(
   "file_list",
-  "List recently modified files in SharePoint/OneDrive",
+  "List recently modified files in SharePoint/OneDrive/Google Drive",
   {
     role: z.string().optional().describe("Filter by role ID"),
     limit: z.number().optional().describe("Max results (default 20)"),
@@ -869,7 +869,7 @@ server.tool(
 
 server.tool(
   "file_upload",
-  "Upload a file to OneDrive or Google Drive",
+  "Upload a file to OneDrive/Google Drive",
   {
     path: z.string().describe("Local file path to upload"),
     name: z.string().optional().describe("Remote filename (default: same as local)"),
