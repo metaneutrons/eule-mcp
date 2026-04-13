@@ -118,7 +118,7 @@ export class GoogleMailConnector implements MailConnector {
     if (!res.ok) throw new Error(`Gmail createDraft: ${String(res.status)} ${await res.text()}`);
     const data = (await res.json()) as { id?: string; message?: { id?: string } };
     return {
-      id: data.message?.id ?? data.id ?? "",
+      id: data.id ?? data.message?.id ?? "",
       account: this.account,
       subject,
       from: this.account,
