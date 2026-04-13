@@ -130,6 +130,16 @@ export class ConnectorRegistry {
           });
         }
 
+        if (mc.type === "google") {
+          const gcfg = cfg.google;
+          if (!gcfg) continue;
+          const c = new GoogleMailConnector(mc.account, () =>
+            getGoogleAccessToken(mc.account, gcfg),
+          );
+          c.signature = r.signature;
+          return c;
+        }
+
         const token = tokens.accounts[account];
         if (!token) return undefined;
         const getToken = () => getAccessToken(account, oauth);
