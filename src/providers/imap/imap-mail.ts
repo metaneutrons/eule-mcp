@@ -275,6 +275,31 @@ export class ImapMailConnector implements MailConnector {
     });
   }
 
+  async createDraft(to: string[], subject: string, body: string): Promise<MailMessage> {
+    const html = assembleHtml(body, this.signature);
+    const mime = `From: ${this.account}\r\nTo: ${to.join(", ")}\r\nSubject: ${subject}\r\nContent-Type: text/html; charset=utf-8\r\nMIME-Version: 1.0\r\n\r\n${html}`;
+    const client = await this.connect();
+    try {
+      const result = await client.append("Drafts", Buffer.from(mime), ["\\Draft", "\\Seen"]);
+      const uid =
+        result && typeof result === "object"
+          ? String(Number((result as unknown as Record<string, unknown>).uid) || 0)
+          : "";
+      return {
+        id: uid,
+        account: this.account,
+        subject,
+        from: this.account,
+        to,
+        receivedAt: new Date().toISOString(),
+        snippet: body.slice(0, 100),
+        isRead: true,
+      };
+    } finally {
+      await client.logout();
+    }
+  }
+
   async markRead(id: string, isRead: boolean): Promise<void> {
     const client = await this.connect();
     try {
