@@ -300,6 +300,40 @@ export class ImapMailConnector implements MailConnector {
     }
   }
 
+  async sendDraft(id: string): Promise<void> {
+    const client = await this.connect();
+    try {
+      await client.mailboxOpen("Drafts");
+      const msg = await client.fetchOne(id, { source: true }, { uid: true });
+      if (!msg || typeof msg !== "object" || !("source" in msg) || !msg.source)
+        throw new Error(`Draft ${id} not found`);
+      const raw = (msg.source).toString();
+
+      const auth =
+        this.cfg.auth === "oauth"
+          ? {
+              type: "OAuth2" as const,
+              user: this.cfg.account,
+              accessToken: await this.getTokenOrThrow(),
+            }
+          : { user: this.cfg.account, pass: this.cfg.password ?? "" };
+      const transport = createTransport({
+        host: this.cfg.smtpHost,
+        port: this.cfg.smtpPort ?? 587,
+        secure: false,
+        auth,
+      });
+      await transport.sendMail({ envelope: false as never, raw });
+
+      // Move to Sent, delete from Drafts
+      await client.append("Sent", Buffer.from(raw), ["\\Seen"]);
+      await client.messageFlagsAdd(id, ["\\Deleted"], { uid: true });
+      await client.messageDelete(id, { uid: true });
+    } finally {
+      await client.logout();
+    }
+  }
+
   async markRead(id: string, isRead: boolean): Promise<void> {
     const client = await this.connect();
     try {
