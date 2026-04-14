@@ -77,6 +77,17 @@ export class GraphFileConnector implements FileConnector {
     return Buffer.from(await res.arrayBuffer());
   }
 
+  async getMetadata(id: string): Promise<{ lastModified: string; name: string }> {
+    const h = await this.headers();
+    const res = await fetch(
+      `${GRAPH_BASE}/me/drive/items/${id}?$select=name,lastModifiedDateTime`,
+      { headers: h },
+    );
+    if (!res.ok) throw new Error(`Graph metadata: ${String(res.status)}`);
+    const d = (await res.json()) as { name?: string; lastModifiedDateTime?: string };
+    return { name: d.name ?? "", lastModified: d.lastModifiedDateTime ?? "" };
+  }
+
   private map(d: DriveItem): FileResult {
     return {
       id: d.id ?? "",

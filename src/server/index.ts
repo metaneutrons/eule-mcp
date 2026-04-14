@@ -9,6 +9,7 @@ import { authenticateGoogle } from "../providers/google/index.js";
 import { ConnectorRegistry } from "../connectors/index.js";
 import { renderMail } from "../renderer/index.js";
 import { setLogOutput } from "../utils/logger.js";
+import { cachedFileRead } from "../utils/file-cache.js";
 
 setLogOutput("stderr");
 import type { ApiTier, MailMessage, CalendarEvent } from "../types/index.js";
@@ -796,12 +797,14 @@ server.tool(
 
 server.tool(
   "file_read",
-  "Read file content from SharePoint/OneDrive/Google Drive (text files only)",
+  "Read file content from SharePoint/OneDrive/Google Drive. Supports pandoc conversion for docx/pptx/odt/epub/rtf/html/csv/tex and range-based reading.",
   {
     id: z.string().describe("File ID (from file_search or file_list)"),
     account: z.string().describe("Account email address"),
+    offset: z.number().optional().describe("Start line (0-based)"),
+    limit: z.number().optional().describe("Number of lines to return"),
   },
-  async ({ id, account }) => {
+  async ({ id, account, offset, limit: lineLimit }) => {
     const connectors = registry.getFileConnectors();
     const connector = connectors.find((c) => c.account === account);
     if (!connector)
@@ -810,8 +813,14 @@ server.tool(
         isError: true,
       };
     try {
-      const content = await connector.getContent(id);
-      return { content: [{ type: "text" as const, text: content }] };
+      const { content, name, converted } = await cachedFileRead(connector, id);
+      const lines = content.split("\n");
+      const total = lines.length;
+      const start = offset ?? 0;
+      const end = lineLimit != null ? Math.min(start + lineLimit, total) : total;
+      const slice = lines.slice(start, end).join("\n");
+      const header = `📄 ${name}${converted ? " (converted via pandoc)" : ""}\nLines ${String(start)}-${String(end - 1)} of ${String(total)}\n\n`;
+      return { content: [{ type: "text" as const, text: header + slice }] };
     } catch (err) {
       return {
         content: [

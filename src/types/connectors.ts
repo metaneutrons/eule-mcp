@@ -186,6 +186,8 @@ export interface FileConnector {
   listRecent(limit?: number): Promise<FileResult[]>;
   uploadFile?(name: string, content: Buffer, parentId?: string): Promise<FileResult>;
   downloadFile?(id: string): Promise<Buffer>;
+  /** Lightweight metadata-only call (no content download). */
+  getMetadata?(id: string): Promise<{ lastModified: string; name: string }>;
 }
 
 /** DMS tag. */

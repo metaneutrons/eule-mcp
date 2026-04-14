@@ -84,6 +84,14 @@ export class GoogleDriveConnector implements FileConnector {
     return Buffer.from(await res.arrayBuffer());
   }
 
+  async getMetadata(id: string): Promise<{ lastModified: string; name: string }> {
+    const h = await this.headers();
+    const res = await fetch(`${BASE}/files/${id}?fields=name,modifiedTime`, { headers: h });
+    if (!res.ok) throw new Error(`Drive metadata: ${String(res.status)}`);
+    const d = (await res.json()) as { name?: string; modifiedTime?: string };
+    return { name: d.name ?? "", lastModified: d.modifiedTime ?? "" };
+  }
+
   private map(f: DriveFile): FileResult {
     return {
       id: f.id ?? "",
