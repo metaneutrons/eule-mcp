@@ -70,6 +70,13 @@ export class GraphFileConnector implements FileConnector {
     return this.map((await res.json()) as DriveItem);
   }
 
+  async downloadFile(id: string): Promise<Buffer> {
+    const h = await this.headers();
+    const res = await fetch(`${GRAPH_BASE}/me/drive/items/${id}/content`, { headers: h });
+    if (!res.ok) throw new Error(`Graph download: ${String(res.status)} ${await res.text()}`);
+    return Buffer.from(await res.arrayBuffer());
+  }
+
   private map(d: DriveItem): FileResult {
     return {
       id: d.id ?? "",

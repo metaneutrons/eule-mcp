@@ -908,6 +908,47 @@ server.tool(
   },
 );
 
+server.tool(
+  "file_download",
+  "Download a file from OneDrive/Google Drive to local disk",
+  {
+    id: z.string().describe("File ID (from file_search or file_list)"),
+    account: z.string().describe("Account email address"),
+    path: z.string().optional().describe("Save path (default: ~/.eule/attachments/)"),
+  },
+  async ({ id, account, path: savePath }) => {
+    const { writeFileSync, mkdirSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const { homedir } = await import("node:os");
+    const connectors = registry.getFileConnectors();
+    const c = connectors.find((cc) => cc.account === account);
+    if (!c?.downloadFile)
+      return {
+        content: [
+          { type: "text" as const, text: "No file connector with download support found." },
+        ],
+        isError: true,
+      };
+    // Get file metadata for the name
+    const results = await c.search(id, 1);
+    const meta = results.find((r) => r.id === id);
+    const fileName = meta?.name ?? id;
+    const buf = await c.downloadFile(id);
+    const dir = savePath ?? join(homedir(), ".eule", "attachments");
+    mkdirSync(dir, { recursive: true });
+    const dest = join(dir, fileName);
+    writeFileSync(dest, buf);
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: `📥 Downloaded: ${fileName} (${String(Math.round(buf.length / 1024))}KB)\n→ ${dest}`,
+        },
+      ],
+    };
+  },
+);
+
 // --- Calendar tools ---
 
 server.tool(

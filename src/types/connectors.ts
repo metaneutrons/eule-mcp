@@ -185,6 +185,7 @@ export interface FileConnector {
   getContent(id: string): Promise<string>;
   listRecent(limit?: number): Promise<FileResult[]>;
   uploadFile?(name: string, content: Buffer, parentId?: string): Promise<FileResult>;
+  downloadFile?(id: string): Promise<Buffer>;
 }
 
 /** DMS tag. */

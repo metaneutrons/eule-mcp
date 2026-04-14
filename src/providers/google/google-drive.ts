@@ -77,6 +77,13 @@ export class GoogleDriveConnector implements FileConnector {
     return this.map(f);
   }
 
+  async downloadFile(id: string): Promise<Buffer> {
+    const h = await this.headers();
+    const res = await fetch(`${BASE}/files/${id}?alt=media`, { headers: h });
+    if (!res.ok) throw new Error(`Drive download: ${String(res.status)}`);
+    return Buffer.from(await res.arrayBuffer());
+  }
+
   private map(f: DriveFile): FileResult {
     return {
       id: f.id ?? "",
