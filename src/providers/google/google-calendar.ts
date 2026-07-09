@@ -4,6 +4,8 @@ import type {
   CalendarEventInput,
   CalendarInfo,
 } from "../../types/index.js";
+import { logger } from "../../utils/logger.js";
+import { fetchWithTimeout } from "../../utils/security.js";
 
 const BASE = "https://www.googleapis.com/calendar/v3";
 
@@ -55,15 +57,40 @@ export class GoogleCalendarConnector implements CalendarConnector {
   async listEvents(start: string, end: string): Promise<CalendarEvent[]> {
     const h = await this.headers();
     const cals = await this.listCalendars();
-    const events: CalendarEvent[] = [];
-    for (const cal of cals) {
-      const url = `${BASE}/calendars/${encodeURIComponent(cal.id)}/events?timeMin=${encodeURIComponent(start)}&timeMax=${encodeURIComponent(end)}&singleEvents=true&orderBy=startTime&maxResults=50`;
-      const res = await fetch(url, { headers: h });
-      if (!res.ok) continue;
-      const data = (await res.json()) as { items?: GEvent[] };
-      for (const e of data.items ?? []) events.push(this.map(e, cal.id, cal.name));
+    const failures: string[] = [];
+
+    // Fetch calendars concurrently. A per-calendar failure (401/403/429, network)
+    // is logged and recorded rather than silently dropped, so a partial result
+    // is never mistaken for "no events".
+    const perCalendar = await Promise.all(
+      cals.map(async (cal): Promise<CalendarEvent[]> => {
+        const url = `${BASE}/calendars/${encodeURIComponent(cal.id)}/events?timeMin=${encodeURIComponent(start)}&timeMax=${encodeURIComponent(end)}&singleEvents=true&orderBy=startTime&maxResults=50`;
+        try {
+          const res = await fetchWithTimeout(url, { headers: h });
+          if (!res.ok) {
+            failures.push(`${cal.name} (HTTP ${String(res.status)})`);
+            logger.warn(`Google Calendar: skipped "${cal.name}" — HTTP ${String(res.status)}`);
+            return [];
+          }
+          const data = (await res.json()) as { items?: GEvent[] };
+          return (data.items ?? []).map((e) => this.map(e, cal.id, cal.name));
+        } catch (err) {
+          const reason = err instanceof Error ? err.message : String(err);
+          failures.push(`${cal.name} (${reason})`);
+          logger.warn(`Google Calendar: skipped "${cal.name}" — ${reason}`);
+          return [];
+        }
+      }),
+    );
+
+    // If every calendar failed, surface it instead of returning an empty list
+    // that looks like a successful "no events" response.
+    if (cals.length > 0 && failures.length === cals.length) {
+      throw new Error(
+        `Failed to fetch events from all ${String(cals.length)} calendar(s): ${failures.join(", ")}`,
+      );
     }
-    return events.sort((a, b) => a.start.localeCompare(b.start));
+    return perCalendar.flat().sort((a, b) => a.start.localeCompare(b.start));
   }
 
   async createEvent(event: CalendarEventInput): Promise<CalendarEvent> {
