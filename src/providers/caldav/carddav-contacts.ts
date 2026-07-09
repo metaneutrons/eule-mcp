@@ -1,5 +1,6 @@
 import { DAVClient } from "tsdav";
 import type { ContactConnector, ContactInput, RemoteContact } from "../../types/index.js";
+import { assertSecureUrl, escapeICalText } from "../../utils/security.js";
 
 export interface CardDavConfig {
   account: string;
@@ -22,6 +23,8 @@ export class CardDavContactConnector implements ContactConnector {
   ) {}
 
   private async client(): Promise<DAVClient> {
+    // Basic-auth credentials must never cross a cleartext connection.
+    assertSecureUrl(this.cfg.url, "CardDAV URL");
     const c = new DAVClient({
       serverUrl: this.cfg.url,
       credentials: { username: this.cfg.account, password: this.cfg.password },
@@ -68,11 +71,16 @@ export class CardDavContactConnector implements ContactConnector {
     const ab = addressBooks[0];
     if (!ab) throw new Error("No address book found");
     const uid = `eule-${String(Date.now())}`;
-    const lines = ["BEGIN:VCARD", "VERSION:3.0", `UID:${uid}`, `FN:${contact.displayName}`];
-    if (contact.email) lines.push(`EMAIL:${contact.email}`);
-    if (contact.phone) lines.push(`TEL:${contact.phone}`);
-    if (contact.organization) lines.push(`ORG:${contact.organization}`);
-    if (contact.jobTitle) lines.push(`TITLE:${contact.jobTitle}`);
+    const lines = [
+      "BEGIN:VCARD",
+      "VERSION:3.0",
+      `UID:${uid}`,
+      `FN:${escapeICalText(contact.displayName)}`,
+    ];
+    if (contact.email) lines.push(`EMAIL:${escapeICalText(contact.email)}`);
+    if (contact.phone) lines.push(`TEL:${escapeICalText(contact.phone)}`);
+    if (contact.organization) lines.push(`ORG:${escapeICalText(contact.organization)}`);
+    if (contact.jobTitle) lines.push(`TITLE:${escapeICalText(contact.jobTitle)}`);
     lines.push("END:VCARD");
     await c.createVCard({
       addressBook: ab,

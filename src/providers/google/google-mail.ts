@@ -6,6 +6,7 @@ import type {
 } from "../../types/index.js";
 import { assembleHtml } from "../../utils/mail-html.js";
 import { mimeEncode } from "../../utils/mime.js";
+import { assertNoHeaderInjection, assertSafeAddresses } from "../../utils/security.js";
 
 const BASE = "https://gmail.googleapis.com/gmail/v1/users/me";
 
@@ -47,7 +48,8 @@ export class GoogleMailConnector implements MailConnector {
   ) {}
 
   private get fromHeader(): string {
-    return this.displayName ? `${this.displayName} <${this.account}>` : this.account;
+    const header = this.displayName ? `${this.displayName} <${this.account}>` : this.account;
+    return assertNoHeaderInjection(header, "From");
   }
 
   private async headers(): Promise<Record<string, string>> {
@@ -109,9 +111,9 @@ export class GoogleMailConnector implements MailConnector {
   ): Promise<void> {
     const h = await this.headers();
     const html = assembleHtml(body, this.signature);
-    let mime = `From: ${this.fromHeader}\r\nTo: ${to.join(", ")}`;
-    if (opts?.cc?.length) mime += `\r\nCc: ${opts.cc.join(", ")}`;
-    if (opts?.bcc?.length) mime += `\r\nBcc: ${opts.bcc.join(", ")}`;
+    let mime = `From: ${this.fromHeader}\r\nTo: ${assertSafeAddresses(to, "To").join(", ")}`;
+    if (opts?.cc?.length) mime += `\r\nCc: ${assertSafeAddresses(opts.cc, "Cc").join(", ")}`;
+    if (opts?.bcc?.length) mime += `\r\nBcc: ${assertSafeAddresses(opts.bcc, "Bcc").join(", ")}`;
     mime += `\r\nSubject: ${mimeEncode(subject)}\r\nContent-Type: text/html; charset=utf-8\r\n\r\n${html}`;
     const raw = Buffer.from(mime).toString("base64url");
     const res = await fetch(`${BASE}/messages/send`, {
@@ -130,9 +132,9 @@ export class GoogleMailConnector implements MailConnector {
   ): Promise<MailMessage> {
     const h = await this.headers();
     const html = assembleHtml(body, this.signature);
-    let mime = `From: ${this.fromHeader}\r\nTo: ${to.join(", ")}`;
-    if (opts?.cc?.length) mime += `\r\nCc: ${opts.cc.join(", ")}`;
-    if (opts?.bcc?.length) mime += `\r\nBcc: ${opts.bcc.join(", ")}`;
+    let mime = `From: ${this.fromHeader}\r\nTo: ${assertSafeAddresses(to, "To").join(", ")}`;
+    if (opts?.cc?.length) mime += `\r\nCc: ${assertSafeAddresses(opts.cc, "Cc").join(", ")}`;
+    if (opts?.bcc?.length) mime += `\r\nBcc: ${assertSafeAddresses(opts.bcc, "Bcc").join(", ")}`;
     mime += `\r\nSubject: ${mimeEncode(subject)}\r\nContent-Type: text/html; charset=utf-8\r\n\r\n${html}`;
     const raw = Buffer.from(mime).toString("base64url");
     const res = await fetch(`${BASE}/drafts`, {
@@ -168,12 +170,12 @@ export class GoogleMailConnector implements MailConnector {
     const h = await this.headers();
     const orig = await this.fetchMsg(id, h);
     if (!orig) throw new Error("Original not found");
-    const from = getHeader(orig.payload, "From") ?? "";
+    const from = assertNoHeaderInjection(getHeader(orig.payload, "From") ?? "", "To");
     const subject = getHeader(orig.payload, "Subject") ?? "";
     const html = assembleHtml(body, this.signature);
     let mime = `From: ${this.fromHeader}\r\nTo: ${from}`;
-    if (opts?.cc?.length) mime += `\r\nCc: ${opts.cc.join(", ")}`;
-    if (opts?.bcc?.length) mime += `\r\nBcc: ${opts.bcc.join(", ")}`;
+    if (opts?.cc?.length) mime += `\r\nCc: ${assertSafeAddresses(opts.cc, "Cc").join(", ")}`;
+    if (opts?.bcc?.length) mime += `\r\nBcc: ${assertSafeAddresses(opts.bcc, "Bcc").join(", ")}`;
     mime += `\r\nSubject: ${mimeEncode(`Re: ${subject}`)}\r\nIn-Reply-To: ${getHeader(orig.payload, "Message-ID") ?? ""}\r\nReferences: ${getHeader(orig.payload, "Message-ID") ?? ""}\r\nContent-Type: text/html; charset=utf-8\r\n\r\n${html}`;
     const raw = Buffer.from(mime).toString("base64url");
     const res = await fetch(`${BASE}/messages/send`, {
@@ -193,7 +195,7 @@ export class GoogleMailConnector implements MailConnector {
       `<p><b>Von:</b> ${orig.from}<br><b>Betreff:</b> ${orig.subject}</p>${origBody}`,
     );
     const raw = Buffer.from(
-      `To: ${to.join(", ")}\r\nSubject: ${mimeEncode(`Fwd: ${orig.subject}`)}\r\nContent-Type: text/html; charset=utf-8\r\n\r\n${html}`,
+      `To: ${assertSafeAddresses(to, "To").join(", ")}\r\nSubject: ${mimeEncode(`Fwd: ${orig.subject}`)}\r\nContent-Type: text/html; charset=utf-8\r\n\r\n${html}`,
     ).toString("base64url");
     const h = await this.headers();
     const res = await fetch(`${BASE}/messages/send`, {
@@ -250,13 +252,14 @@ export class GoogleMailConnector implements MailConnector {
 
   private mapSummary(msg: GmailMsg): MailMessage {
     const p = msg.payload;
+    const epochMs = Number(msg.internalDate);
     return {
       id: msg.id ?? "",
       account: this.account,
       subject: getHeader(p, "Subject") ?? "",
       from: getHeader(p, "From") ?? "",
       to: (getHeader(p, "To") ?? "").split(",").map((s) => s.trim()),
-      receivedAt: msg.internalDate ? new Date(Number(msg.internalDate)).toISOString() : "",
+      receivedAt: Number.isFinite(epochMs) ? new Date(epochMs).toISOString() : "",
       snippet: msg.snippet ?? "",
       isRead: !(msg.labelIds ?? []).includes("UNREAD"),
     };

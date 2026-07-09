@@ -51,7 +51,7 @@ export class GraphMailConnector implements MailConnector {
 
   async listMessages(folder = "inbox", limit = 10): Promise<MailMessage[]> {
     const h = await this.headers();
-    const url = `${this.base}/mailFolders/${folder}/messages?$top=${String(limit)}&$orderby=receivedDateTime desc&$select=id,subject,from,toRecipients,receivedDateTime,bodyPreview,isRead`;
+    const url = `${this.base}/mailFolders/${encodeURIComponent(folder)}/messages?$top=${String(limit)}&$orderby=receivedDateTime desc&$select=id,subject,from,toRecipients,receivedDateTime,bodyPreview,isRead`;
     const res = await fetch(url, { headers: h });
     if (!res.ok) throw new Error(`Graph listMessages: ${String(res.status)} ${await res.text()}`);
     const data = (await res.json()) as { value: GraphMessage[] };
@@ -60,7 +60,7 @@ export class GraphMailConnector implements MailConnector {
 
   async getMessage(id: string): Promise<MailMessageFull> {
     const h = await this.headers();
-    const url = `${this.base}/messages/${id}?$expand=attachments`;
+    const url = `${this.base}/messages/${encodeURIComponent(id)}?$expand=attachments`;
     const res = await fetch(url, { headers: h });
     if (!res.ok) throw new Error(`Graph getMessage: ${String(res.status)} ${await res.text()}`);
     const m = (await res.json()) as GraphMessage;
@@ -79,7 +79,7 @@ export class GraphMailConnector implements MailConnector {
 
   async downloadAttachment(messageId: string, attachmentId: string): Promise<Buffer> {
     const h = await this.headers();
-    const url = `${this.base}/messages/${messageId}/attachments/${attachmentId}/$value`;
+    const url = `${this.base}/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}/$value`;
     const res = await fetch(url, { headers: h });
     if (!res.ok)
       throw new Error(`Graph downloadAttachment: ${String(res.status)} ${await res.text()}`);
@@ -165,14 +165,17 @@ export class GraphMailConnector implements MailConnector {
 
   async sendDraft(id: string): Promise<void> {
     const h = await this.headers();
-    const res = await fetch(`${this.base}/messages/${id}/send`, { method: "POST", headers: h });
+    const res = await fetch(`${this.base}/messages/${encodeURIComponent(id)}/send`, {
+      method: "POST",
+      headers: h,
+    });
     if (!res.ok) throw new Error(`Graph sendDraft: ${String(res.status)} ${await res.text()}`);
   }
 
   async replyToMessage(id: string, body: string, _opts?: MailSendOpts): Promise<void> {
     const h = await this.headers();
     // Create reply draft (Graph includes quoted original automatically)
-    const r1 = await fetch(`${this.base}/messages/${id}/createReply`, {
+    const r1 = await fetch(`${this.base}/messages/${encodeURIComponent(id)}/createReply`, {
       method: "POST",
       headers: h,
     });
@@ -198,7 +201,7 @@ export class GraphMailConnector implements MailConnector {
   async forwardMessage(id: string, to: string[], body?: string): Promise<void> {
     const h = await this.headers();
     // Create forward draft (Graph includes original)
-    const r1 = await fetch(`${this.base}/messages/${id}/createForward`, {
+    const r1 = await fetch(`${this.base}/messages/${encodeURIComponent(id)}/createForward`, {
       method: "POST",
       headers: h,
     });
@@ -227,7 +230,7 @@ export class GraphMailConnector implements MailConnector {
 
   async markRead(id: string, isRead: boolean): Promise<void> {
     const h = await this.headers();
-    const res = await fetch(`${this.base}/messages/${id}`, {
+    const res = await fetch(`${this.base}/messages/${encodeURIComponent(id)}`, {
       method: "PATCH",
       headers: h,
       body: JSON.stringify({ isRead }),
@@ -237,7 +240,7 @@ export class GraphMailConnector implements MailConnector {
 
   async moveMessage(id: string, folder: string): Promise<void> {
     const h = await this.headers();
-    const res = await fetch(`${this.base}/messages/${id}/move`, {
+    const res = await fetch(`${this.base}/messages/${encodeURIComponent(id)}/move`, {
       method: "POST",
       headers: h,
       body: JSON.stringify({ destinationId: folder }),
@@ -247,7 +250,10 @@ export class GraphMailConnector implements MailConnector {
 
   async deleteMessage(id: string): Promise<void> {
     const h = await this.headers();
-    const res = await fetch(`${this.base}/messages/${id}`, { method: "DELETE", headers: h });
+    const res = await fetch(`${this.base}/messages/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      headers: h,
+    });
     if (!res.ok) throw new Error(`Graph deleteMessage: ${String(res.status)} ${await res.text()}`);
   }
 

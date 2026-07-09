@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import type { FileConnector, FileResult } from "../../types/index.js";
 
 const BASE = "https://www.googleapis.com/drive/v3";
@@ -62,8 +63,16 @@ export class GoogleDriveConnector implements FileConnector {
     const h = await this.headers();
     const metadata: Record<string, unknown> = { name };
     if (parentId) metadata.parents = [parentId];
-    const boundary = "eule_upload";
-    const body = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n--${boundary}\r\nContent-Type: application/octet-stream\r\n\r\n${content.toString()}\r\n--${boundary}--`;
+    // Random boundary (unguessable → no boundary-injection) and a Buffer body so
+    // binary content is sent byte-exact rather than mangled by content.toString().
+    const boundary = `eule_${randomBytes(16).toString("hex")}`;
+    const body = Buffer.concat([
+      Buffer.from(
+        `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n--${boundary}\r\nContent-Type: application/octet-stream\r\n\r\n`,
+      ),
+      content,
+      Buffer.from(`\r\n--${boundary}--`),
+    ]);
     const res = await fetch(
       "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,size,modifiedTime,webViewLink,parents",
       {

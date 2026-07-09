@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-base-to-string */
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import yaml from "js-yaml";
@@ -39,8 +39,16 @@ function ensureDirectories(): void {
   ];
   for (const dir of dirs) {
     if (!existsSync(dir)) {
-      mkdirSync(dir, { recursive: true });
+      // 0o700: this tree holds config.yaml (cleartext passwords, TOTP secrets)
+      // and cached OAuth tokens — keep it private to the owner.
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
     }
+  }
+  // Tighten an already-existing base dir too (created before this hardening).
+  try {
+    chmodSync(EULE_DIR, 0o700);
+  } catch {
+    /* best effort */
   }
 }
 
@@ -184,10 +192,16 @@ export class ConfigManager {
     return this.config;
   }
 
-  /** Writes the current config back to disk. */
+  /** Writes the current config back to disk with owner-only (0600) permissions. */
   save(config: AppConfig): void {
     this.config = config;
-    writeFileSync(CONFIG_PATH, yaml.dump(config, { lineWidth: 120 }), "utf-8");
+    writeFileSync(CONFIG_PATH, yaml.dump(config, { lineWidth: 120 }), {
+      encoding: "utf-8",
+      mode: 0o600,
+    });
+    // writeFileSync only applies `mode` when creating the file; enforce it on
+    // rewrite so a pre-existing config that held looser perms is tightened.
+    chmodSync(CONFIG_PATH, 0o600);
   }
 
   /** Add a new role. */

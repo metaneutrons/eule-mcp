@@ -4,6 +4,7 @@ import type {
   CalendarEventInput,
   CalendarInfo,
 } from "../../types/index.js";
+import { assertResponseSize, fetchWithTimeout } from "../../utils/security.js";
 
 function ical(block: string, key: string): string {
   const re = new RegExp(`${key}[^:]*:([^\\r\\n]+)`, "i");
@@ -32,8 +33,10 @@ export class ICalFeedConnector implements CalendarConnector {
   }
 
   async listEvents(start: string, end: string): Promise<CalendarEvent[]> {
-    const res = await fetch(this.url);
-    if (!res.ok) throw new Error(`iCal feed ${String(res.status)}: ${this.url}`);
+    const res = await fetchWithTimeout(this.url);
+    // Do NOT echo this.url — a private feed URL embeds a secret token.
+    if (!res.ok) throw new Error(`iCal feed request failed (HTTP ${String(res.status)})`);
+    assertResponseSize(res);
     const text = await res.text();
 
     const events: CalendarEvent[] = [];

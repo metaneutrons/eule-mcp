@@ -53,8 +53,15 @@ async function saveDebug(
   },
   label: string,
 ): Promise<void> {
+  // These artifacts capture the live Microsoft auth session (DOM + screenshot,
+  // possibly including the ?code= redirect). Off unless explicitly opted in via
+  // EULE_AUTH_DEBUG, and written owner-only when enabled.
+  if (!process.env.EULE_AUTH_DEBUG) return;
   try {
-    writeFileSync(join(DEBUG_DIR, `auto-auth-debug-${label}.html`), await page.content(), "utf-8");
+    writeFileSync(join(DEBUG_DIR, `auto-auth-debug-${label}.html`), await page.content(), {
+      encoding: "utf-8",
+      mode: 0o600,
+    });
     await page.screenshot({ path: join(DEBUG_DIR, `auto-auth-debug-${label}.png`) });
     logger.info(`  Debug saved: ~/.eule/auto-auth-debug-${label}.{html,png}`);
   } catch {

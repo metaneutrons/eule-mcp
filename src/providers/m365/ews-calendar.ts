@@ -1,4 +1,5 @@
 import { XMLParser } from "fast-xml-parser";
+import { escapeXml } from "../../utils/security.js";
 import type {
   CalendarConnector,
   CalendarEvent,
@@ -25,14 +26,6 @@ function soap(body: string): string {
   xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages">
   <soap:Body>${body}</soap:Body>
 </soap:Envelope>`;
-}
-
-function escapeXml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
 }
 
 function str(val: unknown): string {
@@ -121,7 +114,7 @@ export class EwsCalendarConnector implements CalendarConnector {
           <t:FieldURI FieldURI="calendar:OptionalAttendees"/>
         </t:AdditionalProperties>
       </m:ItemShape>
-      <m:CalendarView StartDate="${start}" EndDate="${end}"/>
+      <m:CalendarView StartDate="${escapeXml(start)}" EndDate="${escapeXml(end)}"/>
       <m:ParentFolderIds>
         <t:DistinguishedFolderId Id="calendar"/>
       </m:ParentFolderIds>
@@ -143,8 +136,8 @@ export class EwsCalendarConnector implements CalendarConnector {
       <m:Items>
         <t:CalendarItem>
           <t:Subject>${escapeXml(event.subject)}</t:Subject>
-          <t:Start>${event.start}</t:Start>
-          <t:End>${event.end}</t:End>
+          <t:Start>${escapeXml(event.start)}</t:Start>
+          <t:End>${escapeXml(event.end)}</t:End>
           ${event.location ? `<t:Location>${escapeXml(event.location)}</t:Location>` : ""}
           ${event.body ? `<t:Body BodyType="Text">${escapeXml(event.body)}</t:Body>` : ""}
           ${attendeesXml ? `<t:RequiredAttendees>${attendeesXml}</t:RequiredAttendees>` : ""}
@@ -173,11 +166,11 @@ export class EwsCalendarConnector implements CalendarConnector {
       );
     if (updates.start)
       fields.push(
-        `<t:SetItemField><t:FieldURI FieldURI="calendar:Start"/><t:CalendarItem><t:Start>${updates.start}</t:Start></t:CalendarItem></t:SetItemField>`,
+        `<t:SetItemField><t:FieldURI FieldURI="calendar:Start"/><t:CalendarItem><t:Start>${escapeXml(updates.start)}</t:Start></t:CalendarItem></t:SetItemField>`,
       );
     if (updates.end)
       fields.push(
-        `<t:SetItemField><t:FieldURI FieldURI="calendar:End"/><t:CalendarItem><t:End>${updates.end}</t:End></t:CalendarItem></t:SetItemField>`,
+        `<t:SetItemField><t:FieldURI FieldURI="calendar:End"/><t:CalendarItem><t:End>${escapeXml(updates.end)}</t:End></t:CalendarItem></t:SetItemField>`,
       );
     if (updates.location)
       fields.push(
@@ -188,7 +181,7 @@ export class EwsCalendarConnector implements CalendarConnector {
     <m:UpdateItem ConflictResolution="AutoResolve" SendMeetingInvitationsOrCancellations="SendToAllAndSaveCopy">
       <m:ItemChanges>
         <t:ItemChange>
-          <t:ItemId Id="${id}"/>
+          <t:ItemId Id="${escapeXml(id)}"/>
           <t:Updates>${fields.join("")}</t:Updates>
         </t:ItemChange>
       </m:ItemChanges>
@@ -208,7 +201,7 @@ export class EwsCalendarConnector implements CalendarConnector {
   async deleteEvent(id: string): Promise<void> {
     await this.post(`
     <m:DeleteItem DeleteType="MoveToDeletedItems" SendMeetingCancellations="SendToAllAndSaveCopy">
-      <m:ItemIds><t:ItemId Id="${id}"/></m:ItemIds>
+      <m:ItemIds><t:ItemId Id="${escapeXml(id)}"/></m:ItemIds>
     </m:DeleteItem>`);
   }
 

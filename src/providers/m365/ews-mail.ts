@@ -1,5 +1,6 @@
 import { XMLParser } from "fast-xml-parser";
 import { assembleHtml } from "../../utils/mail-html.js";
+import { escapeXml } from "../../utils/security.js";
 import type {
   MailConnector,
   MailMessage,
@@ -27,14 +28,6 @@ function soap(body: string): string {
   xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages">
   <soap:Body>${body}</soap:Body>
 </soap:Envelope>`;
-}
-
-function escapeXml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
 }
 
 /** Safely navigate a nested object path. */
@@ -70,9 +63,9 @@ export class EwsMailConnector implements MailConnector {
   /** Build DistinguishedFolderId XML, with Mailbox for shared mailboxes. */
   private folderId(folder: string): string {
     if (this.shared) {
-      return `<t:DistinguishedFolderId Id="${folder}"><t:Mailbox><t:EmailAddress>${this.account}</t:EmailAddress></t:Mailbox></t:DistinguishedFolderId>`;
+      return `<t:DistinguishedFolderId Id="${escapeXml(folder)}"><t:Mailbox><t:EmailAddress>${escapeXml(this.account)}</t:EmailAddress></t:Mailbox></t:DistinguishedFolderId>`;
     }
-    return `<t:DistinguishedFolderId Id="${folder}"/>`;
+    return `<t:DistinguishedFolderId Id="${escapeXml(folder)}"/>`;
   }
 
   private async post(body: string): Promise<unknown> {
@@ -134,7 +127,7 @@ export class EwsMailConnector implements MailConnector {
         </t:AdditionalProperties>
       </m:ItemShape>
       <m:ItemIds>
-        <t:ItemId Id="${id}"/>
+        <t:ItemId Id="${escapeXml(id)}"/>
       </m:ItemIds>
     </m:GetItem>`);
 
@@ -272,7 +265,7 @@ export class EwsMailConnector implements MailConnector {
     await this.post(`
     <m:SendItem SaveItemToFolder="true">
       <m:ItemIds>
-        <t:ItemId Id="${id}" />
+        <t:ItemId Id="${escapeXml(id)}" />
       </m:ItemIds>
       <m:SavedItemFolderId><t:DistinguishedFolderId Id="sentitems" /></m:SavedItemFolderId>
     </m:SendItem>`);
@@ -284,7 +277,7 @@ export class EwsMailConnector implements MailConnector {
     <m:CreateItem MessageDisposition="SendAndSaveCopy">
       <m:Items>
         <t:ReplyToItem>
-          <t:ReferenceItemId Id="${id}"/>
+          <t:ReferenceItemId Id="${escapeXml(id)}"/>
           <t:NewBodyContent BodyType="HTML">${escapeXml(html)}</t:NewBodyContent>
         </t:ReplyToItem>
       </m:Items>
@@ -299,7 +292,7 @@ export class EwsMailConnector implements MailConnector {
     <m:CreateItem MessageDisposition="SendAndSaveCopy">
       <m:Items>
         <t:ForwardItem>
-          <t:ReferenceItemId Id="${id}"/>
+          <t:ReferenceItemId Id="${escapeXml(id)}"/>
           <t:NewBodyContent BodyType="HTML">${escapeXml(assembleHtml(body ?? "", this.signature))}</t:NewBodyContent>
           <t:ToRecipients>${toRecipients}</t:ToRecipients>
         </t:ForwardItem>
@@ -312,7 +305,7 @@ export class EwsMailConnector implements MailConnector {
     <m:UpdateItem MessageDisposition="SaveOnly" ConflictResolution="AlwaysOverwrite">
       <m:ItemChanges>
         <t:ItemChange>
-          <t:ItemId Id="${id}"/>
+          <t:ItemId Id="${escapeXml(id)}"/>
           <t:Updates>
             <t:SetItemField>
               <t:FieldURI FieldURI="message:IsRead"/>
@@ -331,7 +324,7 @@ export class EwsMailConnector implements MailConnector {
         ${this.folderId(folder)}
       </m:ToFolderId>
       <m:ItemIds>
-        <t:ItemId Id="${id}"/>
+        <t:ItemId Id="${escapeXml(id)}"/>
       </m:ItemIds>
     </m:MoveItem>`);
   }
@@ -340,7 +333,7 @@ export class EwsMailConnector implements MailConnector {
     await this.post(`
     <m:DeleteItem DeleteType="MoveToDeletedItems">
       <m:ItemIds>
-        <t:ItemId Id="${id}"/>
+        <t:ItemId Id="${escapeXml(id)}"/>
       </m:ItemIds>
     </m:DeleteItem>`);
   }
@@ -349,7 +342,7 @@ export class EwsMailConnector implements MailConnector {
     const data = await this.post(`
     <m:GetAttachment>
       <m:AttachmentIds>
-        <t:AttachmentId Id="${attachmentId}"/>
+        <t:AttachmentId Id="${escapeXml(attachmentId)}"/>
       </m:AttachmentIds>
     </m:GetAttachment>`);
 

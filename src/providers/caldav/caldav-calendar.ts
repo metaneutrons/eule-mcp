@@ -5,6 +5,7 @@ import type {
   CalendarEventInput,
   CalendarInfo,
 } from "../../types/index.js";
+import { assertSecureUrl, escapeICalText, unescapeICalText } from "../../utils/security.js";
 
 export interface CalDavConfig {
   account: string;
@@ -37,6 +38,8 @@ export class CalDavCalendarConnector implements CalendarConnector {
   ) {}
 
   private async client(): Promise<DAVClient> {
+    // Basic-auth credentials must never cross a cleartext connection.
+    assertSecureUrl(this.cfg.url, "CalDAV URL");
     const c = new DAVClient({
       serverUrl: this.cfg.url,
       credentials: { username: this.cfg.account, password: this.cfg.password },
@@ -88,7 +91,9 @@ export class CalDavCalendarConnector implements CalendarConnector {
 
     const uid = `eule-${String(Date.now())}@eule-mcp`;
     const stamp = isoToIcal(new Date().toISOString());
-    const attendees = (event.attendees ?? []).map((a) => `ATTENDEE:mailto:${a}`).join("\r\n");
+    const attendees = (event.attendees ?? [])
+      .map((a) => `ATTENDEE:mailto:${escapeICalText(a)}`)
+      .join("\r\n");
 
     const ics = [
       "BEGIN:VCALENDAR",
@@ -99,9 +104,9 @@ export class CalDavCalendarConnector implements CalendarConnector {
       `DTSTAMP:${stamp}`,
       `DTSTART:${isoToIcal(event.start)}`,
       `DTEND:${isoToIcal(event.end)}`,
-      `SUMMARY:${event.subject}`,
-      event.location ? `LOCATION:${event.location}` : "",
-      event.body ? `DESCRIPTION:${event.body}` : "",
+      `SUMMARY:${escapeICalText(event.subject)}`,
+      event.location ? `LOCATION:${escapeICalText(event.location)}` : "",
+      event.body ? `DESCRIPTION:${escapeICalText(event.body)}` : "",
       attendees,
       "END:VEVENT",
       "END:VCALENDAR",
@@ -124,12 +129,16 @@ export class CalDavCalendarConnector implements CalendarConnector {
 
   async updateEvent(id: string, updates: Partial<CalendarEventInput>): Promise<CalendarEvent> {
     // CalDAV update = fetch + modify + PUT. Simplified: delete + create.
+    // NOTE: the recreate carries only subject/start/end/location; recurrence,
+    // attendees and alarms on the original are not preserved.
     const c = await this.client();
     const calendars = await c.fetchCalendars();
 
     for (const cal of calendars) {
       const objects = await c.fetchCalendarObjects({ calendar: cal });
-      const obj = objects.find((o) => String(o.data ?? "").includes(id));
+      // Match on the parsed UID, not a substring of the whole ICS — a substring
+      // hit could target an unrelated event whose body merely contains `id`.
+      const obj = objects.find((o) => this.matchesId(String(o.data ?? ""), o.url, id));
       if (!obj) continue;
 
       const data = String(obj.data ?? "");
@@ -156,13 +165,19 @@ export class CalDavCalendarConnector implements CalendarConnector {
 
     for (const cal of calendars) {
       const objects = await c.fetchCalendarObjects({ calendar: cal });
-      const obj = objects.find((o) => String(o.data ?? "").includes(id));
+      const obj = objects.find((o) => this.matchesId(String(o.data ?? ""), o.url, id));
       if (obj?.etag) {
         await c.deleteCalendarObject({ calendarObject: { url: obj.url, etag: obj.etag } });
         return;
       }
     }
     throw new Error(`Event ${id} not found`);
+  }
+
+  /** True if the ICS object's UID (or its URL fallback) exactly equals `id`. */
+  private matchesId(data: string, url: string, id: string): boolean {
+    if (!data.includes("VEVENT")) return false;
+    return this.parse(data, url).id === id;
   }
 
   private parse(data: string, url: string): CalendarEvent {
@@ -176,10 +191,12 @@ export class CalDavCalendarConnector implements CalendarConnector {
     return {
       id: ical(data, "UID") || url,
       account: this.account,
-      subject: ical(data, "SUMMARY"),
+      // SUMMARY/LOCATION are iCal TEXT — unescape so a later updateEvent (which
+      // re-escapes on write) round-trips instead of accumulating backslashes.
+      subject: unescapeICalText(ical(data, "SUMMARY")),
       start: isAllDay ? dtstart : icalToIso(dtstart),
       end: isAllDay ? dtend || dtstart : icalToIso(dtend || dtstart),
-      location: ical(data, "LOCATION") || undefined,
+      location: unescapeICalText(ical(data, "LOCATION")) || undefined,
       isAllDay,
       attendees,
     };

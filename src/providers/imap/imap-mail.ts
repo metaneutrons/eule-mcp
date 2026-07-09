@@ -1,7 +1,8 @@
 import { ImapFlow } from "imapflow";
-import { createTransport } from "nodemailer";
+import { createTransport, type Transporter } from "nodemailer";
 import { assembleHtml } from "../../utils/mail-html.js";
 import { mimeEncode } from "../../utils/mime.js";
+import { assertNoHeaderInjection, assertSafeAddresses } from "../../utils/security.js";
 import type {
   MailConnector,
   MailMessage,
@@ -205,7 +206,32 @@ export class ImapMailConnector implements MailConnector {
   }
 
   private get fromAddress(): string {
-    return this.displayName ? `${this.displayName} <${this.account}>` : this.account;
+    const header = this.displayName ? `${this.displayName} <${this.account}>` : this.account;
+    return assertNoHeaderInjection(header, "From");
+  }
+
+  /**
+   * Builds an SMTP transport that refuses to fall back to cleartext:
+   * implicit TLS on 465, STARTTLS elsewhere, and `requireTLS` so a MITM that
+   * strips the STARTTLS capability cannot downgrade the auth exchange.
+   */
+  private async makeTransport(): Promise<Transporter> {
+    const auth =
+      this.cfg.auth === "oauth"
+        ? {
+            type: "OAuth2" as const,
+            user: this.cfg.account,
+            accessToken: await this.getTokenOrThrow(),
+          }
+        : { user: this.cfg.account, pass: this.cfg.password ?? "" };
+    const port = this.cfg.smtpPort ?? 587;
+    return createTransport({
+      host: this.cfg.smtpHost,
+      port,
+      secure: port === 465,
+      requireTLS: true,
+      auth,
+    });
   }
 
   async sendMessage(
@@ -214,85 +240,56 @@ export class ImapMailConnector implements MailConnector {
     body: string,
     opts?: MailSendOpts,
   ): Promise<void> {
-    const auth =
-      this.cfg.auth === "oauth"
-        ? {
-            type: "OAuth2" as const,
-            user: this.cfg.account,
-            accessToken: await this.getTokenOrThrow(),
-          }
-        : { user: this.cfg.account, pass: this.cfg.password ?? "" };
-
-    const transport = createTransport({
-      host: this.cfg.smtpHost,
-      port: this.cfg.smtpPort ?? 587,
-      secure: false,
-      auth,
-    });
-    await transport.sendMail({
-      from: this.fromAddress,
-      to: to.join(", "),
-      cc: opts?.cc?.join(", "),
-      bcc: opts?.bcc?.join(", "),
-      subject,
-      html: assembleHtml(body, this.signature),
-    });
+    const transport = await this.makeTransport();
+    try {
+      await transport.sendMail({
+        from: this.fromAddress,
+        to: assertSafeAddresses(to, "To").join(", "),
+        cc: opts?.cc && assertSafeAddresses(opts.cc, "Cc").join(", "),
+        bcc: opts?.bcc && assertSafeAddresses(opts.bcc, "Bcc").join(", "),
+        subject,
+        html: assembleHtml(body, this.signature),
+      });
+    } finally {
+      transport.close();
+    }
   }
 
   async replyToMessage(id: string, body: string, opts?: MailSendOpts): Promise<void> {
     const original = await this.getMessage(id);
-    const auth =
-      this.cfg.auth === "oauth"
-        ? {
-            type: "OAuth2" as const,
-            user: this.cfg.account,
-            accessToken: await this.getTokenOrThrow(),
-          }
-        : { user: this.cfg.account, pass: this.cfg.password ?? "" };
-
-    const transport = createTransport({
-      host: this.cfg.smtpHost,
-      port: this.cfg.smtpPort ?? 587,
-      secure: false,
-      auth,
-    });
-    await transport.sendMail({
-      from: this.fromAddress,
-      to: original.from,
-      cc: opts?.cc?.join(", "),
-      bcc: opts?.bcc?.join(", "),
-      subject: `Re: ${original.subject}`,
-      html: assembleHtml(body, this.signature),
-      inReplyTo: id,
-    });
+    const transport = await this.makeTransport();
+    try {
+      await transport.sendMail({
+        from: this.fromAddress,
+        to: assertNoHeaderInjection(original.from, "To"),
+        cc: opts?.cc && assertSafeAddresses(opts.cc, "Cc").join(", "),
+        bcc: opts?.bcc && assertSafeAddresses(opts.bcc, "Bcc").join(", "),
+        subject: `Re: ${original.subject}`,
+        html: assembleHtml(body, this.signature),
+        inReplyTo: id,
+      });
+    } finally {
+      transport.close();
+    }
   }
 
   async forwardMessage(id: string, to: string[], body?: string): Promise<void> {
     const original = await this.getMessage(id);
-    const auth =
-      this.cfg.auth === "oauth"
-        ? {
-            type: "OAuth2" as const,
-            user: this.cfg.account,
-            accessToken: await this.getTokenOrThrow(),
-          }
-        : { user: this.cfg.account, pass: this.cfg.password ?? "" };
-    const transport = createTransport({
-      host: this.cfg.smtpHost,
-      port: this.cfg.smtpPort ?? 587,
-      secure: false,
-      auth,
-    });
-    await transport.sendMail({
-      from: this.account,
-      to: to.join(", "),
-      subject: `Fwd: ${original.subject}`,
-      html: assembleHtml(
-        body ?? "",
-        this.signature,
-        `<p><b>Von:</b> ${original.from}<br><b>Betreff:</b> ${original.subject}</p><pre>${original.body}</pre>`,
-      ),
-    });
+    const transport = await this.makeTransport();
+    try {
+      await transport.sendMail({
+        from: this.fromAddress,
+        to: assertSafeAddresses(to, "To").join(", "),
+        subject: `Fwd: ${original.subject}`,
+        html: assembleHtml(
+          body ?? "",
+          this.signature,
+          `<p><b>Von:</b> ${original.from}<br><b>Betreff:</b> ${original.subject}</p><pre>${original.body}</pre>`,
+        ),
+      });
+    } finally {
+      transport.close();
+    }
   }
 
   async createDraft(
@@ -302,9 +299,9 @@ export class ImapMailConnector implements MailConnector {
     opts?: MailSendOpts,
   ): Promise<MailMessage> {
     const html = assembleHtml(body, this.signature);
-    let mime = `From: ${this.fromAddress}\r\nTo: ${to.join(", ")}`;
-    if (opts?.cc?.length) mime += `\r\nCc: ${opts.cc.join(", ")}`;
-    if (opts?.bcc?.length) mime += `\r\nBcc: ${opts.bcc.join(", ")}`;
+    let mime = `From: ${this.fromAddress}\r\nTo: ${assertSafeAddresses(to, "To").join(", ")}`;
+    if (opts?.cc?.length) mime += `\r\nCc: ${assertSafeAddresses(opts.cc, "Cc").join(", ")}`;
+    if (opts?.bcc?.length) mime += `\r\nBcc: ${assertSafeAddresses(opts.bcc, "Bcc").join(", ")}`;
     mime += `\r\nSubject: ${mimeEncode(subject)}\r\nContent-Type: text/html; charset=utf-8\r\nMIME-Version: 1.0\r\n\r\n${html}`;
     const client = await this.connect();
     try {
@@ -337,21 +334,12 @@ export class ImapMailConnector implements MailConnector {
         throw new Error(`Draft ${id} not found`);
       const raw = msg.source.toString();
 
-      const auth =
-        this.cfg.auth === "oauth"
-          ? {
-              type: "OAuth2" as const,
-              user: this.cfg.account,
-              accessToken: await this.getTokenOrThrow(),
-            }
-          : { user: this.cfg.account, pass: this.cfg.password ?? "" };
-      const transport = createTransport({
-        host: this.cfg.smtpHost,
-        port: this.cfg.smtpPort ?? 587,
-        secure: false,
-        auth,
-      });
-      await transport.sendMail({ envelope: false as never, raw });
+      const transport = await this.makeTransport();
+      try {
+        await transport.sendMail({ envelope: false as never, raw });
+      } finally {
+        transport.close();
+      }
 
       // Move to Sent, delete from Drafts
       await client.append("Sent", Buffer.from(raw), ["\\Seen"]);

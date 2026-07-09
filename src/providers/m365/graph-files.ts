@@ -1,4 +1,5 @@
 import type { FileConnector, FileResult } from "../../types/index.js";
+import { escapeODataString } from "../../utils/security.js";
 
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
 
@@ -26,7 +27,7 @@ export class GraphFileConnector implements FileConnector {
 
   async search(query: string, limit = 20): Promise<FileResult[]> {
     const h = await this.headers();
-    const url = `${GRAPH_BASE}/me/drive/root/search(q='${encodeURIComponent(query)}')?$top=${String(limit)}&$select=id,name,size,lastModifiedDateTime,webUrl,parentReference,file`;
+    const url = `${GRAPH_BASE}/me/drive/root/search(q='${encodeURIComponent(escapeODataString(query))}')?$top=${String(limit)}&$select=id,name,size,lastModifiedDateTime,webUrl,parentReference,file`;
     const res = await fetch(url, { headers: h });
     if (!res.ok) throw new Error(`Graph search: ${String(res.status)} ${await res.text()}`);
     const data = (await res.json()) as { value: DriveItem[] };
@@ -35,7 +36,9 @@ export class GraphFileConnector implements FileConnector {
 
   async getContent(id: string): Promise<string> {
     const h = await this.headers();
-    const res = await fetch(`${GRAPH_BASE}/me/drive/items/${id}/content`, { headers: h });
+    const res = await fetch(`${GRAPH_BASE}/me/drive/items/${encodeURIComponent(id)}/content`, {
+      headers: h,
+    });
     if (!res.ok) throw new Error(`Graph getContent: ${String(res.status)} ${await res.text()}`);
 
     const ct = res.headers.get("content-type") ?? "";
@@ -59,7 +62,7 @@ export class GraphFileConnector implements FileConnector {
   async uploadFile(name: string, content: Buffer, parentId?: string): Promise<FileResult> {
     const h = await this.headers();
     const path = parentId
-      ? `me/drive/items/${parentId}:/${encodeURIComponent(name)}:/content`
+      ? `me/drive/items/${encodeURIComponent(parentId)}:/${encodeURIComponent(name)}:/content`
       : `me/drive/root:/${encodeURIComponent(name)}:/content`;
     const res = await fetch(`${GRAPH_BASE}/${path}`, {
       method: "PUT",
@@ -72,7 +75,9 @@ export class GraphFileConnector implements FileConnector {
 
   async downloadFile(id: string): Promise<Buffer> {
     const h = await this.headers();
-    const res = await fetch(`${GRAPH_BASE}/me/drive/items/${id}/content`, { headers: h });
+    const res = await fetch(`${GRAPH_BASE}/me/drive/items/${encodeURIComponent(id)}/content`, {
+      headers: h,
+    });
     if (!res.ok) throw new Error(`Graph download: ${String(res.status)} ${await res.text()}`);
     return Buffer.from(await res.arrayBuffer());
   }
@@ -80,7 +85,7 @@ export class GraphFileConnector implements FileConnector {
   async getMetadata(id: string): Promise<{ lastModified: string; name: string }> {
     const h = await this.headers();
     const res = await fetch(
-      `${GRAPH_BASE}/me/drive/items/${id}?$select=name,lastModifiedDateTime`,
+      `${GRAPH_BASE}/me/drive/items/${encodeURIComponent(id)}?$select=name,lastModifiedDateTime`,
       { headers: h },
     );
     if (!res.ok) throw new Error(`Graph metadata: ${String(res.status)}`);
