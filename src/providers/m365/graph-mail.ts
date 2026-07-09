@@ -5,6 +5,7 @@ import type {
   MailSendOpts,
 } from "../../types/index.js";
 import { assembleHtml } from "../../utils/mail-html.js";
+import { assertResponseSize, fetchWithTimeout } from "../../utils/security.js";
 
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
 
@@ -80,9 +81,10 @@ export class GraphMailConnector implements MailConnector {
   async downloadAttachment(messageId: string, attachmentId: string): Promise<Buffer> {
     const h = await this.headers();
     const url = `${this.base}/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}/$value`;
-    const res = await fetch(url, { headers: h });
+    const res = await fetchWithTimeout(url, { headers: h });
     if (!res.ok)
       throw new Error(`Graph downloadAttachment: ${String(res.status)} ${await res.text()}`);
+    assertResponseSize(res);
     return Buffer.from(await res.arrayBuffer());
   }
 

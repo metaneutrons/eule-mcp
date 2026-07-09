@@ -6,7 +6,12 @@ import type {
 } from "../../types/index.js";
 import { assembleHtml } from "../../utils/mail-html.js";
 import { mimeEncode } from "../../utils/mime.js";
-import { assertNoHeaderInjection, assertSafeAddresses } from "../../utils/security.js";
+import {
+  assertNoHeaderInjection,
+  assertResponseSize,
+  assertSafeAddresses,
+  fetchWithTimeout,
+} from "../../utils/security.js";
 
 const BASE = "https://gmail.googleapis.com/gmail/v1/users/me";
 
@@ -236,10 +241,14 @@ export class GoogleMailConnector implements MailConnector {
 
   async downloadAttachment(messageId: string, attachmentId: string): Promise<Buffer> {
     const h = await this.headers();
-    const res = await fetch(`${BASE}/messages/${messageId}/attachments/${attachmentId}`, {
-      headers: h,
-    });
+    const res = await fetchWithTimeout(
+      `${BASE}/messages/${messageId}/attachments/${attachmentId}`,
+      {
+        headers: h,
+      },
+    );
     if (!res.ok) throw new Error(`Gmail attachment: ${String(res.status)}`);
+    assertResponseSize(res);
     const data = (await res.json()) as { data?: string };
     return Buffer.from(data.data ?? "", "base64url");
   }
