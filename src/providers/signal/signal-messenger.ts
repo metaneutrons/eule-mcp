@@ -1,4 +1,5 @@
 import type { MessengerConnector, Conversation, ChatMessage } from "../../types/index.js";
+import { fetchWithTimeout } from "../../utils/security.js";
 
 interface SignalGroup {
   id: string;
@@ -21,7 +22,7 @@ export class SignalMessengerConnector implements MessengerConnector {
   ) {}
 
   private async get<T>(path: string): Promise<T> {
-    const res = await fetch(`${this.baseUrl}${path}`);
+    const res = await fetchWithTimeout(`${this.baseUrl}${path}`);
     if (!res.ok) throw new Error(`Signal ${String(res.status)}: ${await res.text()}`);
     return (await res.json()) as T;
   }
@@ -54,7 +55,7 @@ export class SignalMessengerConnector implements MessengerConnector {
   }
 
   async sendMessage(conversationId: string, body: string): Promise<void> {
-    const res = await fetch(`${this.baseUrl}/v2/send`, {
+    const res = await fetchWithTimeout(`${this.baseUrl}/v2/send`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: body, number: this.account, recipients: [conversationId] }),

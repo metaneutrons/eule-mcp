@@ -94,18 +94,21 @@ export class GoogleCalendarConnector implements CalendarConnector {
     if (updates.start) body.start = { dateTime: updates.start };
     if (updates.end) body.end = { dateTime: updates.end };
     if (updates.location) body.location = updates.location;
-    const res = await fetch(`${BASE}/calendars/${encodeURIComponent(calId)}/events/${id}`, {
-      method: "PATCH",
-      headers: h,
-      body: JSON.stringify(body),
-    });
+    const res = await fetch(
+      `${BASE}/calendars/${encodeURIComponent(calId)}/events/${encodeURIComponent(id)}`,
+      {
+        method: "PATCH",
+        headers: h,
+        body: JSON.stringify(body),
+      },
+    );
     if (!res.ok) throw new Error(`Google updateEvent: ${String(res.status)} ${await res.text()}`);
     return this.map((await res.json()) as GEvent, calId);
   }
 
   async deleteEvent(id: string): Promise<void> {
     const h = await this.headers();
-    const res = await fetch(`${BASE}/calendars/primary/events/${id}`, {
+    const res = await fetch(`${BASE}/calendars/primary/events/${encodeURIComponent(id)}`, {
       method: "DELETE",
       headers: h,
     });

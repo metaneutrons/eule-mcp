@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import { randomBytes, createHash } from "node:crypto";
 import open from "open";
 import type { GoogleOAuthConfig, AccountToken } from "../../types/index.js";
-import { loadTokens, saveTokens } from "../m365/auth/oauth.js";
+import { loadTokens, saveTokens, parseTokenResponse } from "../m365/auth/oauth.js";
 
 const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -73,6 +73,12 @@ export async function authenticateGoogle(
         .catch(reject);
     });
 
+    // A listen failure on the fixed port (EADDRINUSE) would otherwise be an
+    // unhandled 'error' event and crash the process.
+    server.on("error", (err) => {
+      reject(err instanceof Error ? err : new Error(String(err)));
+    });
+
     server.listen(REDIRECT_PORT, () => {
       logger.info(`\nOpen this URL to authenticate:\n${authUrl}\n`);
       void open(authUrl);
@@ -99,18 +105,14 @@ async function exchangeCode(
   });
 
   if (!res.ok) throw new Error(`Google token exchange failed: ${await res.text()}`);
-  const data = (await res.json()) as {
-    access_token: string;
-    refresh_token: string;
-    expires_in: number;
-    id_token?: string;
-  };
+  const raw = (await res.json()) as { id_token?: string };
+  const data = parseTokenResponse(raw);
 
-  const email = extractEmail(data.id_token) ?? "unknown@gmail.com";
+  const email = extractEmail(raw.id_token) ?? "unknown@gmail.com";
   return {
     account: email,
     accessToken: data.access_token,
-    refreshToken: data.refresh_token,
+    refreshToken: data.refresh_token ?? "",
     expiresAt: Date.now() + data.expires_in * 1000,
     tier: "google",
     provider: "google",
@@ -149,11 +151,7 @@ export async function refreshGoogleToken(
   });
 
   if (!res.ok) return null;
-  const data = (await res.json()) as {
-    access_token: string;
-    expires_in: number;
-    refresh_token?: string;
-  };
+  const data = parseTokenResponse(await res.json());
 
   const updated: AccountToken = {
     ...token,

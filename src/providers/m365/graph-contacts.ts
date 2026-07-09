@@ -1,4 +1,5 @@
 import type { ContactConnector, ContactInput, RemoteContact } from "../../types/index.js";
+import { escapeODataString } from "../../utils/security.js";
 
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
 
@@ -43,7 +44,10 @@ export class GraphContactConnector implements ContactConnector {
 
   async searchContacts(query: string, limit = 20): Promise<RemoteContact[]> {
     const h = await this.headers();
-    const url = `${this.base}/contacts?$filter=startswith(displayName,'${encodeURIComponent(query)}') or startswith(emailAddresses/any(e:e/address),'${encodeURIComponent(query)}')&$top=${String(limit)}&$select=id,displayName,emailAddresses,mobilePhone,businessPhones,companyName,jobTitle`;
+    // Double single quotes for the OData string literal (encodeURIComponent does
+    // NOT encode `'`), then URL-encode — otherwise a `'` breaks out of the $filter.
+    const q = encodeURIComponent(escapeODataString(query));
+    const url = `${this.base}/contacts?$filter=startswith(displayName,'${q}') or startswith(emailAddresses/any(e:e/address),'${q}')&$top=${String(limit)}&$select=id,displayName,emailAddresses,mobilePhone,businessPhones,companyName,jobTitle`;
     const res = await fetch(url, { headers: h });
     if (!res.ok) {
       // Fallback: $search if $filter fails.

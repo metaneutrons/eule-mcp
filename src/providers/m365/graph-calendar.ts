@@ -81,7 +81,9 @@ export class GraphCalendarConnector implements CalendarConnector {
       }));
     }
 
-    const calPath = event.calendarId ? `calendars/${event.calendarId}/events` : "events";
+    const calPath = event.calendarId
+      ? `calendars/${encodeURIComponent(event.calendarId)}/events`
+      : "events";
     const res = await fetch(`${this.base}/${calPath}`, {
       method: "POST",
       headers: h,
@@ -99,7 +101,7 @@ export class GraphCalendarConnector implements CalendarConnector {
     if (updates.end) body.end = { dateTime: updates.end, timeZone: "UTC" };
     if (updates.location) body.location = { displayName: updates.location };
 
-    const res = await fetch(`${this.base}/events/${id}`, {
+    const res = await fetch(`${this.base}/events/${encodeURIComponent(id)}`, {
       method: "PATCH",
       headers: h,
       body: JSON.stringify(body),
@@ -110,7 +112,10 @@ export class GraphCalendarConnector implements CalendarConnector {
 
   async deleteEvent(id: string): Promise<void> {
     const h = await this.headers();
-    const res = await fetch(`${this.base}/events/${id}`, { method: "DELETE", headers: h });
+    const res = await fetch(`${this.base}/events/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      headers: h,
+    });
     if (!res.ok) throw new Error(`Graph deleteEvent: ${String(res.status)} ${await res.text()}`);
   }
 

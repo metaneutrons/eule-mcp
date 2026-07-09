@@ -1,5 +1,6 @@
 import { XMLParser } from "fast-xml-parser";
 import type { ContactConnector, ContactInput, RemoteContact } from "../../types/index.js";
+import { escapeXml } from "../../utils/security.js";
 
 const EWS_URL = "https://outlook.office365.com/EWS/Exchange.asmx";
 
@@ -84,7 +85,7 @@ export class EwsContactConnector implements ContactConnector {
       <m:Restriction>
         <t:Contains ContainmentMode="Substring" ContainmentComparison="IgnoreCase">
           <t:FieldURI FieldURI="contacts:DisplayName"/>
-          <t:Constant Value="${query}"/>
+          <t:Constant Value="${escapeXml(query)}"/>
         </t:Contains>
       </m:Restriction>
       <m:ParentFolderIds>
@@ -103,11 +104,11 @@ export class EwsContactConnector implements ContactConnector {
       </m:SavedItemFolderId>
       <m:Items>
         <t:Contact>
-          <t:DisplayName>${contact.displayName}</t:DisplayName>
-          ${contact.email ? `<t:EmailAddresses><t:Entry Key="EmailAddress1">${contact.email}</t:Entry></t:EmailAddresses>` : ""}
-          ${contact.phone ? `<t:PhoneNumbers><t:Entry Key="MobilePhone">${contact.phone}</t:Entry></t:PhoneNumbers>` : ""}
-          ${contact.organization ? `<t:CompanyName>${contact.organization}</t:CompanyName>` : ""}
-          ${contact.jobTitle ? `<t:JobTitle>${contact.jobTitle}</t:JobTitle>` : ""}
+          <t:DisplayName>${escapeXml(contact.displayName)}</t:DisplayName>
+          ${contact.email ? `<t:EmailAddresses><t:Entry Key="EmailAddress1">${escapeXml(contact.email)}</t:Entry></t:EmailAddresses>` : ""}
+          ${contact.phone ? `<t:PhoneNumbers><t:Entry Key="MobilePhone">${escapeXml(contact.phone)}</t:Entry></t:PhoneNumbers>` : ""}
+          ${contact.organization ? `<t:CompanyName>${escapeXml(contact.organization)}</t:CompanyName>` : ""}
+          ${contact.jobTitle ? `<t:JobTitle>${escapeXml(contact.jobTitle)}</t:JobTitle>` : ""}
         </t:Contact>
       </m:Items>
     </m:CreateItem>`);

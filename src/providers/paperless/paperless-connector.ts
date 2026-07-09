@@ -6,6 +6,7 @@ import type {
   DocDocumentType,
   DocBulkMethod,
 } from "../../types/index.js";
+import { assertSecureUrl, fetchWithTimeout } from "../../utils/security.js";
 
 interface PaperlessDoc {
   id: number;
@@ -62,14 +63,19 @@ export class PaperlessConnector implements DocumentConnector {
     private readonly token: string,
   ) {}
 
+  /** Validated base URL — the API token must never traverse cleartext. */
+  private get root(): string {
+    return assertSecureUrl(this.baseUrl, "Paperless URL");
+  }
+
   private async req<T>(path: string, init?: RequestInit): Promise<T> {
-    const url = `${this.baseUrl}/api${path}`;
+    const url = `${this.root}/api${path}`;
     const hdrs: Record<string, string> = {
       Authorization: `Token ${this.token}`,
       "Content-Type": "application/json",
     };
     if (init?.headers) Object.assign(hdrs, init.headers);
-    const res = await fetch(url, { ...init, headers: hdrs });
+    const res = await fetchWithTimeout(url, { ...init, headers: hdrs });
     if (!res.ok)
       throw new Error(
         `Paperless ${init?.method ?? "GET"} ${path}: ${String(res.status)} ${await res.text()}`,
@@ -168,8 +174,8 @@ export class PaperlessConnector implements DocumentConnector {
   }
 
   async downloadDocument(id: number, original = false): Promise<Buffer> {
-    const url = `${this.baseUrl}/api/documents/${String(id)}/download/${original ? "?original=true" : ""}`;
-    const res = await fetch(url, { headers: { Authorization: `Token ${this.token}` } });
+    const url = `${this.root}/api/documents/${String(id)}/download/${original ? "?original=true" : ""}`;
+    const res = await fetchWithTimeout(url, { headers: { Authorization: `Token ${this.token}` } });
     if (!res.ok) throw new Error(`Paperless download: ${String(res.status)}`);
     return Buffer.from(await res.arrayBuffer());
   }
@@ -185,12 +191,19 @@ export class PaperlessConnector implements DocumentConnector {
     if (meta?.correspondent) form.append("correspondent", String(meta.correspondent));
     if (meta?.documentType) form.append("document_type", String(meta.documentType));
     for (const t of meta?.tags ?? []) form.append("tags", String(t));
-    const url = `${this.baseUrl}/api/documents/post_document/`;
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { Authorization: `Token ${this.token}` },
-      body: form,
-    });
+    const url = `${this.root}/api/documents/post_document/`;
+    // A POST's fetch resolves only after the whole body is sent, so the default
+    // 30s cap would abort large scans mid-upload. Use a generous 10-minute cap:
+    // still bounds a truly hung connection, but accommodates big documents.
+    const res = await fetchWithTimeout(
+      url,
+      {
+        method: "POST",
+        headers: { Authorization: `Token ${this.token}` },
+        body: form,
+      },
+      600_000,
+    );
     if (!res.ok) throw new Error(`Paperless upload: ${String(res.status)} ${await res.text()}`);
     // post_document returns task ID, not the document. Return a stub.
     return {

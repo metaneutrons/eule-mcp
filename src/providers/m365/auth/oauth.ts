@@ -1,7 +1,7 @@
 import { logger } from "../../../utils/logger.js";
 import { createServer } from "node:http";
 import { randomBytes, createHash } from "node:crypto";
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import open from "open";
@@ -63,16 +63,54 @@ function generatePkce(): { verifier: string; challenge: string } {
   return { verifier, challenge };
 }
 
-/** Load token store from disk. */
+/** Load token store from disk. Never throws — a corrupt store starts empty. */
 export function loadTokens(): TokenStore {
   if (!existsSync(TOKENS_PATH)) return { accounts: {} };
-  const raw = readFileSync(TOKENS_PATH, "utf-8");
-  return JSON.parse(raw) as TokenStore;
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(TOKENS_PATH, "utf-8"));
+    if (typeof parsed === "object" && parsed !== null && "accounts" in parsed) {
+      const accounts = (parsed as Record<string, unknown>).accounts;
+      if (typeof accounts === "object" && accounts !== null) {
+        return parsed as TokenStore;
+      }
+    }
+    logger.error(`Token store at ${TOKENS_PATH} has an unexpected shape; ignoring it.`);
+  } catch (err) {
+    logger.error(
+      `Failed to parse token store at ${TOKENS_PATH} (starting empty): ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  return { accounts: {} };
 }
 
-/** Save token store to disk. */
+/** Save token store to disk with owner-only (0600) permissions. */
 export function saveTokens(store: TokenStore): void {
   writeFileSync(TOKENS_PATH, JSON.stringify(store, null, 2), { mode: 0o600 });
+  // `mode` is honored only on create; enforce on rewrite too.
+  chmodSync(TOKENS_PATH, 0o600);
+}
+
+/** Validates an OAuth token-endpoint response, rejecting malformed payloads. */
+export function parseTokenResponse(data: unknown): {
+  access_token: string;
+  refresh_token?: string;
+  expires_in: number;
+} {
+  if (typeof data !== "object" || data === null) {
+    throw new Error("Malformed token response (not an object)");
+  }
+  const d = data as Record<string, unknown>;
+  if (typeof d.access_token !== "string" || d.access_token.length === 0) {
+    throw new Error("Token response missing access_token");
+  }
+  return {
+    access_token: d.access_token,
+    refresh_token: typeof d.refresh_token === "string" ? d.refresh_token : undefined,
+    // Default to 1h rather than trusting a missing/NaN value (which would make
+    // expiresAt NaN and break the refresh-timing comparison).
+    expires_in:
+      typeof d.expires_in === "number" && Number.isFinite(d.expires_in) ? d.expires_in : 3600,
+  };
 }
 
 /** Refresh an expired access token using the refresh token. */
@@ -110,11 +148,7 @@ export async function refreshAccessToken(
     return null;
   }
 
-  const data = (await res.json()) as {
-    access_token: string;
-    refresh_token?: string;
-    expires_in: number;
-  };
+  const data = parseTokenResponse(await res.json());
 
   const updated: AccountToken = {
     ...token,
@@ -174,17 +208,13 @@ async function exchangeCode(
     throw new Error(`Token exchange failed: ${errText}`);
   }
 
-  const data = (await res.json()) as {
-    access_token: string;
-    refresh_token: string;
-    expires_in: number;
-  };
+  const data = parseTokenResponse(await res.json());
 
   const account = extractEmail(data.access_token) ?? "unknown";
   return {
     account,
     accessToken: data.access_token,
-    refreshToken: data.refresh_token,
+    refreshToken: data.refresh_token ?? "",
     expiresAt: Date.now() + data.expires_in * 1000,
     tier: "graph", // Will be set by caller
   };
@@ -325,6 +355,12 @@ button{padding:10px 20px;font-size:16px;cursor:pointer;background:#0078d4;color:
 </form>
 <p><small>The URL should start with <code>https://login.microsoftonline.com/common/oauth2/nativeclient?code=</code></small></p>
 </body></html>`);
+    });
+
+    // Without this, a listen failure (e.g. EADDRINUSE) is emitted as an
+    // unhandled 'error' event and crashes the whole process.
+    server.on("error", (err) => {
+      reject(err instanceof Error ? err : new Error(String(err)));
     });
 
     server.listen(0, "127.0.0.1", () => {
