@@ -1,6 +1,6 @@
 import { XMLParser } from "fast-xml-parser";
 import { assembleHtml } from "../../utils/mail-html.js";
-import { escapeXml } from "../../utils/security.js";
+import { assertResponseSize, escapeXml, fetchWithTimeout } from "../../utils/security.js";
 import type {
   MailConnector,
   MailMessage,
@@ -71,7 +71,7 @@ export class EwsMailConnector implements MailConnector {
   private async post(body: string): Promise<unknown> {
     const token = await this.getToken();
     if (!token) throw new Error(`No token for ${this.account}`);
-    const res = await fetch(EWS_URL, {
+    const res = await fetchWithTimeout(EWS_URL, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
@@ -80,6 +80,7 @@ export class EwsMailConnector implements MailConnector {
       body: soap(body),
     });
     if (!res.ok) throw new Error(`EWS ${String(res.status)}: ${await res.text()}`);
+    assertResponseSize(res);
     const xml = await res.text();
     return parser.parse(xml);
   }

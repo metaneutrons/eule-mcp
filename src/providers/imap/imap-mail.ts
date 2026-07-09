@@ -2,7 +2,11 @@ import { ImapFlow } from "imapflow";
 import { createTransport, type Transporter } from "nodemailer";
 import { assembleHtml } from "../../utils/mail-html.js";
 import { mimeEncode } from "../../utils/mime.js";
-import { assertNoHeaderInjection, assertSafeAddresses } from "../../utils/security.js";
+import {
+  assertNoHeaderInjection,
+  assertSafeAddresses,
+  MAX_RESPONSE_BYTES,
+} from "../../utils/security.js";
 import type {
   MailConnector,
   MailMessage,
@@ -152,8 +156,15 @@ export class ImapMailConnector implements MailConnector {
       try {
         const part = await client.download(messageId, attachmentId, { uid: true });
         const chunks: Buffer[] = [];
+        let total = 0;
         for await (const chunk of part.content) {
-          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array));
+          const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array);
+          total += buf.length;
+          // No Content-Length on a streamed IMAP part — cap as bytes arrive.
+          if (total > MAX_RESPONSE_BYTES) {
+            throw new Error(`Attachment exceeds the ${String(MAX_RESPONSE_BYTES)}-byte limit.`);
+          }
+          chunks.push(buf);
         }
         return Buffer.concat(chunks);
       } finally {

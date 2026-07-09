@@ -1,5 +1,5 @@
 import type { FileConnector, FileResult } from "../../types/index.js";
-import { escapeODataString } from "../../utils/security.js";
+import { assertResponseSize, escapeODataString, fetchWithTimeout } from "../../utils/security.js";
 
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
 
@@ -36,10 +36,12 @@ export class GraphFileConnector implements FileConnector {
 
   async getContent(id: string): Promise<string> {
     const h = await this.headers();
-    const res = await fetch(`${GRAPH_BASE}/me/drive/items/${encodeURIComponent(id)}/content`, {
-      headers: h,
-    });
+    const res = await fetchWithTimeout(
+      `${GRAPH_BASE}/me/drive/items/${encodeURIComponent(id)}/content`,
+      { headers: h },
+    );
     if (!res.ok) throw new Error(`Graph getContent: ${String(res.status)} ${await res.text()}`);
+    assertResponseSize(res);
 
     const ct = res.headers.get("content-type") ?? "";
     if (ct.includes("text") || ct.includes("json") || ct.includes("xml") || ct.includes("csv")) {
@@ -75,10 +77,12 @@ export class GraphFileConnector implements FileConnector {
 
   async downloadFile(id: string): Promise<Buffer> {
     const h = await this.headers();
-    const res = await fetch(`${GRAPH_BASE}/me/drive/items/${encodeURIComponent(id)}/content`, {
-      headers: h,
-    });
+    const res = await fetchWithTimeout(
+      `${GRAPH_BASE}/me/drive/items/${encodeURIComponent(id)}/content`,
+      { headers: h },
+    );
     if (!res.ok) throw new Error(`Graph download: ${String(res.status)} ${await res.text()}`);
+    assertResponseSize(res);
     return Buffer.from(await res.arrayBuffer());
   }
 

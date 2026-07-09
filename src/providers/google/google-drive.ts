@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type { FileConnector, FileResult } from "../../types/index.js";
+import { assertResponseSize, fetchWithTimeout } from "../../utils/security.js";
 
 const BASE = "https://www.googleapis.com/drive/v3";
 
@@ -39,8 +40,9 @@ export class GoogleDriveConnector implements FileConnector {
 
   async getContent(id: string): Promise<string> {
     const h = await this.headers();
-    const res = await fetch(`${BASE}/files/${id}?alt=media`, { headers: h });
+    const res = await fetchWithTimeout(`${BASE}/files/${id}?alt=media`, { headers: h });
     if (!res.ok) throw new Error(`Drive getContent: ${String(res.status)}`);
+    assertResponseSize(res);
     const ct = res.headers.get("content-type") ?? "";
     if (ct.includes("text") || ct.includes("json") || ct.includes("xml") || ct.includes("csv"))
       return res.text();
@@ -88,8 +90,9 @@ export class GoogleDriveConnector implements FileConnector {
 
   async downloadFile(id: string): Promise<Buffer> {
     const h = await this.headers();
-    const res = await fetch(`${BASE}/files/${id}?alt=media`, { headers: h });
+    const res = await fetchWithTimeout(`${BASE}/files/${id}?alt=media`, { headers: h });
     if (!res.ok) throw new Error(`Drive download: ${String(res.status)}`);
+    assertResponseSize(res);
     return Buffer.from(await res.arrayBuffer());
   }
 

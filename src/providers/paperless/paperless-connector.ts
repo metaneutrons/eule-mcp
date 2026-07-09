@@ -6,7 +6,7 @@ import type {
   DocDocumentType,
   DocBulkMethod,
 } from "../../types/index.js";
-import { assertSecureUrl, fetchWithTimeout } from "../../utils/security.js";
+import { assertResponseSize, assertSecureUrl, fetchWithTimeout } from "../../utils/security.js";
 
 interface PaperlessDoc {
   id: number;
@@ -177,6 +177,7 @@ export class PaperlessConnector implements DocumentConnector {
     const url = `${this.root}/api/documents/${String(id)}/download/${original ? "?original=true" : ""}`;
     const res = await fetchWithTimeout(url, { headers: { Authorization: `Token ${this.token}` } });
     if (!res.ok) throw new Error(`Paperless download: ${String(res.status)}`);
+    assertResponseSize(res);
     return Buffer.from(await res.arrayBuffer());
   }
 
