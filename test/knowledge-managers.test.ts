@@ -24,8 +24,13 @@ describe("IdeaManager", () => {
   let dbm: DatabaseManager;
   let im: IdeaManager;
 
-  beforeEach(() => { dbm = createTestDb(); im = new IdeaManager(dbm); });
-  afterEach(() => { (dbm.db as Database.Database).close(); });
+  beforeEach(() => {
+    dbm = createTestDb();
+    im = new IdeaManager(dbm);
+  });
+  afterEach(() => {
+    (dbm.db as Database.Database).close();
+  });
 
   it("captures an idea", () => {
     const idea = im.add("Use AI for grading", { tags: "teaching,ai" });
@@ -52,8 +57,13 @@ describe("NoteManager", () => {
   let dbm: DatabaseManager;
   let nm: NoteManager;
 
-  beforeEach(() => { dbm = createTestDb(); nm = new NoteManager(dbm); });
-  afterEach(() => { (dbm.db as Database.Database).close(); });
+  beforeEach(() => {
+    dbm = createTestDb();
+    nm = new NoteManager(dbm);
+  });
+  afterEach(() => {
+    (dbm.db as Database.Database).close();
+  });
 
   it("creates a note", () => {
     const note = nm.add("Meeting Notes", "Discussed budget for Q3", { tags: "meeting" });
@@ -80,11 +90,19 @@ describe("ContactManager", () => {
   let dbm: DatabaseManager;
   let cm: ContactManager;
 
-  beforeEach(() => { dbm = createTestDb(); cm = new ContactManager(dbm); });
-  afterEach(() => { (dbm.db as Database.Database).close(); });
+  beforeEach(() => {
+    dbm = createTestDb();
+    cm = new ContactManager(dbm);
+  });
+  afterEach(() => {
+    (dbm.db as Database.Database).close();
+  });
 
   it("adds a contact", () => {
-    const c = cm.add("Manfred Nowak", { email: "manfred.nowak@hs-hannover.de", organization: "HSH Bibliothek" });
+    const c = cm.add("Manfred Nowak", {
+      email: "manfred.nowak@hs-hannover.de",
+      organization: "HSH Bibliothek",
+    });
     expect(c.id).toBe(1);
     expect(c.name).toBe("Manfred Nowak");
     expect(c.email).toBe("manfred.nowak@hs-hannover.de");

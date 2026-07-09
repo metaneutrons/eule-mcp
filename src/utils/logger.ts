@@ -7,7 +7,7 @@ export function setLogOutput(mode: "stderr" | "stdout"): void {
 }
 
 function log(level: Level, ...args: unknown[]): void {
-  const fn = output === "stderr" ? console.error : console.log;  
+  const fn = output === "stderr" ? console.error : console.log;
   fn(`[${level}]`, ...args);
 }
 
