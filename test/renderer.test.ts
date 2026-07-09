@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { renderMail, htmlToMarkdown, removeSignature, splitThread } from "../src/renderer/markdown-renderer.js";
+import {
+  renderMail,
+  htmlToMarkdown,
+  removeSignature,
+  splitThread,
+} from "../src/renderer/markdown-renderer.js";
 
 describe("htmlToMarkdown", () => {
   it("converts basic HTML to markdown", () => {
@@ -7,7 +12,7 @@ describe("htmlToMarkdown", () => {
   });
 
   it("strips head/style/script tags", () => {
-    const html = '<head><style>body{}</style></head><body><p>Content</p></body>';
+    const html = "<head><style>body{}</style></head><body><p>Content</p></body>";
     expect(htmlToMarkdown(html)).toBe("Content");
   });
 
@@ -16,7 +21,9 @@ describe("htmlToMarkdown", () => {
   });
 
   it("converts links", () => {
-    expect(htmlToMarkdown('<a href="https://example.com">Click</a>')).toBe("[Click](https://example.com)");
+    expect(htmlToMarkdown('<a href="https://example.com">Click</a>')).toBe(
+      "[Click](https://example.com)",
+    );
   });
 });
 
@@ -60,7 +67,11 @@ describe("renderMail", () => {
   });
 
   it("truncates at maxLength", () => {
-    const result = renderMail({ body: "<p>A very long message</p>", bodyType: "html", maxLength: 10 });
+    const result = renderMail({
+      body: "<p>A very long message</p>",
+      bodyType: "html",
+      maxLength: 10,
+    });
     expect(result).toContain("truncated");
     expect(result.length).toBeGreaterThan(10); // includes truncation notice
   });
@@ -129,7 +140,8 @@ describe("splitThread (plain text)", () => {
   });
 
   it("splits on Original Message separator", () => {
-    const text = "Reply content here, long enough to pass the threshold check.\n\n-----Original Message-----\nFrom: test\n\nOriginal.";
+    const text =
+      "Reply content here, long enough to pass the threshold check.\n\n-----Original Message-----\nFrom: test\n\nOriginal.";
     const result = splitThread(text);
     expect(result.length).toBeGreaterThanOrEqual(2);
   });

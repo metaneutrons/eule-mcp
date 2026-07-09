@@ -44,7 +44,9 @@ async function setup(): Promise<void> {
 
   // Start with Graph (tier 1), user can re-probe later.
   const tierInput = await prompt("Try which tier first? (graph/ews/imap) [graph]: ");
-  const tier: ApiTier = (["graph", "ews", "imap"].includes(tierInput) ? tierInput : "graph") as ApiTier;
+  const tier: ApiTier = (
+    ["graph", "ews", "imap"].includes(tierInput) ? tierInput : "graph"
+  ) as ApiTier;
 
   console.log(`\nAuthenticating with tier: ${tier}`);
   console.log("A browser window will open for Microsoft login...\n");
