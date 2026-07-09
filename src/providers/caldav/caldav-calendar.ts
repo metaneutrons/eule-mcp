@@ -28,6 +28,96 @@ function isoToIcal(iso: string): string {
   return iso.replace(/[-:]/g, "").split(".")[0] ?? iso;
 }
 
+/** Property name at the start of an (unfolded) iCal content line, uppercased. */
+function propName(line: string): string {
+  return /^([A-Za-z0-9-]+)/.exec(line)?.[1]?.toUpperCase() ?? "";
+}
+
+/** Reads the first VEVENT-level value of `name`, or "" if absent. */
+function readVeventProp(ics: string, name: string): string {
+  const target = name.toUpperCase();
+  const stack: string[] = [];
+  for (const line of ics.split(/\r?\n/)) {
+    const u = line.toUpperCase();
+    if (u.startsWith("BEGIN:")) stack.push(u.slice(6).trim());
+    else if (u.startsWith("END:")) stack.pop();
+    else if (
+      stack[stack.length - 1] === "VEVENT" &&
+      !/^[ \t]/.test(line) &&
+      propName(line) === target
+    ) {
+      return line.slice(line.indexOf(":") + 1).trim();
+    }
+  }
+  return "";
+}
+
+/**
+ * Rewrites the given VEVENT-level properties in an iCalendar object *in place*,
+ * preserving every untouched property (DESCRIPTION, ATTENDEE, RRULE, VALARM,
+ * VALUE=DATE flags, …) byte-for-byte, and bumping SEQUENCE / DTSTAMP /
+ * LAST-MODIFIED. Edits are scoped to the VEVENT component only — never a nested
+ * VALARM's SUMMARY/DESCRIPTION nor a VTIMEZONE's DTSTART. Exported for testing.
+ */
+export function applyEventUpdates(
+  ics: string,
+  updates: Partial<CalendarEventInput>,
+  nowStamp: string,
+): string {
+  const edits = new Map<string, string>([
+    ["DTSTAMP", nowStamp],
+    ["LAST-MODIFIED", nowStamp],
+    ["SEQUENCE", String((Number(readVeventProp(ics, "SEQUENCE")) || 0) + 1)],
+  ]);
+  if (updates.subject !== undefined) edits.set("SUMMARY", escapeICalText(updates.subject));
+  if (updates.location !== undefined) edits.set("LOCATION", escapeICalText(updates.location));
+  if (updates.start !== undefined) edits.set("DTSTART", isoToIcal(updates.start));
+  if (updates.end !== undefined) edits.set("DTEND", isoToIcal(updates.end));
+
+  // TEXT props keep any parameters (e.g. ;LANGUAGE=); date props are replaced
+  // wholesale so a UTC value can't collide with a leftover ;TZID= parameter.
+  const keepParams = new Set(["SUMMARY", "LOCATION"]);
+  const lines = ics.split(/\r?\n/);
+  const remaining = new Map(edits);
+  const stack: string[] = [];
+  const out: string[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? "";
+    const u = line.toUpperCase();
+
+    if (u.startsWith("BEGIN:")) {
+      stack.push(u.slice(6).trim());
+      out.push(line);
+    } else if (u.startsWith("END:")) {
+      if (u.slice(4).trim() === "VEVENT" && remaining.size) {
+        for (const [name, value] of remaining) out.push(`${name}:${value}`);
+        remaining.clear();
+      }
+      stack.pop();
+      out.push(line);
+    } else if (/^[ \t]/.test(line)) {
+      out.push(line); // folded continuation of the previous property
+    } else if (stack[stack.length - 1] === "VEVENT" && remaining.has(propName(line))) {
+      const name = propName(line);
+      const value = remaining.get(name) ?? "";
+      remaining.delete(name);
+      const colon = line.indexOf(":");
+      const semi = line.indexOf(";");
+      if (keepParams.has(name) && semi >= 0 && semi < colon) {
+        out.push(`${line.slice(0, colon)}:${value}`); // NAME;params:value
+      } else {
+        out.push(`${name}:${value}`);
+      }
+      // Drop the folded continuation lines of the property we just replaced.
+      while (i + 1 < lines.length && /^[ \t]/.test(lines[i + 1] ?? "")) i++;
+    } else {
+      out.push(line);
+    }
+  }
+  return out.join("\r\n");
+}
+
 export class CalDavCalendarConnector implements CalendarConnector {
   readonly tier = "caldav";
   readonly readOnly = false;
@@ -128,9 +218,10 @@ export class CalDavCalendarConnector implements CalendarConnector {
   }
 
   async updateEvent(id: string, updates: Partial<CalendarEventInput>): Promise<CalendarEvent> {
-    // CalDAV update = fetch + modify + PUT. Simplified: delete + create.
-    // NOTE: the recreate carries only subject/start/end/location; recurrence,
-    // attendees and alarms on the original are not preserved.
+    // Proper CalDAV update: fetch the object, rewrite only the changed VEVENT
+    // properties in place, and PUT it back (If-Match on the etag). This keeps
+    // the UID and preserves recurrence, attendees, description and alarms —
+    // unlike a delete+recreate, which dropped them and minted a new UID.
     const c = await this.client();
     const calendars = await c.fetchCalendars();
 
@@ -141,19 +232,12 @@ export class CalDavCalendarConnector implements CalendarConnector {
       const obj = objects.find((o) => this.matchesId(String(o.data ?? ""), o.url, id));
       if (!obj) continue;
 
-      const data = String(obj.data ?? "");
-      const current = this.parse(data, obj.url);
-      const merged: CalendarEventInput = {
-        subject: updates.subject ?? current.subject,
-        start: updates.start ?? current.start,
-        end: updates.end ?? current.end,
-        location: updates.location ?? current.location,
-      };
-
-      if (obj.etag) {
-        await c.deleteCalendarObject({ calendarObject: { url: obj.url, etag: obj.etag } });
-      }
-      return this.createEvent(merged);
+      const original = String(obj.data ?? "");
+      const updated = applyEventUpdates(original, updates, isoToIcal(new Date().toISOString()));
+      await c.updateCalendarObject({
+        calendarObject: { url: obj.url, data: updated, etag: obj.etag },
+      });
+      return this.parse(updated, obj.url);
     }
 
     throw new Error(`Event ${id} not found`);
