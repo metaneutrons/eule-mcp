@@ -8,8 +8,9 @@ import { loadTokens, authenticateAccount, getAccessToken } from "../providers/m3
 import { authenticateGoogle } from "../providers/google/index.js";
 import { ConnectorRegistry } from "../connectors/index.js";
 import { renderMail } from "../renderer/index.js";
-import { setLogOutput } from "../utils/logger.js";
+import { setLogOutput, logger } from "../utils/logger.js";
 import { cachedFileRead } from "../utils/file-cache.js";
+import { securePath, secureReadPath } from "../utils/path-sandbox.js";
 
 setLogOutput("stderr");
 import type { ApiTier, MailMessage, CalendarEvent } from "../types/index.js";
@@ -599,18 +600,15 @@ server.tool(
       };
     try {
       const data = await connector.downloadAttachment(messageId, attachmentId);
-      const { join } = await import("node:path");
-      const { homedir } = await import("node:os");
       const { mkdirSync, writeFileSync } = await import("node:fs");
-      const dir = customPath ?? join(homedir(), ".eule", "attachments", messageId.slice(0, 32));
+      const { dir, dest } = securePath(customPath, name, `attachments/${messageId.slice(0, 32)}`);
       mkdirSync(dir, { recursive: true });
-      const savePath = customPath ?? join(dir, name);
-      writeFileSync(savePath, data);
+      writeFileSync(dest, data);
       return {
         content: [
           {
             type: "text" as const,
-            text: `✅ Saved: ${savePath} (${String(Math.round(data.length / 1024))}KB)`,
+            text: `✅ Saved: ${dest} (${String(Math.round(data.length / 1024))}KB)`,
           },
         ],
       };
@@ -889,7 +887,18 @@ server.tool(
   async ({ path: filePath, name, parentId, role, account }) => {
     const { readFileSync, existsSync } = await import("node:fs");
     const { basename } = await import("node:path");
-    if (!existsSync(filePath))
+    let safePath: string;
+    try {
+      safePath = secureReadPath(filePath);
+    } catch (err) {
+      return {
+        content: [
+          { type: "text" as const, text: `❌ ${err instanceof Error ? err.message : String(err)}` },
+        ],
+        isError: true,
+      };
+    }
+    if (!existsSync(safePath))
       return {
         content: [{ type: "text" as const, text: `❌ File not found: ${filePath}` }],
         isError: true,
@@ -903,8 +912,8 @@ server.tool(
         content: [{ type: "text" as const, text: "No writable file connector found." }],
         isError: true,
       };
-    const content = readFileSync(filePath);
-    const fileName = name ?? basename(filePath);
+    const content = readFileSync(safePath);
+    const fileName = name ?? basename(safePath);
     const result = await c.uploadFile(fileName, content, parentId);
     return {
       content: [
@@ -927,8 +936,6 @@ server.tool(
   },
   async ({ id, account, path: savePath }) => {
     const { writeFileSync, mkdirSync } = await import("node:fs");
-    const { join } = await import("node:path");
-    const { homedir } = await import("node:os");
     const connectors = registry.getFileConnectors();
     const c = connectors.find((cc) => cc.account === account);
     if (!c?.downloadFile)
@@ -943,18 +950,29 @@ server.tool(
     const meta = results.find((r) => r.id === id);
     const fileName = meta?.name ?? id;
     const buf = await c.downloadFile(id);
-    const dir = savePath ?? join(homedir(), ".eule", "attachments");
-    mkdirSync(dir, { recursive: true });
-    const dest = join(dir, fileName);
-    writeFileSync(dest, buf);
-    return {
-      content: [
-        {
-          type: "text" as const,
-          text: `📥 Downloaded: ${fileName} (${String(Math.round(buf.length / 1024))}KB)\n→ ${dest}`,
-        },
-      ],
-    };
+    try {
+      const { dir, dest } = securePath(savePath, fileName, "attachments");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(dest, buf);
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `📥 Downloaded: ${fileName} (${String(Math.round(buf.length / 1024))}KB)\n→ ${dest}`,
+          },
+        ],
+      };
+    } catch (err) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Error: ${err instanceof Error ? err.message : String(err)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
   },
 );
 
@@ -1568,9 +1586,7 @@ server.tool(
     role: z.string().optional().describe("Role ID"),
   },
   async ({ id, original, path: savePath, role }) => {
-    const { writeFileSync } = await import("node:fs");
-    const { join } = await import("node:path");
-    const { homedir } = await import("node:os");
+    const { writeFileSync, mkdirSync } = await import("node:fs");
     const c = registry.getDocumentConnectors(role)[0];
     if (!c)
       return {
@@ -1579,18 +1595,30 @@ server.tool(
       };
     const doc = await c.getDocument(id);
     const buf = await c.downloadDocument(id, original);
-    const dir = savePath ?? join(homedir(), ".eule", "attachments");
     const filename = doc.originalFileName ?? `document-${String(id)}.pdf`;
-    const fullPath = join(dir, filename);
-    writeFileSync(fullPath, buf);
-    return {
-      content: [
-        {
-          type: "text" as const,
-          text: `📄 Downloaded: ${fullPath} (${String(Math.round(buf.length / 1024))}KB)`,
-        },
-      ],
-    };
+    try {
+      const { dir, dest } = securePath(savePath, filename, "attachments");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(dest, buf);
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `📄 Downloaded: ${dest} (${String(Math.round(buf.length / 1024))}KB)`,
+          },
+        ],
+      };
+    } catch (err) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Error: ${err instanceof Error ? err.message : String(err)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
   },
 );
 
@@ -1608,7 +1636,18 @@ server.tool(
   async ({ path: filePath, title, correspondent, document_type, tags, role }) => {
     const { readFileSync, existsSync } = await import("node:fs");
     const { basename } = await import("node:path");
-    if (!existsSync(filePath))
+    let safePath: string;
+    try {
+      safePath = secureReadPath(filePath);
+    } catch (err) {
+      return {
+        content: [
+          { type: "text" as const, text: `❌ ${err instanceof Error ? err.message : String(err)}` },
+        ],
+        isError: true,
+      };
+    }
+    if (!existsSync(safePath))
       return {
         content: [{ type: "text" as const, text: `❌ File not found: ${filePath}` }],
         isError: true,
@@ -1619,8 +1658,8 @@ server.tool(
         content: [{ type: "text" as const, text: "No document connector." }],
         isError: true,
       };
-    const buf = readFileSync(filePath);
-    const doc = await c.uploadDocument(buf, basename(filePath), {
+    const buf = readFileSync(safePath);
+    const doc = await c.uploadDocument(buf, basename(safePath), {
       title,
       correspondent,
       documentType: document_type,
@@ -1705,15 +1744,24 @@ server.tool(
   },
 );
 
-// --- Server start ---
-
 // --- Server startup ---
+
+// A stray rejection or throw from a background task (token refresh, network
+// I/O) must not silently kill the stdio server. Log to stderr (stdout is the
+// MCP transport) and keep serving; only a truly unknown state exits.
+process.on("unhandledRejection", (reason: unknown) => {
+  logger.error("Unhandled promise rejection:", reason);
+});
+process.on("uncaughtException", (err: unknown) => {
+  logger.error("Uncaught exception:", err);
+});
+
 async function main(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
 
 main().catch((error: unknown) => {
-  console.error("Eule MCP server failed to start:", error);
+  logger.error("Eule MCP server failed to start:", error);
   process.exit(1);
 });

@@ -2,6 +2,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import type { DatabaseManager } from "./database-manager.js";
+import { ftsPhrase } from "../utils/security.js";
 
 const KB_DIR = join(homedir(), ".eule", "knowledge");
 
@@ -123,11 +124,18 @@ export class NoteManager {
   }
 
   search(query: string): Note[] {
-    return this.dbm.db
-      .prepare(
-        "SELECT notes.* FROM notes_fts JOIN notes ON notes.id = notes_fts.rowid WHERE notes_fts MATCH ? ORDER BY rank",
-      )
-      .all(query) as Note[];
+    const run = (q: string): Note[] =>
+      this.dbm.db
+        .prepare(
+          "SELECT notes.* FROM notes_fts JOIN notes ON notes.id = notes_fts.rowid WHERE notes_fts MATCH ? ORDER BY rank",
+        )
+        .all(q) as Note[];
+    try {
+      return run(query);
+    } catch {
+      // Malformed FTS5 expression — retry as a literal quoted phrase.
+      return run(ftsPhrase(query));
+    }
   }
 
   private exportMarkdown(note: Note): void {

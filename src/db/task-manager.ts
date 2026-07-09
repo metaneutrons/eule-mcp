@@ -1,5 +1,6 @@
 import type { DatabaseManager } from "./database-manager.js";
 import { renderTasksToMarkdown } from "../renderer/task-renderer.js";
+import { ftsPhrase } from "../utils/security.js";
 
 export type TaskStatus = "inbox" | "next" | "waiting" | "someday" | "done";
 
@@ -168,16 +169,24 @@ export class TaskManager {
   }
 
   search(query: string): Task[] {
-    return this.dbm.db
-      .prepare(
-        `
+    const run = (q: string): Task[] =>
+      this.dbm.db
+        .prepare(
+          `
       SELECT tasks.* FROM tasks_fts
       JOIN tasks ON tasks.id = tasks_fts.rowid
       WHERE tasks_fts MATCH ?
       ORDER BY rank
     `,
-      )
-      .all(query) as Task[];
+        )
+        .all(q) as Task[];
+    try {
+      return run(query);
+    } catch {
+      // Malformed FTS5 expression (bare AND/OR, unbalanced quote, `*`, `:`…):
+      // retry treating the whole input as a literal quoted phrase.
+      return run(ftsPhrase(query));
+    }
   }
 
   // --- Projects ---
