@@ -181,10 +181,13 @@ export class ImapMailConnector implements MailConnector {
       const lock = await client.getMailboxLock(folder);
       try {
         const results: MailMessage[] = [];
-        for await (const raw of client.fetch({ text: query } as unknown as string, {
-          envelope: true,
-          flags: true,
-        })) {
+        for await (const raw of client.fetch(
+          { text: query },
+          {
+            envelope: true,
+            flags: true,
+          },
+        )) {
           const msg = raw as {
             uid: number;
             envelope?: {

@@ -90,8 +90,7 @@ export class TaskManager {
 
   get(id: number): Task {
     const task = this.dbm.db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as
-      | Task
-      | undefined;
+      Task | undefined;
     if (!task) throw new Error(`Task ${String(id)} not found`);
     return task;
   }

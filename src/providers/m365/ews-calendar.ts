@@ -216,8 +216,7 @@ export class EwsCalendarConnector implements CalendarConnector {
         const msg = rm[rmKey] as Record<string, unknown>;
         const rootFolder = msg.RootFolder as Record<string, unknown> | undefined;
         const items = (rootFolder ? dig(rootFolder, "Items") : dig(msg, "Items")) as
-          | Record<string, unknown>
-          | undefined;
+          Record<string, unknown> | undefined;
         if (!items) continue;
         const calItems = items.CalendarItem;
         if (Array.isArray(calItems)) return calItems as Record<string, unknown>[];
@@ -229,11 +228,9 @@ export class EwsCalendarConnector implements CalendarConnector {
 
   private mapEvent(item: Record<string, unknown>): CalendarEvent {
     const reqAttendees = dig(item, "RequiredAttendees", "Attendee") as
-      | Record<string, unknown>[]
-      | undefined;
+      Record<string, unknown>[] | undefined;
     const optAttendees = dig(item, "OptionalAttendees", "Attendee") as
-      | Record<string, unknown>[]
-      | undefined;
+      Record<string, unknown>[] | undefined;
     const allAttendees = [...(reqAttendees ?? []), ...(optAttendees ?? [])];
 
     return {
