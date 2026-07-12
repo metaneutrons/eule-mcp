@@ -1,20 +1,22 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { resolveAttachmentPaths } from "../src/utils/outgoing-attachments.js";
 
 // resolveAttachmentPaths only reads from ~/Downloads, ~/Documents, ~/Desktop,
 // so the fixture must live inside one of them. We use a temp dir under Documents
-// and remove it afterwards.
-let dir: string;
+// and remove it afterwards. ~/Documents may not exist on CI runners, so ensure it.
+let dir = "";
 
 beforeAll(() => {
-  dir = mkdtempSync(join(homedir(), "Documents", "eule-att-test-"));
+  const base = join(homedir(), "Documents");
+  mkdirSync(base, { recursive: true });
+  dir = mkdtempSync(join(base, "eule-att-test-"));
 });
 
 afterAll(() => {
-  rmSync(dir, { recursive: true, force: true });
+  if (dir) rmSync(dir, { recursive: true, force: true });
 });
 
 describe("resolveAttachmentPaths", () => {
