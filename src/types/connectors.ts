@@ -24,6 +24,25 @@ export interface MailAttachment {
   readonly name: string;
   readonly size: number;
   readonly contentType: string;
+  /** True for inline (cid:) parts such as embedded images, not real file attachments. */
+  readonly isInline?: boolean;
+  /** RFC 2392 Content-ID (angle brackets stripped), when present. */
+  readonly contentId?: string;
+}
+
+/**
+ * A file to attach to an outgoing message. The tool layer resolves the bytes
+ * (e.g. from a sandboxed disk path) before handing this to a connector.
+ */
+export interface OutgoingAttachment {
+  readonly filename: string;
+  readonly content: Buffer;
+  readonly contentType?: string;
+  /**
+   * When set, the part is embedded inline and can be referenced as `cid:<cid>`
+   * in the HTML body (e.g. for images) instead of shown as a file attachment.
+   */
+  readonly cid?: string;
 }
 
 /** Calendar event representation. */
@@ -81,7 +100,7 @@ export interface MailConnector {
   ): Promise<MailMessage>;
   sendDraft?(id: string): Promise<void>;
   replyToMessage(id: string, body: string, opts?: MailSendOpts): Promise<void>;
-  forwardMessage(id: string, to: string[], body?: string): Promise<void>;
+  forwardMessage(id: string, to: string[], body?: string, opts?: MailSendOpts): Promise<void>;
   downloadAttachment(messageId: string, attachmentId: string): Promise<Buffer>;
   markRead(id: string, isRead: boolean): Promise<void>;
   moveMessage(id: string, folder: string): Promise<void>;
@@ -91,6 +110,8 @@ export interface MailConnector {
 export interface MailSendOpts {
   cc?: string[];
   bcc?: string[];
+  /** Files to attach to the outgoing message. */
+  attachments?: OutgoingAttachment[];
 }
 
 /** Calendar connector interface — implemented per API tier. */

@@ -1,18 +1,63 @@
 import { ImapFlow } from "imapflow";
 import { createTransport, type Transporter } from "nodemailer";
 import { assembleHtml } from "../../utils/mail-html.js";
-import { mimeEncode } from "../../utils/mime.js";
+import { buildMimeMessage } from "../../utils/mime-build.js";
 import {
   assertNoHeaderInjection,
   assertSafeAddresses,
   MAX_RESPONSE_BYTES,
 } from "../../utils/security.js";
 import type {
+  MailAttachment,
   MailConnector,
   MailMessage,
   MailMessageFull,
   MailSendOpts,
+  OutgoingAttachment,
 } from "../../types/index.js";
+
+/** Map connector attachments to nodemailer's attachment shape. */
+function nodemailerAttachments(
+  attachments?: readonly OutgoingAttachment[],
+): { filename: string; content: Buffer; contentType?: string; cid?: string }[] | undefined {
+  if (!attachments?.length) return undefined;
+  return attachments.map((a) => ({
+    filename: a.filename,
+    content: a.content,
+    contentType: a.contentType,
+    ...(a.cid ? { cid: a.cid } : {}),
+  }));
+}
+
+/** An imapflow bodyStructure node (loosely typed — the lib types are permissive). */
+interface BodyStructureNode {
+  part?: string;
+  type?: string;
+  disposition?: string;
+  dispositionParameters?: Record<string, string>;
+  parameters?: Record<string, string>;
+  size?: number;
+  id?: string;
+  childNodes?: BodyStructureNode[];
+}
+
+/** Walk a bodyStructure tree and collect attachment/inline parts with their part ids. */
+function walkAttachments(node: BodyStructureNode | undefined, out: MailAttachment[]): void {
+  if (!node) return;
+  const disposition = node.disposition?.toLowerCase();
+  const filename = node.dispositionParameters?.filename ?? node.parameters?.name;
+  if (node.part && (disposition === "attachment" || disposition === "inline" || filename)) {
+    out.push({
+      id: node.part,
+      name: filename ?? `attachment-${String(out.length + 1)}`,
+      size: node.size ?? 0,
+      contentType: node.type ?? "application/octet-stream",
+      isInline: disposition === "inline",
+      ...(node.id ? { contentId: node.id.replace(/[<>]/g, "") } : {}),
+    });
+  }
+  for (const child of node.childNodes ?? []) walkAttachments(child, out);
+}
 
 export interface ImapConfig {
   account: string;
@@ -110,12 +155,13 @@ export class ImapMailConnector implements MailConnector {
       try {
         const raw = await client.fetchOne(
           id,
-          { envelope: true, flags: true, source: true },
+          { envelope: true, flags: true, source: true, bodyStructure: true },
           { uid: true },
         );
         const msg = raw as {
           uid: number;
           source?: Buffer;
+          bodyStructure?: BodyStructureNode;
           envelope?: {
             subject?: string;
             date?: Date;
@@ -128,6 +174,9 @@ export class ImapMailConnector implements MailConnector {
         const bodyStart = body.indexOf("\r\n\r\n");
         const textBody = bodyStart >= 0 ? body.slice(bodyStart + 4) : "";
 
+        const attachments: MailAttachment[] = [];
+        walkAttachments(msg.bodyStructure, attachments);
+
         return {
           id: String(msg.uid),
           account: this.account,
@@ -139,7 +188,7 @@ export class ImapMailConnector implements MailConnector {
           isRead: msg.flags?.has("\\Seen") ?? false,
           body: textBody,
           bodyType: "text",
-          attachments: [],
+          attachments,
         };
       } finally {
         lock.release();
@@ -263,6 +312,7 @@ export class ImapMailConnector implements MailConnector {
         bcc: opts?.bcc && assertSafeAddresses(opts.bcc, "Bcc").join(", "),
         subject,
         html: assembleHtml(body, this.signature),
+        attachments: nodemailerAttachments(opts?.attachments),
       });
     } finally {
       transport.close();
@@ -281,25 +331,34 @@ export class ImapMailConnector implements MailConnector {
         subject: `Re: ${original.subject}`,
         html: assembleHtml(body, this.signature),
         inReplyTo: id,
+        attachments: nodemailerAttachments(opts?.attachments),
       });
     } finally {
       transport.close();
     }
   }
 
-  async forwardMessage(id: string, to: string[], body?: string): Promise<void> {
+  async forwardMessage(
+    id: string,
+    to: string[],
+    body?: string,
+    opts?: MailSendOpts,
+  ): Promise<void> {
     const original = await this.getMessage(id);
     const transport = await this.makeTransport();
     try {
       await transport.sendMail({
         from: this.fromAddress,
         to: assertSafeAddresses(to, "To").join(", "),
+        cc: opts?.cc && assertSafeAddresses(opts.cc, "Cc").join(", "),
+        bcc: opts?.bcc && assertSafeAddresses(opts.bcc, "Bcc").join(", "),
         subject: `Fwd: ${original.subject}`,
         html: assembleHtml(
           body ?? "",
           this.signature,
           `<p><b>Von:</b> ${original.from}<br><b>Betreff:</b> ${original.subject}</p><pre>${original.body}</pre>`,
         ),
+        attachments: nodemailerAttachments(opts?.attachments),
       });
     } finally {
       transport.close();
@@ -312,11 +371,17 @@ export class ImapMailConnector implements MailConnector {
     body: string,
     opts?: MailSendOpts,
   ): Promise<MailMessage> {
-    const html = assembleHtml(body, this.signature);
-    let mime = `From: ${this.fromAddress}\r\nTo: ${assertSafeAddresses(to, "To").join(", ")}`;
-    if (opts?.cc?.length) mime += `\r\nCc: ${assertSafeAddresses(opts.cc, "Cc").join(", ")}`;
-    if (opts?.bcc?.length) mime += `\r\nBcc: ${assertSafeAddresses(opts.bcc, "Bcc").join(", ")}`;
-    mime += `\r\nSubject: ${mimeEncode(subject)}\r\nContent-Type: text/html; charset=utf-8\r\nMIME-Version: 1.0\r\n\r\n${html}`;
+    const mime = buildMimeMessage(
+      {
+        from: this.fromAddress,
+        to: assertSafeAddresses(to, "To").join(", "),
+        cc: opts?.cc?.length ? assertSafeAddresses(opts.cc, "Cc").join(", ") : undefined,
+        bcc: opts?.bcc?.length ? assertSafeAddresses(opts.bcc, "Bcc").join(", ") : undefined,
+        subject,
+      },
+      assembleHtml(body, this.signature),
+      opts?.attachments,
+    );
     const client = await this.connect();
     try {
       const result = await client.append("Drafts", Buffer.from(mime), ["\\Draft", "\\Seen"]);

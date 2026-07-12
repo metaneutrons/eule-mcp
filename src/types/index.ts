@@ -15,6 +15,7 @@ export type {
   MailMessage,
   MailMessageFull,
   MailAttachment,
+  OutgoingAttachment,
   CalendarEvent,
   CalendarInfo,
   CalendarEventInput,

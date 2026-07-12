@@ -76,16 +76,25 @@ Eule is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) serve
 |---|---|
 | `role_list` | List all configured roles with connectors and weekly hours |
 
-### 📧 Mail (6)
+### 📧 Mail (8)
 
 | Tool | Description |
 |---|---|
 | `mail_list` | List emails from any folder (inbox, sentitems, archive, ...) |
-| `mail_read` | Read email as Markdown with attachment metadata |
+| `mail_read` | Read email as Markdown, listing real attachments and inline images separately |
 | `mail_search` | Search emails, optionally scoped to a folder |
-| `mail_send` | Send, reply, or forward an email |
+| `mail_send` | Send, reply, or forward an email, with optional file attachments |
+| `mail_draft` | Create an email draft (with optional attachments), saved to Drafts |
+| `mail_send_draft` | Send an existing draft |
 | `mail_update` | Mark read/unread, move to folder (archive, spam, ...), or delete |
-| `mail_attachment_get` | Download attachment to disk |
+| `mail_attachment_get` | Fetch an attachment: save to disk, extract its text, or view an image inline |
+
+> **Attachments.** Outgoing files are read from `~/Downloads`, `~/Documents`, or
+> `~/Desktop` only (never `~/.eule`), capped at 25 MB. `mail_attachment_get`'s
+> `mode` selects `save` (default), `text` (PDF/Office → Markdown via
+> pymupdf4llm/pandoc), or `inline` (return an image so the model can see it).
+> Attachments on **reply/forward** are supported on Graph, Gmail and IMAP; on the
+> EWS fallback tier, attach via a new message or draft instead.
 
 ### 💬 Messenger (3)
 
