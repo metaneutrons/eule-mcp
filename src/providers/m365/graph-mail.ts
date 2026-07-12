@@ -12,6 +12,8 @@ const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
 
 /** Graph rejects inline fileAttachment payloads above ~3MB; larger needs an upload session. */
 const GRAPH_INLINE_ATTACHMENT_LIMIT = 3 * 1024 * 1024;
+/** Upload-session chunk size — must be a multiple of 320 KiB (and stay well under Graph's 4MB body cap). */
+const GRAPH_UPLOAD_CHUNK = 5 * 320 * 1024; // 1.6 MiB
 
 interface GraphAttachment {
   id?: string;
@@ -23,21 +25,18 @@ interface GraphAttachment {
   contentId?: string;
 }
 
-/** Serialize outgoing attachments as Graph inline `fileAttachment` resources. */
-function graphAttachments(attachments?: readonly OutgoingAttachment[]): Record<string, unknown>[] {
-  return (attachments ?? []).map((a) => {
-    if (a.content.length > GRAPH_INLINE_ATTACHMENT_LIMIT)
-      throw new Error(
-        `Graph: attachment ${a.filename} exceeds the 3MB inline limit (upload sessions not yet supported).`,
-      );
-    return {
-      "@odata.type": "#microsoft.graph.fileAttachment",
-      name: a.filename,
-      contentType: a.contentType ?? "application/octet-stream",
-      contentBytes: a.content.toString("base64"),
-      ...(a.cid ? { isInline: true, contentId: a.cid } : {}),
-    };
-  });
+const isLargeAttachment = (a: OutgoingAttachment): boolean =>
+  a.content.length >= GRAPH_INLINE_ATTACHMENT_LIMIT;
+
+/** Serialize one outgoing attachment as a Graph inline `fileAttachment` resource (≤3MB). */
+function graphFileAttachment(a: OutgoingAttachment): Record<string, unknown> {
+  return {
+    "@odata.type": "#microsoft.graph.fileAttachment",
+    name: a.filename,
+    contentType: a.contentType ?? "application/octet-stream",
+    contentBytes: a.content.toString("base64"),
+    ...(a.cid ? { isInline: true, contentId: a.cid } : {}),
+  };
 }
 
 interface GraphMessage {
@@ -128,6 +127,13 @@ export class GraphMailConnector implements MailConnector {
     body: string,
     opts?: MailSendOpts,
   ): Promise<void> {
+    // The sendMail action can't carry >3MB attachments (they need an upload
+    // session against a saved message), so route those via a draft + send.
+    if (opts?.attachments?.some(isLargeAttachment)) {
+      const draft = await this.createDraft(to, subject, body, opts);
+      await this.sendDraft(draft.id);
+      return;
+    }
     const h = await this.headers();
     const html = assembleHtml(body, this.signature);
     const message: Record<string, unknown> = {
@@ -139,7 +145,8 @@ export class GraphMailConnector implements MailConnector {
       message.ccRecipients = opts.cc.map((addr) => ({ emailAddress: { address: addr } }));
     if (opts?.bcc?.length)
       message.bccRecipients = opts.bcc.map((addr) => ({ emailAddress: { address: addr } }));
-    if (opts?.attachments?.length) message.attachments = graphAttachments(opts.attachments);
+    if (opts?.attachments?.length)
+      message.attachments = opts.attachments.map((a) => graphFileAttachment(a));
     const res = await fetch(`${this.base}/sendMail`, {
       method: "POST",
       headers: h,
@@ -166,7 +173,12 @@ export class GraphMailConnector implements MailConnector {
       message.ccRecipients = opts.cc.map((addr) => ({ emailAddress: { address: addr } }));
     if (opts?.bcc?.length)
       message.bccRecipients = opts.bcc.map((addr) => ({ emailAddress: { address: addr } }));
-    if (opts?.attachments?.length) message.attachments = graphAttachments(opts.attachments);
+    // Small attachments ride along in the create call; large ones are uploaded
+    // to the saved draft afterward via an upload session.
+    const attachments = opts?.attachments ?? [];
+    const large = attachments.filter(isLargeAttachment);
+    const small = attachments.filter((a) => !isLargeAttachment(a));
+    if (small.length) message.attachments = small.map((a) => graphFileAttachment(a));
     const res = await fetch(`${this.base}/messages`, {
       method: "POST",
       headers: h,
@@ -180,8 +192,14 @@ export class GraphMailConnector implements MailConnector {
       toRecipients?: { emailAddress?: { address?: string } }[];
       receivedDateTime?: string;
     };
+    const id = data.id ?? "";
+    for (const att of large) {
+      if (!id)
+        throw new Error("Graph createDraft: no draft id returned; cannot upload attachment.");
+      await this.uploadLargeAttachment(id, att);
+    }
     return {
-      id: data.id ?? "",
+      id,
       account: this.account,
       subject: data.subject ?? subject,
       from: this.account,
@@ -190,6 +208,52 @@ export class GraphMailConnector implements MailConnector {
       snippet: body.slice(0, 100),
       isRead: true,
     };
+  }
+
+  /**
+   * Attach a file larger than the inline limit to a saved message via a Graph
+   * upload session: open the session, then PUT the bytes in 320-KiB-aligned
+   * chunks. The upload URL is pre-authorized, so no auth header is sent on the PUTs.
+   */
+  private async uploadLargeAttachment(messageId: string, att: OutgoingAttachment): Promise<void> {
+    const h = await this.headers();
+    const total = att.content.length;
+    const sessionRes = await fetch(
+      `${this.base}/messages/${encodeURIComponent(messageId)}/attachments/createUploadSession`,
+      {
+        method: "POST",
+        headers: h,
+        body: JSON.stringify({
+          AttachmentItem: {
+            attachmentType: "file",
+            name: att.filename,
+            size: total,
+            contentType: att.contentType ?? "application/octet-stream",
+            ...(att.cid ? { isInline: true, contentId: att.cid } : {}),
+          },
+        }),
+      },
+    );
+    if (!sessionRes.ok)
+      throw new Error(
+        `Graph createUploadSession: ${String(sessionRes.status)} ${await sessionRes.text()}`,
+      );
+    const { uploadUrl } = (await sessionRes.json()) as { uploadUrl?: string };
+    if (!uploadUrl) throw new Error("Graph createUploadSession: no uploadUrl returned.");
+
+    for (let start = 0; start < total; start += GRAPH_UPLOAD_CHUNK) {
+      const end = Math.min(start + GRAPH_UPLOAD_CHUNK, total);
+      const chunk = att.content.subarray(start, end);
+      const putRes = await fetchWithTimeout(uploadUrl, {
+        method: "PUT",
+        headers: { "Content-Range": `bytes ${String(start)}-${String(end - 1)}/${String(total)}` },
+        body: chunk,
+      });
+      if (!putRes.ok)
+        throw new Error(
+          `Graph attachment upload (${att.filename}): ${String(putRes.status)} ${await putRes.text()}`,
+        );
+    }
   }
 
   async sendDraft(id: string): Promise<void> {
@@ -207,11 +271,15 @@ export class GraphMailConnector implements MailConnector {
     attachments: readonly OutgoingAttachment[],
   ): Promise<void> {
     const h = await this.headers();
-    for (const att of graphAttachments(attachments)) {
+    for (const att of attachments) {
+      if (isLargeAttachment(att)) {
+        await this.uploadLargeAttachment(draftId, att);
+        continue;
+      }
       const res = await fetch(`${this.base}/messages/${draftId}/attachments`, {
         method: "POST",
         headers: h,
-        body: JSON.stringify(att),
+        body: JSON.stringify(graphFileAttachment(att)),
       });
       if (!res.ok)
         throw new Error(`Graph addAttachment: ${String(res.status)} ${await res.text()}`);
