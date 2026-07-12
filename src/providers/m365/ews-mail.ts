@@ -157,8 +157,7 @@ export class EwsMailConnector implements MailConnector {
         : ("html" as const);
 
     const fileAttachments = (m ? dig(m, "Attachments", "FileAttachment") : undefined) as
-      | Record<string, unknown>[]
-      | undefined;
+      Record<string, unknown>[] | undefined;
     const attachments: MailAttachment[] = (fileAttachments ?? []).map((a) => ({
       id: str(dig(a, "AttachmentId", "@_Id")),
       name: str(a.Name),
@@ -389,8 +388,7 @@ export class EwsMailConnector implements MailConnector {
     for (const key of Object.keys(body)) {
       const response = body[key] as Record<string, unknown>;
       const responseMessages = dig(response, "ResponseMessages") as
-        | Record<string, unknown>
-        | undefined;
+        Record<string, unknown> | undefined;
       if (!responseMessages) continue;
 
       for (const rmKey of Object.keys(responseMessages)) {
@@ -398,8 +396,7 @@ export class EwsMailConnector implements MailConnector {
         // FindItem has RootFolder > Items > Message
         const rootFolder = rm.RootFolder as Record<string, unknown> | undefined;
         const items = (rootFolder ? dig(rootFolder, "Items") : dig(rm, "Items")) as
-          | Record<string, unknown>
-          | undefined;
+          Record<string, unknown> | undefined;
         if (!items) continue;
 
         const messages = items.Message;

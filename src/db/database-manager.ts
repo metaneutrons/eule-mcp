@@ -120,8 +120,7 @@ export class DatabaseManager {
     this.db.exec("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)");
 
     const row = this.db.prepare("SELECT MAX(version) as v FROM schema_version").get() as
-      | { v: number | null }
-      | undefined;
+      { v: number | null } | undefined;
     const currentVersion = row?.v ?? -1;
 
     for (let i = currentVersion + 1; i < MIGRATIONS.length; i++) {
