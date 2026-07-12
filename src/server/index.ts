@@ -11,6 +11,8 @@ import { renderMail } from "../renderer/index.js";
 import { setLogOutput, logger } from "../utils/logger.js";
 import { cachedFileRead } from "../utils/file-cache.js";
 import { securePath, secureReadPath } from "../utils/path-sandbox.js";
+import { resolveAttachmentPaths } from "../utils/outgoing-attachments.js";
+import { extractAttachmentText } from "../utils/attachment-extract.js";
 
 setLogOutput("stderr");
 import type { ApiTier, MailMessage, CalendarEvent } from "../types/index.js";
@@ -319,10 +321,14 @@ server.tool(
       };
     try {
       const msg = await connector.getMessage(id);
-      const attachInfo =
-        msg.attachments.length > 0
-          ? `\nAttachments:\n${msg.attachments.map((a) => `  - ${a.name} (${String(Math.round(a.size / 1024))}KB, ${a.contentType}) ID: ${a.id}`).join("\n")}`
-          : "";
+      const realAtt = msg.attachments.filter((a) => !a.isInline);
+      const inlineAtt = msg.attachments.filter((a) => a.isInline);
+      const fmtAtt = (a: (typeof msg.attachments)[number]): string =>
+        `  - ${a.name} (${String(Math.round(a.size / 1024))}KB, ${a.contentType}) ID: ${a.id}`;
+      const attachInfo = [
+        realAtt.length > 0 ? `\nAttachments:\n${realAtt.map(fmtAtt).join("\n")}` : "",
+        inlineAtt.length > 0 ? `\nInline images:\n${inlineAtt.map(fmtAtt).join("\n")}` : "",
+      ].join("");
       const header = [
         `From: ${msg.from}`,
         `To: ${msg.to.join(", ")}`,
@@ -410,8 +416,26 @@ server.tool(
     signature: z.boolean().optional().describe("Include signature (default: true)"),
     cc: z.string().optional().describe("CC recipient(s), comma-separated"),
     bcc: z.string().optional().describe("BCC recipient(s), comma-separated"),
+    attachments: z
+      .array(z.string())
+      .optional()
+      .describe(
+        "File paths to attach (within ~/Downloads, ~/Documents, or ~/Desktop). Not supported on reply/forward for the EWS tier.",
+      ),
   },
-  async ({ to, subject, body, role, account, reply_to, forward_id, signature, cc, bcc }) => {
+  async ({
+    to,
+    subject,
+    body,
+    role,
+    account,
+    reply_to,
+    forward_id,
+    signature,
+    cc,
+    bcc,
+    attachments,
+  }) => {
     const connector = account
       ? registry.getMailConnectorForAccount(account)
       : registry.getMailConnectors(role)[0];
@@ -428,24 +452,38 @@ server.tool(
       const opts = {
         cc: cc?.split(",").map((s) => s.trim()),
         bcc: bcc?.split(",").map((s) => s.trim()),
+        attachments: attachments?.length ? resolveAttachmentPaths(attachments) : undefined,
       };
+      const attachNote = opts.attachments?.length
+        ? ` with ${String(opts.attachments.length)} attachment(s)`
+        : "";
       if (reply_to) {
         await connector.replyToMessage(reply_to, body, opts);
         return {
-          content: [{ type: "text" as const, text: `✅ Reply sent from ${connector.account}` }],
+          content: [
+            { type: "text" as const, text: `✅ Reply sent from ${connector.account}${attachNote}` },
+          ],
         };
       }
       if (forward_id) {
-        await connector.forwardMessage(forward_id, recipients, body);
+        await connector.forwardMessage(forward_id, recipients, body, opts);
         return {
           content: [
-            { type: "text" as const, text: `✅ Forwarded from ${connector.account} to ${to}` },
+            {
+              type: "text" as const,
+              text: `✅ Forwarded from ${connector.account} to ${to}${attachNote}`,
+            },
           ],
         };
       }
       await connector.sendMessage(recipients, subject ?? "(no subject)", body, opts);
       return {
-        content: [{ type: "text" as const, text: `✅ Sent from ${connector.account} to ${to}` }],
+        content: [
+          {
+            type: "text" as const,
+            text: `✅ Sent from ${connector.account} to ${to}${attachNote}`,
+          },
+        ],
       };
     } catch (err) {
       return {
@@ -476,8 +514,12 @@ server.tool(
     signature: z.boolean().optional().describe("Include signature (default: true)"),
     cc: z.string().optional().describe("CC recipient(s), comma-separated"),
     bcc: z.string().optional().describe("BCC recipient(s), comma-separated"),
+    attachments: z
+      .array(z.string())
+      .optional()
+      .describe("File paths to attach (within ~/Downloads, ~/Documents, or ~/Desktop)."),
   },
-  async ({ to, subject, body, role, account, signature, cc, bcc }) => {
+  async ({ to, subject, body, role, account, signature, cc, bcc, attachments }) => {
     const connectors = registry.getMailConnectors(role);
     const c = account ? connectors.find((cc) => cc.account === account) : connectors[0];
     if (!c)
@@ -492,18 +534,28 @@ server.tool(
       };
     const savedSig = c.signature;
     if (signature === false) c.signature = undefined;
-    const recipients = to.split(",").map((s) => s.trim());
-    const opts = {
-      cc: cc?.split(",").map((s) => s.trim()),
-      bcc: bcc?.split(",").map((s) => s.trim()),
-    };
-    const draft = await c.createDraft(recipients, subject, body, opts);
-    c.signature = savedSig;
-    return {
-      content: [
-        { type: "text" as const, text: `📝 Draft created: "${subject}" → ${to}\nID: ${draft.id}` },
-      ],
-    };
+    try {
+      const recipients = to.split(",").map((s) => s.trim());
+      const opts = {
+        cc: cc?.split(",").map((s) => s.trim()),
+        bcc: bcc?.split(",").map((s) => s.trim()),
+        attachments: attachments?.length ? resolveAttachmentPaths(attachments) : undefined,
+      };
+      const draft = await c.createDraft(recipients, subject, body, opts);
+      const attachNote = opts.attachments?.length
+        ? ` (${String(opts.attachments.length)} attachment(s))`
+        : "";
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `📝 Draft created: "${subject}" → ${to}${attachNote}\nID: ${draft.id}`,
+          },
+        ],
+      };
+    } finally {
+      c.signature = savedSig;
+    }
   },
 );
 
@@ -581,17 +633,45 @@ server.tool(
 );
 
 // --- mail_attachment_get tool ---
+/** Max bytes returned inline as an image content block (base64 bloats the payload). */
+const MAX_INLINE_IMAGE_BYTES = 5 * 1024 * 1024;
+/** Max characters of extracted attachment text returned to the model. */
+const MAX_ATTACHMENT_TEXT_CHARS = 20000;
+
+const IMAGE_MIME: Record<string, string> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+};
+
+/** Return the image MIME type for a filename, or undefined if it isn't a supported image. */
+function guessImageMime(filename: string): string | undefined {
+  const ext = filename.slice(filename.lastIndexOf(".") + 1).toLowerCase();
+  return IMAGE_MIME[ext];
+}
+
 server.tool(
   "mail_attachment_get",
-  "Download an email attachment to disk",
+  "Fetch an email attachment: save it to disk (default), extract its text, or return an image inline",
   {
     messageId: z.string().describe("Message ID"),
     attachmentId: z.string().describe("Attachment ID (from mail_read)"),
     account: z.string().describe("Account email address"),
-    name: z.string().describe("Filename for saving"),
-    path: z.string().optional().describe("Custom save path (default: ~/.eule/attachments/)"),
+    name: z.string().describe("Attachment filename (used for saving and type detection)"),
+    mode: z
+      .enum(["save", "text", "inline"])
+      .optional()
+      .describe(
+        "save=download to disk (default); text=extract readable text (PDF/Office/etc.); inline=return an image so the model can see it",
+      ),
+    path: z
+      .string()
+      .optional()
+      .describe("Custom save path for mode=save (default: ~/.eule/attachments/)"),
   },
-  async ({ messageId, attachmentId, account, name, path: customPath }) => {
+  async ({ messageId, attachmentId, account, name, mode = "save", path: customPath }) => {
     const connector = registry.getMailConnectorForAccount(account);
     if (!connector)
       return {
@@ -600,6 +680,50 @@ server.tool(
       };
     try {
       const data = await connector.downloadAttachment(messageId, attachmentId);
+
+      if (mode === "inline") {
+        const mimeType = guessImageMime(name);
+        if (!mimeType)
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `⚠️ ${name} is not an image. Use mode="text" to extract its content, or mode="save" to download it.`,
+              },
+            ],
+            isError: true,
+          };
+        if (data.length > MAX_INLINE_IMAGE_BYTES)
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `⚠️ ${name} is ${String(Math.round(data.length / 1024 / 1024))}MB — too large to inline. Use mode="save".`,
+              },
+            ],
+            isError: true,
+          };
+        return {
+          content: [{ type: "image" as const, data: data.toString("base64"), mimeType }],
+        };
+      }
+
+      if (mode === "text") {
+        const { text, method } = extractAttachmentText(data, name);
+        const clipped =
+          text.length > MAX_ATTACHMENT_TEXT_CHARS
+            ? `${text.slice(0, MAX_ATTACHMENT_TEXT_CHARS)}\n\n…[truncated ${String(text.length - MAX_ATTACHMENT_TEXT_CHARS)} chars]`
+            : text;
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `📄 ${name} (extracted via ${method})\n\n${clipped}`,
+            },
+          ],
+        };
+      }
+
       const { mkdirSync, writeFileSync } = await import("node:fs");
       const { dir, dest } = securePath(customPath, name, `attachments/${messageId.slice(0, 32)}`);
       mkdirSync(dir, { recursive: true });

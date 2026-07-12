@@ -7,6 +7,7 @@ import type {
   MailMessageFull,
   MailAttachment,
   MailSendOpts,
+  OutgoingAttachment,
 } from "../../types/index.js";
 
 const EWS_URL = "https://outlook.office365.com/EWS/Exchange.asmx";
@@ -158,12 +159,17 @@ export class EwsMailConnector implements MailConnector {
 
     const fileAttachments = (m ? dig(m, "Attachments", "FileAttachment") : undefined) as
       Record<string, unknown>[] | undefined;
-    const attachments: MailAttachment[] = (fileAttachments ?? []).map((a) => ({
-      id: str(dig(a, "AttachmentId", "@_Id")),
-      name: str(a.Name),
-      size: parseInt(str(a.Size) || "0", 10),
-      contentType: str(a.ContentType) || "application/octet-stream",
-    }));
+    const attachments: MailAttachment[] = (fileAttachments ?? []).map((a) => {
+      const contentId = str(a.ContentId);
+      return {
+        id: str(dig(a, "AttachmentId", "@_Id")),
+        name: str(a.Name),
+        size: parseInt(str(a.Size) || "0", 10),
+        contentType: str(a.ContentType) || "application/octet-stream",
+        isInline: str(a.IsInline) === "true",
+        ...(contentId ? { contentId } : {}),
+      };
+    });
 
     return { ...msg, body, bodyType, attachments };
   }
@@ -200,6 +206,13 @@ export class EwsMailConnector implements MailConnector {
     body: string,
     opts?: MailSendOpts,
   ): Promise<void> {
+    // EWS has no way to send a typed Message with attachments in one call, so
+    // when attachments are present we save a draft, attach, then send it.
+    if (opts?.attachments?.length) {
+      const draft = await this.createDraft(to, subject, body, opts);
+      await this.sendDraft(draft.id);
+      return;
+    }
     const html = assembleHtml(body, this.signature);
     const ccXml = opts?.cc?.length
       ? `<t:CcRecipients>${opts.cc.map((addr) => `<t:Mailbox><t:EmailAddress>${escapeXml(addr)}</t:EmailAddress></t:Mailbox>`).join("")}</t:CcRecipients>`
@@ -220,6 +233,34 @@ export class EwsMailConnector implements MailConnector {
         </t:Message>
       </m:Items>
     </m:CreateItem>`);
+  }
+
+  /**
+   * Attach files to an existing draft via CreateAttachment. Each file becomes a
+   * FileAttachment; the item's ChangeKey is bumped but SendItem-by-Id still works.
+   */
+  private async addAttachments(
+    parentId: string,
+    attachments: readonly OutgoingAttachment[],
+  ): Promise<void> {
+    const parts = attachments
+      .map((a) => {
+        const cid = a.cid
+          ? `<t:IsInline>true</t:IsInline><t:ContentId>${escapeXml(a.cid)}</t:ContentId>`
+          : "<t:IsInline>false</t:IsInline>";
+        return `<t:FileAttachment>
+          <t:Name>${escapeXml(a.filename)}</t:Name>
+          <t:ContentType>${escapeXml(a.contentType ?? "application/octet-stream")}</t:ContentType>
+          ${cid}
+          <t:Content>${a.content.toString("base64")}</t:Content>
+        </t:FileAttachment>`;
+      })
+      .join("");
+    await this.post(`
+    <m:CreateAttachment>
+      <m:ParentItemId Id="${escapeXml(parentId)}"/>
+      <m:Attachments>${parts}</m:Attachments>
+    </m:CreateAttachment>`);
   }
 
   async createDraft(
@@ -248,7 +289,11 @@ export class EwsMailConnector implements MailConnector {
         </t:Message>
       </m:Items>
     </m:CreateItem>`);
-    const id = /<t:ItemId Id="([^"]+)"/.exec(String(xml))?.[1] ?? "";
+    const id = this.extractCreatedItemId(xml);
+    if (opts?.attachments?.length) {
+      if (!id) throw new Error("EWS createDraft: could not resolve draft ItemId to attach files.");
+      await this.addAttachments(id, opts.attachments);
+    }
     return {
       id,
       account: this.account,
@@ -261,6 +306,25 @@ export class EwsMailConnector implements MailConnector {
     };
   }
 
+  /** Pull the ItemId of a freshly created item from a CreateItem response. */
+  private extractCreatedItemId(data: unknown): string {
+    const body = dig(data, "Envelope", "Body") as Record<string, unknown> | undefined;
+    if (!body) return "";
+    for (const key of Object.keys(body)) {
+      const items = dig(
+        body[key],
+        "ResponseMessages",
+        "CreateItemResponseMessage",
+        "Items",
+        "Message",
+      );
+      const msg = Array.isArray(items) ? (items as unknown[])[0] : items;
+      const idNode = dig(msg, "ItemId", "@_Id");
+      if (idNode) return str(idNode);
+    }
+    return "";
+  }
+
   async sendDraft(id: string): Promise<void> {
     await this.post(`
     <m:SendItem SaveItemToFolder="true">
@@ -271,7 +335,11 @@ export class EwsMailConnector implements MailConnector {
     </m:SendItem>`);
   }
 
-  async replyToMessage(id: string, body: string, _opts?: MailSendOpts): Promise<void> {
+  async replyToMessage(id: string, body: string, opts?: MailSendOpts): Promise<void> {
+    if (opts?.attachments?.length)
+      throw new Error(
+        "EWS tier: attachments on reply are not supported — send a new message with attachments, or create a draft.",
+      );
     const html = assembleHtml(body, this.signature);
     await this.post(`
     <m:CreateItem MessageDisposition="SendAndSaveCopy">
@@ -284,7 +352,16 @@ export class EwsMailConnector implements MailConnector {
     </m:CreateItem>`);
   }
 
-  async forwardMessage(id: string, to: string[], body?: string): Promise<void> {
+  async forwardMessage(
+    id: string,
+    to: string[],
+    body?: string,
+    opts?: MailSendOpts,
+  ): Promise<void> {
+    if (opts?.attachments?.length)
+      throw new Error(
+        "EWS tier: attachments on forward are not supported — send a new message with attachments, or create a draft.",
+      );
     const toRecipients = to
       .map((addr) => `<t:Mailbox><t:EmailAddress>${escapeXml(addr)}</t:EmailAddress></t:Mailbox>`)
       .join("");

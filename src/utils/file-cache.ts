@@ -9,7 +9,7 @@ const CACHE_DIR = join(homedir(), ".eule", "cache");
 const FRESH_THRESHOLD_MS = 5 * 60 * 1000; // 5 min before metadata check
 
 /** File extensions pandoc can convert to markdown. */
-const PANDOC_FORMATS: Record<string, string> = {
+export const PANDOC_FORMATS: Record<string, string> = {
   ".docx": "docx",
   ".pptx": "pptx",
   ".odt": "odt",
@@ -32,7 +32,7 @@ interface CacheMeta {
 
 let pandocAvailable: boolean | undefined;
 
-function hasPandoc(): boolean {
+export function hasPandoc(): boolean {
   if (pandocAvailable !== undefined) return pandocAvailable;
   try {
     execFileSync("pandoc", ["--version"], { stdio: "ignore" });
@@ -47,12 +47,12 @@ function cacheKey(account: string, fileId: string): string {
   return createHash("sha256").update(`${account}:${fileId}`).digest("hex").slice(0, 16);
 }
 
-function ext(name: string): string {
+export function ext(name: string): string {
   const i = name.lastIndexOf(".");
   return i >= 0 ? name.slice(i).toLowerCase() : "";
 }
 
-function convertWithPandoc(srcPath: string, format: string): string {
+export function convertWithPandoc(srcPath: string, format: string): string {
   return execFileSync("pandoc", ["-f", format, "-t", "markdown", srcPath], {
     encoding: "utf-8",
     maxBuffer: 20 * 1024 * 1024,

@@ -1,11 +1,12 @@
 import type {
+  MailAttachment,
   MailConnector,
   MailMessage,
   MailMessageFull,
   MailSendOpts,
 } from "../../types/index.js";
 import { assembleHtml } from "../../utils/mail-html.js";
-import { mimeEncode } from "../../utils/mime.js";
+import { buildMimeMessage } from "../../utils/mime-build.js";
 import {
   assertNoHeaderInjection,
   assertResponseSize,
@@ -25,9 +26,10 @@ interface GmailMsg {
 }
 interface GmailPayload {
   headers?: { name?: string; value?: string }[];
-  body?: { data?: string };
+  body?: { data?: string; attachmentId?: string; size?: number };
   parts?: GmailPayload[];
   mimeType?: string;
+  filename?: string;
 }
 interface GmailListItem {
   id?: string;
@@ -88,7 +90,7 @@ export class GoogleMailConnector implements MailConnector {
       ...this.mapSummary(msg),
       body,
       bodyType: "html",
-      attachments: extractAttachments(msg.payload, id),
+      attachments: extractAttachments(msg.payload),
     };
   }
 
@@ -115,11 +117,17 @@ export class GoogleMailConnector implements MailConnector {
     opts?: MailSendOpts,
   ): Promise<void> {
     const h = await this.headers();
-    const html = assembleHtml(body, this.signature);
-    let mime = `From: ${this.fromHeader}\r\nTo: ${assertSafeAddresses(to, "To").join(", ")}`;
-    if (opts?.cc?.length) mime += `\r\nCc: ${assertSafeAddresses(opts.cc, "Cc").join(", ")}`;
-    if (opts?.bcc?.length) mime += `\r\nBcc: ${assertSafeAddresses(opts.bcc, "Bcc").join(", ")}`;
-    mime += `\r\nSubject: ${mimeEncode(subject)}\r\nContent-Type: text/html; charset=utf-8\r\n\r\n${html}`;
+    const mime = buildMimeMessage(
+      {
+        from: this.fromHeader,
+        to: assertSafeAddresses(to, "To").join(", "),
+        cc: opts?.cc?.length ? assertSafeAddresses(opts.cc, "Cc").join(", ") : undefined,
+        bcc: opts?.bcc?.length ? assertSafeAddresses(opts.bcc, "Bcc").join(", ") : undefined,
+        subject,
+      },
+      assembleHtml(body, this.signature),
+      opts?.attachments,
+    );
     const raw = Buffer.from(mime).toString("base64url");
     const res = await fetch(`${BASE}/messages/send`, {
       method: "POST",
@@ -136,11 +144,17 @@ export class GoogleMailConnector implements MailConnector {
     opts?: MailSendOpts,
   ): Promise<MailMessage> {
     const h = await this.headers();
-    const html = assembleHtml(body, this.signature);
-    let mime = `From: ${this.fromHeader}\r\nTo: ${assertSafeAddresses(to, "To").join(", ")}`;
-    if (opts?.cc?.length) mime += `\r\nCc: ${assertSafeAddresses(opts.cc, "Cc").join(", ")}`;
-    if (opts?.bcc?.length) mime += `\r\nBcc: ${assertSafeAddresses(opts.bcc, "Bcc").join(", ")}`;
-    mime += `\r\nSubject: ${mimeEncode(subject)}\r\nContent-Type: text/html; charset=utf-8\r\n\r\n${html}`;
+    const mime = buildMimeMessage(
+      {
+        from: this.fromHeader,
+        to: assertSafeAddresses(to, "To").join(", "),
+        cc: opts?.cc?.length ? assertSafeAddresses(opts.cc, "Cc").join(", ") : undefined,
+        bcc: opts?.bcc?.length ? assertSafeAddresses(opts.bcc, "Bcc").join(", ") : undefined,
+        subject,
+      },
+      assembleHtml(body, this.signature),
+      opts?.attachments,
+    );
     const raw = Buffer.from(mime).toString("base64url");
     const res = await fetch(`${BASE}/drafts`, {
       method: "POST",
@@ -177,11 +191,20 @@ export class GoogleMailConnector implements MailConnector {
     if (!orig) throw new Error("Original not found");
     const from = assertNoHeaderInjection(getHeader(orig.payload, "From") ?? "", "To");
     const subject = getHeader(orig.payload, "Subject") ?? "";
-    const html = assembleHtml(body, this.signature);
-    let mime = `From: ${this.fromHeader}\r\nTo: ${from}`;
-    if (opts?.cc?.length) mime += `\r\nCc: ${assertSafeAddresses(opts.cc, "Cc").join(", ")}`;
-    if (opts?.bcc?.length) mime += `\r\nBcc: ${assertSafeAddresses(opts.bcc, "Bcc").join(", ")}`;
-    mime += `\r\nSubject: ${mimeEncode(`Re: ${subject}`)}\r\nIn-Reply-To: ${getHeader(orig.payload, "Message-ID") ?? ""}\r\nReferences: ${getHeader(orig.payload, "Message-ID") ?? ""}\r\nContent-Type: text/html; charset=utf-8\r\n\r\n${html}`;
+    const msgId = getHeader(orig.payload, "Message-ID") ?? "";
+    const mime = buildMimeMessage(
+      {
+        from: this.fromHeader,
+        to: from,
+        cc: opts?.cc?.length ? assertSafeAddresses(opts.cc, "Cc").join(", ") : undefined,
+        bcc: opts?.bcc?.length ? assertSafeAddresses(opts.bcc, "Bcc").join(", ") : undefined,
+        subject: `Re: ${subject}`,
+        inReplyTo: msgId || undefined,
+        references: msgId || undefined,
+      },
+      assembleHtml(body, this.signature),
+      opts?.attachments,
+    );
     const raw = Buffer.from(mime).toString("base64url");
     const res = await fetch(`${BASE}/messages/send`, {
       method: "POST",
@@ -191,7 +214,12 @@ export class GoogleMailConnector implements MailConnector {
     if (!res.ok) throw new Error(`Gmail reply: ${String(res.status)}`);
   }
 
-  async forwardMessage(id: string, to: string[], body?: string): Promise<void> {
+  async forwardMessage(
+    id: string,
+    to: string[],
+    body?: string,
+    opts?: MailSendOpts,
+  ): Promise<void> {
     const orig = await this.getMessage(id);
     const origBody = orig.bodyType === "html" ? orig.body : `<pre>${orig.body}</pre>`;
     const html = assembleHtml(
@@ -199,10 +227,19 @@ export class GoogleMailConnector implements MailConnector {
       this.signature,
       `<p><b>Von:</b> ${orig.from}<br><b>Betreff:</b> ${orig.subject}</p>${origBody}`,
     );
-    const raw = Buffer.from(
-      `To: ${assertSafeAddresses(to, "To").join(", ")}\r\nSubject: ${mimeEncode(`Fwd: ${orig.subject}`)}\r\nContent-Type: text/html; charset=utf-8\r\n\r\n${html}`,
-    ).toString("base64url");
     const h = await this.headers();
+    const mime = buildMimeMessage(
+      {
+        from: this.fromHeader,
+        to: assertSafeAddresses(to, "To").join(", "),
+        cc: opts?.cc?.length ? assertSafeAddresses(opts.cc, "Cc").join(", ") : undefined,
+        bcc: opts?.bcc?.length ? assertSafeAddresses(opts.bcc, "Bcc").join(", ") : undefined,
+        subject: `Fwd: ${orig.subject}`,
+      },
+      html,
+      opts?.attachments,
+    );
+    const raw = Buffer.from(mime).toString("base64url");
     const res = await fetch(`${BASE}/messages/send`, {
       method: "POST",
       headers: { ...h, "Content-Type": "application/json" },
@@ -293,21 +330,31 @@ function extractBody(payload: GmailPayload | undefined): string {
   return "";
 }
 
-function extractAttachments(
-  payload: GmailPayload | undefined,
-  msgId: string,
-): { id: string; name: string; size: number; contentType: string }[] {
-  const result: { id: string; name: string; size: number; contentType: string }[] = [];
-  for (const part of payload?.parts ?? []) {
-    const name = part.headers?.find((h) => h.name?.toLowerCase() === "content-disposition")?.value;
-    if (part.body && !part.body.data && name?.includes("attachment")) {
+/**
+ * Walk the payload tree (Gmail nests attachments inside multipart/* parts) and
+ * collect every part that carries an `attachmentId`. The id we surface is the
+ * real Gmail `body.attachmentId`, which is exactly what `downloadAttachment`
+ * feeds to `/messages/{id}/attachments/{attachmentId}`.
+ */
+function extractAttachments(payload: GmailPayload | undefined): MailAttachment[] {
+  const result: MailAttachment[] = [];
+  const walk = (part: GmailPayload | undefined): void => {
+    if (!part) return;
+    const attachmentId = part.body?.attachmentId;
+    if (attachmentId) {
+      const disposition = getHeader(part, "Content-Disposition") ?? "";
+      const contentId = getHeader(part, "Content-ID")?.replace(/[<>]/g, "");
       result.push({
-        id: `${msgId}/${part.mimeType ?? ""}`,
-        name: name.split("filename=")[1]?.replace(/"/g, "") ?? "attachment",
-        size: 0,
-        contentType: part.mimeType ?? "",
+        id: attachmentId,
+        name: part.filename ?? `attachment-${String(result.length + 1)}`,
+        size: part.body?.size ?? 0,
+        contentType: part.mimeType ?? "application/octet-stream",
+        isInline: disposition.toLowerCase().includes("inline") || Boolean(contentId),
+        ...(contentId ? { contentId } : {}),
       });
     }
-  }
+    for (const child of part.parts ?? []) walk(child);
+  };
+  walk(payload);
   return result;
 }

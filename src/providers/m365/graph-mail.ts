@@ -3,11 +3,15 @@ import type {
   MailMessage,
   MailMessageFull,
   MailSendOpts,
+  OutgoingAttachment,
 } from "../../types/index.js";
 import { assembleHtml } from "../../utils/mail-html.js";
 import { assertResponseSize, fetchWithTimeout } from "../../utils/security.js";
 
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
+
+/** Graph rejects inline fileAttachment payloads above ~3MB; larger needs an upload session. */
+const GRAPH_INLINE_ATTACHMENT_LIMIT = 3 * 1024 * 1024;
 
 interface GraphAttachment {
   id?: string;
@@ -15,6 +19,25 @@ interface GraphAttachment {
   size?: number;
   contentType?: string;
   contentBytes?: string;
+  isInline?: boolean;
+  contentId?: string;
+}
+
+/** Serialize outgoing attachments as Graph inline `fileAttachment` resources. */
+function graphAttachments(attachments?: readonly OutgoingAttachment[]): Record<string, unknown>[] {
+  return (attachments ?? []).map((a) => {
+    if (a.content.length > GRAPH_INLINE_ATTACHMENT_LIMIT)
+      throw new Error(
+        `Graph: attachment ${a.filename} exceeds the 3MB inline limit (upload sessions not yet supported).`,
+      );
+    return {
+      "@odata.type": "#microsoft.graph.fileAttachment",
+      name: a.filename,
+      contentType: a.contentType ?? "application/octet-stream",
+      contentBytes: a.content.toString("base64"),
+      ...(a.cid ? { isInline: true, contentId: a.cid } : {}),
+    };
+  });
 }
 
 interface GraphMessage {
@@ -74,6 +97,8 @@ export class GraphMailConnector implements MailConnector {
         name: a.name ?? "",
         size: a.size ?? 0,
         contentType: a.contentType ?? "application/octet-stream",
+        isInline: a.isInline ?? false,
+        ...(a.contentId ? { contentId: a.contentId } : {}),
       })),
     };
   }
@@ -114,6 +139,7 @@ export class GraphMailConnector implements MailConnector {
       message.ccRecipients = opts.cc.map((addr) => ({ emailAddress: { address: addr } }));
     if (opts?.bcc?.length)
       message.bccRecipients = opts.bcc.map((addr) => ({ emailAddress: { address: addr } }));
+    if (opts?.attachments?.length) message.attachments = graphAttachments(opts.attachments);
     const res = await fetch(`${this.base}/sendMail`, {
       method: "POST",
       headers: h,
@@ -140,6 +166,7 @@ export class GraphMailConnector implements MailConnector {
       message.ccRecipients = opts.cc.map((addr) => ({ emailAddress: { address: addr } }));
     if (opts?.bcc?.length)
       message.bccRecipients = opts.bcc.map((addr) => ({ emailAddress: { address: addr } }));
+    if (opts?.attachments?.length) message.attachments = graphAttachments(opts.attachments);
     const res = await fetch(`${this.base}/messages`, {
       method: "POST",
       headers: h,
@@ -174,7 +201,24 @@ export class GraphMailConnector implements MailConnector {
     if (!res.ok) throw new Error(`Graph sendDraft: ${String(res.status)} ${await res.text()}`);
   }
 
-  async replyToMessage(id: string, body: string, _opts?: MailSendOpts): Promise<void> {
+  /** POST each attachment to an existing draft's attachments collection. */
+  private async postAttachments(
+    draftId: string,
+    attachments: readonly OutgoingAttachment[],
+  ): Promise<void> {
+    const h = await this.headers();
+    for (const att of graphAttachments(attachments)) {
+      const res = await fetch(`${this.base}/messages/${draftId}/attachments`, {
+        method: "POST",
+        headers: h,
+        body: JSON.stringify(att),
+      });
+      if (!res.ok)
+        throw new Error(`Graph addAttachment: ${String(res.status)} ${await res.text()}`);
+    }
+  }
+
+  async replyToMessage(id: string, body: string, opts?: MailSendOpts): Promise<void> {
     const h = await this.headers();
     // Create reply draft (Graph includes quoted original automatically)
     const r1 = await fetch(`${this.base}/messages/${encodeURIComponent(id)}/createReply`, {
@@ -192,6 +236,7 @@ export class GraphMailConnector implements MailConnector {
       body: JSON.stringify({ body: { contentType: "HTML", content: html } }),
     });
     if (!r2.ok) throw new Error(`Graph updateReply: ${String(r2.status)} ${await r2.text()}`);
+    if (opts?.attachments?.length) await this.postAttachments(draft.id, opts.attachments);
     // Send
     const r3 = await fetch(`${this.base}/messages/${draft.id}/send`, {
       method: "POST",
@@ -200,7 +245,12 @@ export class GraphMailConnector implements MailConnector {
     if (!r3.ok) throw new Error(`Graph sendReply: ${String(r3.status)} ${await r3.text()}`);
   }
 
-  async forwardMessage(id: string, to: string[], body?: string): Promise<void> {
+  async forwardMessage(
+    id: string,
+    to: string[],
+    body?: string,
+    opts?: MailSendOpts,
+  ): Promise<void> {
     const h = await this.headers();
     // Create forward draft (Graph includes original)
     const r1 = await fetch(`${this.base}/messages/${encodeURIComponent(id)}/createForward`, {
@@ -222,6 +272,7 @@ export class GraphMailConnector implements MailConnector {
       }),
     });
     if (!r2.ok) throw new Error(`Graph updateForward: ${String(r2.status)} ${await r2.text()}`);
+    if (opts?.attachments?.length) await this.postAttachments(draft.id, opts.attachments);
     // Send
     const r3 = await fetch(`${this.base}/messages/${draft.id}/send`, {
       method: "POST",
