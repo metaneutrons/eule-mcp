@@ -118,10 +118,11 @@ export class ConnectorRegistry {
     const oauth = cfg.oauth;
     const tokens = loadTokens();
 
-    // Find the connector config for this account.
+    // Find the connector config for this account. Match the authenticating
+    // account OR a shared mailbox address, so a caller can request either.
     for (const r of cfg.roles) {
       for (const mc of r.connectors.mail ?? []) {
-        if (mc.account !== account) continue;
+        if (mc.account !== account && mc.mailbox !== account) continue;
 
         if (mc.type === "imap") {
           return new ImapMailConnector(mc.account, {
@@ -146,18 +147,22 @@ export class ConnectorRegistry {
           return c;
         }
 
-        const token = tokens.accounts[account];
+        // The token is stored under the authenticating account (mc.account),
+        // not the shared address; target the shared mailbox via mc.mailbox.
+        const token = tokens.accounts[mc.account];
         if (!token) return undefined;
-        const getToken = () => getAccessToken(account, oauth);
+        const target = mc.mailbox ?? mc.account;
+        const isShared = !!mc.mailbox;
+        const getToken = () => getAccessToken(mc.account, oauth);
 
         switch (token.tier) {
           case "graph":
-            return new GraphMailConnector(account, getToken);
+            return new GraphMailConnector(target, getToken, isShared);
           case "ews":
-            return new EwsMailConnector(account, getToken);
+            return new EwsMailConnector(target, getToken, isShared);
           case "imap":
-            return new ImapMailConnector(account, {
-              account,
+            return new ImapMailConnector(mc.account, {
+              account: mc.account,
               host: "outlook.office365.com",
               smtpHost: "smtp.office365.com",
               auth: "oauth",
@@ -207,16 +212,20 @@ export class ConnectorRegistry {
           continue;
         }
 
-        // M365 provider.
+        // M365 provider. For a shared/delegate mailbox authenticate as the
+        // configured account but TARGET cc.mailbox (else the connector returns
+        // the auth user's own calendar). Mirrors getMailConnectors.
         const token = tokens.accounts[cc.account];
         if (!token) continue;
+        const target = cc.mailbox ?? cc.account;
+        const isShared = !!cc.mailbox;
         const getToken = () => getAccessToken(cc.account, oauth);
         switch (token.tier) {
           case "graph":
-            connectors.push(new GraphCalendarConnector(cc.account, getToken, !!cc.mailbox));
+            connectors.push(new GraphCalendarConnector(target, getToken, isShared));
             break;
           case "ews":
-            connectors.push(new EwsCalendarConnector(cc.account, getToken));
+            connectors.push(new EwsCalendarConnector(target, getToken, isShared));
             break;
         }
       }
@@ -262,13 +271,15 @@ export class ConnectorRegistry {
 
         const token = tokens.accounts[cc.account];
         if (!token) continue;
+        const target = cc.mailbox ?? cc.account;
+        const isShared = !!cc.mailbox;
         const getToken = () => getAccessToken(cc.account, oauth);
         switch (token.tier) {
           case "graph":
-            connectors.push(new GraphContactConnector(cc.account, getToken, !!cc.mailbox));
+            connectors.push(new GraphContactConnector(target, getToken, isShared));
             break;
           case "ews":
-            connectors.push(new EwsContactConnector(cc.account, getToken));
+            connectors.push(new EwsContactConnector(target, getToken, isShared));
             break;
         }
       }

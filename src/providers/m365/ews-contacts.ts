@@ -46,7 +46,18 @@ export class EwsContactConnector implements ContactConnector {
   constructor(
     readonly account: string,
     private readonly getToken: () => Promise<string | null>,
+    private readonly shared = false,
   ) {}
+
+  /** DistinguishedFolderId, with a Mailbox element for shared/delegate mailboxes
+   *  (mirrors EwsMailConnector.folderId) so shared contacts target that mailbox
+   *  instead of silently returning the authenticated user's own. */
+  private folderId(folder: string): string {
+    if (this.shared) {
+      return `<t:DistinguishedFolderId Id="${escapeXml(folder)}"><t:Mailbox><t:EmailAddress>${escapeXml(this.account)}</t:EmailAddress></t:Mailbox></t:DistinguishedFolderId>`;
+    }
+    return `<t:DistinguishedFolderId Id="${escapeXml(folder)}"/>`;
+  }
 
   private async post(body: string): Promise<unknown> {
     const token = await this.getToken();
@@ -68,7 +79,7 @@ export class EwsContactConnector implements ContactConnector {
       </m:ItemShape>
       <m:IndexedPageItemView MaxEntriesReturned="${String(limit)}" Offset="0" BasePoint="Beginning"/>
       <m:ParentFolderIds>
-        <t:DistinguishedFolderId Id="contacts"/>
+        ${this.folderId("contacts")}
       </m:ParentFolderIds>
     </m:FindItem>`);
 
@@ -89,7 +100,7 @@ export class EwsContactConnector implements ContactConnector {
         </t:Contains>
       </m:Restriction>
       <m:ParentFolderIds>
-        <t:DistinguishedFolderId Id="contacts"/>
+        ${this.folderId("contacts")}
       </m:ParentFolderIds>
     </m:FindItem>`);
 
@@ -100,7 +111,7 @@ export class EwsContactConnector implements ContactConnector {
     await this.post(`
     <m:CreateItem>
       <m:SavedItemFolderId>
-        <t:DistinguishedFolderId Id="contacts"/>
+        ${this.folderId("contacts")}
       </m:SavedItemFolderId>
       <m:Items>
         <t:Contact>

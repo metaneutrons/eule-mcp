@@ -53,7 +53,18 @@ export class EwsCalendarConnector implements CalendarConnector {
   constructor(
     readonly account: string,
     private readonly getToken: () => Promise<string | null>,
+    private readonly shared = false,
   ) {}
+
+  /** DistinguishedFolderId, with a Mailbox element for shared/delegate mailboxes
+   *  (mirrors EwsMailConnector.folderId) so a shared calendar targets that
+   *  mailbox instead of silently returning the authenticated user's own. */
+  private folderId(folder: string): string {
+    if (this.shared) {
+      return `<t:DistinguishedFolderId Id="${escapeXml(folder)}"><t:Mailbox><t:EmailAddress>${escapeXml(this.account)}</t:EmailAddress></t:Mailbox></t:DistinguishedFolderId>`;
+    }
+    return `<t:DistinguishedFolderId Id="${escapeXml(folder)}"/>`;
+  }
 
   private async post(body: string): Promise<unknown> {
     const token = await this.getToken();
@@ -71,7 +82,7 @@ export class EwsCalendarConnector implements CalendarConnector {
     const data = await this.post(`
     <m:FindFolder Traversal="Shallow">
       <m:FolderShape><t:BaseShape>Default</t:BaseShape></m:FolderShape>
-      <m:ParentFolderIds><t:DistinguishedFolderId Id="calendar"/></m:ParentFolderIds>
+      <m:ParentFolderIds>${this.folderId("calendar")}</m:ParentFolderIds>
     </m:FindFolder>`);
     const body = dig(
       data,
@@ -116,7 +127,7 @@ export class EwsCalendarConnector implements CalendarConnector {
       </m:ItemShape>
       <m:CalendarView StartDate="${escapeXml(start)}" EndDate="${escapeXml(end)}"/>
       <m:ParentFolderIds>
-        <t:DistinguishedFolderId Id="calendar"/>
+        ${this.folderId("calendar")}
       </m:ParentFolderIds>
     </m:FindItem>`);
 

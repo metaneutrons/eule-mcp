@@ -29,7 +29,9 @@ const DEFAULT_OAUTH: OAuthConfig = {
  */
 const REDIRECT_URI = "https://login.microsoftonline.com/common/oauth2/nativeclient";
 
-function authEndpoint(oauth: OAuthConfig): string {
+// Exported so the Playwright auto-auth path reuses the exact same endpoint +
+// param construction and can't drift back to a hardcoded v2/scope request.
+export function authEndpoint(oauth: OAuthConfig): string {
   const suffix = oauth.apiVersion === "v1" ? "oauth2/authorize" : "oauth2/v2.0/authorize";
   return `https://login.microsoftonline.com/${oauth.tenant}/${suffix}`;
 }
@@ -39,9 +41,20 @@ function deviceCodeEndpoint(oauth: OAuthConfig): string {
   return `https://login.microsoftonline.com/${oauth.tenant}/${suffix}`;
 }
 
-function tokenEndpoint(oauth: OAuthConfig): string {
+export function tokenEndpoint(oauth: OAuthConfig): string {
   const suffix = oauth.apiVersion === "v1" ? "oauth2/token" : "oauth2/v2.0/token";
   return `https://login.microsoftonline.com/${oauth.tenant}/${suffix}`;
+}
+
+/**
+ * The per-tier authorization parameter: v1 identifies the target API by
+ * `resource=`, v2 by `scope=`. Single source of truth for every flow
+ * (auth-code, refresh, device-code, auto-auth) so they can't diverge.
+ */
+export function tierAuthParam(oauth: OAuthConfig, tier: ApiTier): Record<string, string> {
+  return oauth.apiVersion === "v1"
+    ? { resource: TIER_RESOURCES[tier] }
+    : { scope: TIER_SCOPES[tier] };
 }
 
 /** Scope sets per API tier (v2.0 endpoint — `scope=`). */
@@ -69,7 +82,10 @@ export const TIER_RESOURCES: Record<ApiTier, string> = {
 export class InteractionRequiredError extends Error {
   constructor(public readonly account: string) {
     super(
-      `Re-authentication required for ${account}. Your tenant's Conditional Access policy requires a fresh login. Run auth_login to re-authenticate.`,
+      `Re-authentication required for ${account} (refresh token expired/revoked or ` +
+        `Conditional Access requires a fresh sign-in). Re-run login: ` +
+        `\`eule login --device --tier <graph|ews>\` (cross-platform), or the browser/` +
+        `webview flow for clients whose redirect URIs are broker-bound.`,
     );
     this.name = "InteractionRequiredError";
   }
@@ -152,9 +168,7 @@ export async function refreshAccessToken(
     client_id: clientId,
     grant_type: "refresh_token",
     refresh_token: token.refreshToken,
-    ...(apiVersion === "v1"
-      ? { resource: TIER_RESOURCES[token.tier] }
-      : { scope: TIER_SCOPES[token.tier] }),
+    ...tierAuthParam(endpointOauth, token.tier),
   });
 
   const res = await fetch(tokenEndpoint(endpointOauth), {
@@ -301,7 +315,7 @@ export async function authenticateAccount(
     response_type: "code",
     redirect_uri: REDIRECT_URI,
     response_mode: "query",
-    ...(oauth.apiVersion === "v1" ? { resource: scopeOrResource } : { scope: scopeOrResource }),
+    ...tierAuthParam(oauth, tier),
     state,
     code_challenge: challenge,
     code_challenge_method: "S256",
@@ -470,7 +484,7 @@ export async function authenticateAccountDeviceCode(
   // 1. Request a device + user code.
   const initBody = new URLSearchParams({
     client_id: oauth.clientId,
-    ...(isV1 ? { resource: TIER_RESOURCES[tier] } : { scope: TIER_SCOPES[tier] }),
+    ...tierAuthParam(oauth, tier),
   });
   const initRes = await fetch(deviceCodeEndpoint(oauth), {
     method: "POST",
