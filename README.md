@@ -174,6 +174,8 @@ Eule is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) serve
 
 - Node.js 22+
 - An M365 or Google Workspace account
+- For `login --capture` only: a desktop session (the `eule-helper` GUI is
+  fetched on first use — no manual install)
 
 ### Install
 
@@ -354,6 +356,7 @@ autoAuth:
 - [x] OAuth with PKCE + headless TOTP auto-auth
 - [x] Device-code login (cross-platform, no redirect URI; CA-blockable)
 - [x] Legacy v1 endpoint + per-token client-id/apiVersion (locked-down tenants)
+- [x] Webview capture helper (Rust/wry) — cross-platform, signed + notarized releases
 - [x] Multi-tier M365 support (Graph / EWS / IMAP)
 - [x] Mail tools (list, read, search, send, reply, attachments)
 - [x] HTML → Markdown rendering with thread splitting

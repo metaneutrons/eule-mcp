@@ -33,6 +33,16 @@ within a few days.
   the cloud.
 - **Resource limits.** Outbound HTTP calls have a timeout and a response-size
   cap to prevent hangs and memory exhaustion.
+- **Auth secrets bypass the model.** Access/refresh tokens and OAuth
+  authorization codes are obtained by the CLI or the native `eule-helper`
+  (device-code, or a webview that captures a broker-bound redirect) and written
+  straight to `tokens.json`; they are never returned through an MCP tool result
+  or placed in the model's context. The helper's `secret-prompt` window writes
+  the entered value to a `0600` file the same way.
+- **Helper integrity.** `eule-helper` is downloaded from this repository's
+  GitHub release and verified against its published SHA-256 before being cached
+  `0700` and executed. The macOS build is a Developer-ID-signed, notarized
+  universal binary (hardened runtime + secure timestamp).
 - **Auth debug artifacts** (DOM/screenshots of the login flow) are written only
   when `EULE_AUTH_DEBUG` is set, and then `0600`.
 

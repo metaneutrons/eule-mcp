@@ -142,8 +142,8 @@ roles:
           account: fabian@hs-hannover.de
         - id: vpdit-shared
           type: m365
-          account: vp-dit@hs-hannover.de
-          shared: true
+          account: fabian@hs-hannover.de # authenticate as yourself…
+          mailbox: vp-dit@hs-hannover.de # …read this shared/delegate mailbox
       calendar:
         - id: vpdit-cal
           type: m365
