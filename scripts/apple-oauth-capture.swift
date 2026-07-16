@@ -63,7 +63,18 @@ let verifier = randomBase64url(32)
 let challenge = base64url(Data(SHA256.hash(data: verifier.data(using: .utf8)!)))
 let state = randomBase64url(16)
 
-try? verifier.write(toFile: "\(outDir)/oauth-verifier.txt", atomically: true, encoding: .utf8)
+// The verifier + captured code together are the full token-exchange credential,
+// so write them owner-only (0600), not with the default umask (~0644). The
+// caller that redeems the code MUST unlink both files afterwards.
+func writeSecure(_ text: String, to path: String) {
+    FileManager.default.createFile(
+        atPath: path,
+        contents: text.data(using: .utf8),
+        attributes: [.posixPermissions: 0o600],
+    )
+}
+
+writeSecure(verifier, to: "\(outDir)/oauth-verifier.txt")
 
 var comps = URLComponents(string: "https://login.microsoftonline.com/common/oauth2/authorize")!
 comps.queryItems = [
@@ -90,7 +101,7 @@ final class Delegate: NSObject, WKNavigationDelegate {
             } else {
                 result = "NO_QUERY"
             }
-            try? result.write(toFile: "\(outDir)/oauth-result.txt", atomically: true, encoding: .utf8)
+            writeSecure(result, to: "\(outDir)/oauth-result.txt")
             print("CAPTURED: \(result)")
             NSApp.terminate(nil)
             return

@@ -242,7 +242,7 @@ export async function getAccessToken(
 async function exchangeCode(
   code: string,
   verifier: string,
-  scopeOrResource: string,
+  tier: ApiTier,
   oauth: OAuthConfig,
 ): Promise<AccountToken> {
   const body = new URLSearchParams({
@@ -251,7 +251,7 @@ async function exchangeCode(
     code,
     redirect_uri: REDIRECT_URI,
     code_verifier: verifier,
-    ...(oauth.apiVersion === "v1" ? { resource: scopeOrResource } : { scope: scopeOrResource }),
+    ...tierAuthParam(oauth, tier),
   });
 
   const res = await fetch(tokenEndpoint(oauth), {
@@ -308,7 +308,6 @@ export async function authenticateAccount(
 
   const { verifier, challenge } = generatePkce();
   const state = randomBytes(16).toString("hex");
-  const scopeOrResource = oauth.apiVersion === "v1" ? TIER_RESOURCES[tier] : TIER_SCOPES[tier];
 
   const params = new URLSearchParams({
     client_id: oauth.clientId,
@@ -369,7 +368,7 @@ export async function authenticateAccount(
 
           void (async () => {
             try {
-              const tokenData = await exchangeCode(code, verifier, scopeOrResource, oauth);
+              const tokenData = await exchangeCode(code, verifier, tier, oauth);
               const result: AccountToken = {
                 ...tokenData,
                 tier,

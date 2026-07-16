@@ -21,9 +21,18 @@ import {
   tierAuthParam,
   parseTokenResponse,
   refreshAccessToken,
+  authenticateAccountDeviceCode,
   loadTokens,
   InteractionRequiredError,
 } from "../src/providers/m365/auth/oauth.js";
+import { EwsCalendarConnector } from "../src/providers/m365/ews-calendar.js";
+import { EwsContactConnector } from "../src/providers/m365/ews-contacts.js";
+
+/** A minimal unsigned JWT whose payload carries a upn, for extractEmail(). */
+function fakeJwt(upn: string): string {
+  const payload = Buffer.from(JSON.stringify({ upn })).toString("base64url");
+  return `x.${payload}.y`;
+}
 
 const V1 = { clientId: "cid", tenant: "common", apiVersion: "v1" as const };
 const V2 = { clientId: "cid", tenant: "common", apiVersion: "v2" as const };
@@ -152,5 +161,127 @@ describe("refreshAccessToken", () => {
       vi.fn(async () => new Response(JSON.stringify({ error: "temporarily_unavailable" }), { status: 503 })),
     );
     expect(await refreshAccessToken("u@x.de", V1)).toBeNull();
+  });
+});
+
+describe("authenticateAccountDeviceCode", () => {
+  beforeEach(() => {
+    files = {};
+    vi.restoreAllMocks();
+  });
+
+  function deviceCodeFetch(pollResponses: Response[]) {
+    // call 0 = /devicecode init; subsequent calls = /token polls.
+    let call = 0;
+    return vi.fn(async (url: string) => {
+      if (String(url).includes("/devicecode")) {
+        call = 0;
+        return Response.json({
+          device_code: "DEV",
+          user_code: "ABC-123",
+          verification_uri: "https://microsoft.com/devicelogin",
+          expires_in: 900,
+          interval: 0.01, // 10ms — keep the poll loop fast in tests
+        });
+      }
+      return pollResponses[call++] ?? pollResponses[pollResponses.length - 1];
+    });
+  }
+
+  it("v1: init uses resource=, poll uses grant_type=device_code + code= + resource=", async () => {
+    const fetchMock = deviceCodeFetch([
+      Response.json({ access_token: fakeJwt("u@hs.de"), refresh_token: "rt", expires_in: 3600 }),
+    ]);
+    vi.stubGlobal("fetch", fetchMock);
+
+    let prompted = "";
+    const token = await authenticateAccountDeviceCode(
+      "ews",
+      { clientId: "apple", tenant: "common", apiVersion: "v1" },
+      (p) => (prompted = p.verificationUrl),
+    );
+    expect(prompted).toBe("https://microsoft.com/devicelogin");
+    expect(token.account).toBe("u@hs.de");
+    expect(token.tier).toBe("ews");
+    expect(token.clientId).toBe("apple");
+    expect(token.apiVersion).toBe("v1");
+    expect(loadTokens().accounts["u@hs.de"].refreshToken).toBe("rt"); // merged + saved
+
+    const initBody = new URLSearchParams((fetchMock.mock.calls[0] as [string, { body: string }])[1].body);
+    expect(initBody.get("resource")).toBe("https://outlook.office.com");
+    expect(initBody.get("scope")).toBeNull();
+    const pollBody = new URLSearchParams((fetchMock.mock.calls[1] as [string, { body: string }])[1].body);
+    expect(pollBody.get("grant_type")).toBe("device_code");
+    expect(pollBody.get("code")).toBe("DEV");
+    expect(pollBody.get("resource")).toBe("https://outlook.office.com");
+  });
+
+  it("v2: init uses scope=, poll uses the urn grant_type + device_code=", async () => {
+    const fetchMock = deviceCodeFetch([
+      Response.json({ access_token: fakeJwt("u@x.de"), refresh_token: "rt", expires_in: 3600 }),
+    ]);
+    vi.stubGlobal("fetch", fetchMock);
+    await authenticateAccountDeviceCode("ews", { clientId: "c", tenant: "common", apiVersion: "v2" });
+    const initBody = new URLSearchParams((fetchMock.mock.calls[0] as [string, { body: string }])[1].body);
+    expect(initBody.get("scope")).toContain("EWS.AccessAsUser.All");
+    const pollBody = new URLSearchParams((fetchMock.mock.calls[1] as [string, { body: string }])[1].body);
+    expect(pollBody.get("grant_type")).toBe("urn:ietf:params:oauth:grant-type:device_code");
+    expect(pollBody.get("device_code")).toBe("DEV");
+    expect(pollBody.get("resource")).toBeNull();
+  });
+
+  it("keeps polling through authorization_pending, then succeeds", async () => {
+    const fetchMock = deviceCodeFetch([
+      new Response(JSON.stringify({ error: "authorization_pending" }), { status: 400 }),
+      Response.json({ access_token: fakeJwt("u@x.de"), refresh_token: "rt", expires_in: 3600 }),
+    ]);
+    vi.stubGlobal("fetch", fetchMock);
+    const token = await authenticateAccountDeviceCode("ews", { clientId: "c", tenant: "common", apiVersion: "v1" });
+    expect(token.account).toBe("u@x.de");
+    expect(fetchMock.mock.calls.length).toBe(3); // init + pending + success
+  });
+
+  it("throws on a hard failure (CA block / declined)", async () => {
+    const fetchMock = deviceCodeFetch([
+      new Response(JSON.stringify({ error: "access_denied", error_description: "blocked" }), { status: 400 }),
+    ]);
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(
+      authenticateAccountDeviceCode("ews", { clientId: "c", tenant: "common", apiVersion: "v1" }),
+    ).rejects.toThrow(/access_denied/);
+  });
+});
+
+describe("EWS shared-mailbox folderId", () => {
+  const getToken = async () => "tok";
+  let lastBody = "";
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, opts: { body: string }) => {
+        lastBody = opts.body;
+        return new Response("<r/>", { status: 200 });
+      }),
+    );
+  });
+
+  it("calendar shared=true emits the Mailbox EmailAddress for the target mailbox", async () => {
+    const c = new EwsCalendarConnector("vp@x.de", getToken, true);
+    await c.listEvents(new Date(0).toISOString(), new Date(1).toISOString());
+    expect(lastBody).toContain("<t:Mailbox><t:EmailAddress>vp@x.de</t:EmailAddress></t:Mailbox>");
+  });
+
+  it("calendar shared=false emits a bare DistinguishedFolderId (no Mailbox)", async () => {
+    const c = new EwsCalendarConnector("me@x.de", getToken, false);
+    await c.listEvents(new Date(0).toISOString(), new Date(1).toISOString());
+    expect(lastBody).toContain('<t:DistinguishedFolderId Id="calendar"/>');
+    expect(lastBody).not.toContain("<t:Mailbox>");
+  });
+
+  it("contacts shared=true targets the shared mailbox", async () => {
+    const c = new EwsContactConnector("vp@x.de", getToken, true);
+    await c.listContacts(1);
+    expect(lastBody).toContain("<t:Mailbox><t:EmailAddress>vp@x.de</t:EmailAddress></t:Mailbox>");
   });
 });
