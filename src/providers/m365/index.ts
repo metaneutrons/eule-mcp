@@ -7,6 +7,7 @@ export {
   saveTokens,
   InteractionRequiredError,
   TIER_SCOPES,
+  tierAuthParam,
 } from "./auth/oauth.js";
 export type { DeviceCodePrompt } from "./auth/oauth.js";
 

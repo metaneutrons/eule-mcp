@@ -200,10 +200,23 @@ node dist/cli/index.js setup
   `node dist/cli/index.js login --device --tier ews` — prints a URL + code you
   open on any device. Pure HTTP, works over SSH/headless. Best for
   Windows/Linux. Note: a tenant can block the device-code flow via Conditional
-  Access (a common anti-phishing control) — if the poll never completes, use a
-  browser/webview method instead.
+  Access (a common anti-phishing control) — if the poll never completes, use
+  `--capture`.
+- **Webview capture (cross-platform GUI):**
+  `node dist/cli/index.js login --capture --tier ews` — opens a native login
+  window via the `eule-helper` binary and intercepts a broker-bound redirect
+  (`urn:ietf:wg:oauth:2.0:oob` / custom scheme) that no browser can navigate to.
+  The only path that works for clients like "Apple Internet Accounts" when
+  device code is CA-blocked. The helper writes the token itself — it never
+  returns through the MCP/LLM.
 - **Flags:** `--account <email>`, `--client-id <id>`, `--api-version v1|v2`,
-  `--tier graph|ews|imap`.
+  `--tier graph|ews|imap`, `--redirect-uri <uri>`.
+
+The `eule-helper` binary (Rust + `wry` = WKWebView/WebView2/WebKitGTK) is
+downloaded lazily on first use from this repo's GitHub release matching the
+installed version, checksum-verified, and cached `0700` in `~/.eule/bin/`.
+Prebuilt for macOS (universal), Linux (x64/arm64) and Windows (x64/arm64) by
+`.github/workflows/release.yml`. See `helper/` for the source.
 
 #### Locked-down tenants (only a legacy public client is consentable)
 
@@ -211,17 +224,15 @@ Some tenants only consent specific first-party public clients. If Graph is
 blocked, EWS via a legacy client on the **v1** endpoint often works. The
 "Apple Internet Accounts" client (`f8d98a96-0999-43f5-8af3-69971c7bb423`)
 yields `EWS.AccessAsUser.All`; its only redirect URIs are broker-bound
-(`urn:ietf:wg:oauth:2.0:oob`), so a plain browser paste won't work. Two paths:
+(`urn:ietf:wg:oauth:2.0:oob`), so a plain browser paste won't work:
 
-1. **Device code** (if the tenant allows it):
-   `login --device --tier ews --client-id f8d98a96-… --api-version v1`.
-2. **macOS webview capture** (if device code is CA-blocked): build and run
-   `scripts/apple-oauth-capture.swift` (a WKWebView that intercepts the
-   non-navigable `urn:` redirect), exchange the captured code at
-   `/common/oauth2/token` with `resource=https://outlook.office.com`, and write
-   the result into `~/.eule/tokens.json` (fields: `account`, `accessToken`,
-   `refreshToken`, `expiresAt`, `tier: "ews"`, `clientId`, `apiVersion: "v1"`).
-   A cross-platform port would use Rust `wry` (WKWebView/WebView2/WebKitGTK).
+```
+login --capture --tier ews --client-id f8d98a96-… --api-version v1
+```
+
+If the tenant permits device code, `login --device …` also works. (A macOS-only
+`scripts/apple-oauth-capture.swift` remains as a legacy reference; the Rust
+`eule-helper` supersedes it cross-platform.)
 
 The `clientId` and `apiVersion` are stored per token so refresh reuses the
 exact app + endpoint that issued it (a mixed v1+v2 store is supported).

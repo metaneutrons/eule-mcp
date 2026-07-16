@@ -4,8 +4,10 @@ import { ConfigManager } from "../config/index.js";
 import {
   authenticateAccount,
   authenticateAccountDeviceCode,
+  tierAuthParam,
   loadTokens,
 } from "../providers/m365/index.js";
+import { oauthCapture } from "../helper/run.js";
 import type { ApiTier, OAuthConfig } from "../types/index.js";
 
 const args = process.argv.slice(2);
@@ -108,6 +110,27 @@ async function login(): Promise<void> {
   };
 
   try {
+    if (flags.capture) {
+      // Webview capture via the native eule-helper — for clients whose only
+      // redirect URIs are broker-bound (e.g. Apple Internet Accounts EWS), where
+      // neither the paste-redirect nor device-code flow works. The helper writes
+      // tokens.json itself; the secret/code never returns through this process.
+      const param = tierAuthParam(oauth, tier);
+      console.log(`\nWebview capture — tier ${tier}, client ${oauth.clientId}\n`);
+      const code = await oauthCapture({
+        clientId: oauth.clientId,
+        tier,
+        apiVersion: oauth.apiVersion === "v1" ? "v1" : "v2",
+        resource: "resource" in param ? param.resource : undefined,
+        scope: "scope" in param ? param.scope : undefined,
+        tenant: oauth.tenant,
+        loginHint: account,
+        redirectUri: typeof flags["redirect-uri"] === "string" ? flags["redirect-uri"] : undefined,
+      });
+      if (code !== 0) process.exit(code);
+      console.log("\n✅ Token written to ~/.eule/tokens.json");
+      return;
+    }
     if (flags.device) {
       console.log(`\nDevice-code login — tier ${tier}, client ${oauth.clientId}\n`);
       const token = await authenticateAccountDeviceCode(tier, oauth, (p) => {
@@ -149,6 +172,7 @@ async function main(): Promise<void> {
       console.log("  eule-mcp setup                        Interactive account setup");
       console.log("  eule-mcp login --device [--tier ews]  Cross-platform device-code login");
       console.log("       [--account <email>] [--client-id <id>] [--api-version v1|v2]");
+      console.log("  eule-mcp login --capture [--tier ews] Webview capture (broker-only clients)");
       console.log("  eule-mcp login [--tier graph] …       Browser (paste-redirect) login");
       console.log("  eule-mcp serve                        Start MCP server (stdio)");
       console.log("  eule-mcp help                         Show this help");
