@@ -5,8 +5,11 @@ import type {
   MessengerConnector,
   FileConnector,
   DocumentConnector,
+  RoleConfig,
+  ConnectorConfig,
 } from "../types/index.js";
 import type { ConfigManager } from "../config/index.js";
+import { logger } from "../utils/logger.js";
 import { loadTokens, getAccessToken } from "../providers/m365/index.js";
 import { GraphMailConnector } from "../providers/m365/graph-mail.js";
 import { EwsMailConnector } from "../providers/m365/ews-mail.js";
@@ -118,53 +121,65 @@ export class ConnectorRegistry {
     const oauth = cfg.oauth;
     const tokens = loadTokens();
 
-    // Find the connector config for this account.
+    // Select the connector config for this account, preferring an exact
+    // PERSONAL match (auth account, no shared mailbox) over a shared-mailbox
+    // connector that happens to share the same auth account. Without this
+    // preference the lookup would be declaration-order-dependent and could
+    // silently route a request for the auth account to its shared mailbox.
+    let personal: { r: RoleConfig; mc: ConnectorConfig } | undefined;
+    let sharedHit: { r: RoleConfig; mc: ConnectorConfig } | undefined;
     for (const r of cfg.roles) {
       for (const mc of r.connectors.mail ?? []) {
-        if (mc.account !== account) continue;
-
-        if (mc.type === "imap") {
-          return new ImapMailConnector(mc.account, {
-            account: mc.account,
-            host: mc.host ?? "localhost",
-            smtpHost: mc.smtpHost ?? "localhost",
-            port: mc.port,
-            smtpPort: mc.smtpPort,
-            auth: mc.auth ?? "password",
-            password: mc.password,
-          });
-        }
-
-        if (mc.type === "google") {
-          const gcfg = cfg.google;
-          if (!gcfg) continue;
-          const c = new GoogleMailConnector(mc.account, () =>
-            getGoogleAccessToken(mc.account, gcfg),
-          );
-          c.signature = r.signature;
-          c.displayName = r.displayName;
-          return c;
-        }
-
-        const token = tokens.accounts[account];
-        if (!token) return undefined;
-        const getToken = () => getAccessToken(account, oauth);
-
-        switch (token.tier) {
-          case "graph":
-            return new GraphMailConnector(account, getToken);
-          case "ews":
-            return new EwsMailConnector(account, getToken);
-          case "imap":
-            return new ImapMailConnector(account, {
-              account,
-              host: "outlook.office365.com",
-              smtpHost: "smtp.office365.com",
-              auth: "oauth",
-              getToken,
-            });
-        }
+        if (mc.account === account && !mc.mailbox) personal ??= { r, mc };
+        else if (mc.mailbox === account) sharedHit ??= { r, mc };
       }
+    }
+    const hit = personal ?? sharedHit;
+    if (!hit) return undefined;
+    const { r, mc } = hit;
+
+    if (mc.type === "imap") {
+      return new ImapMailConnector(mc.account, {
+        account: mc.account,
+        host: mc.host ?? "localhost",
+        smtpHost: mc.smtpHost ?? "localhost",
+        port: mc.port,
+        smtpPort: mc.smtpPort,
+        auth: mc.auth ?? "password",
+        password: mc.password,
+      });
+    }
+
+    if (mc.type === "google") {
+      const gcfg = cfg.google;
+      if (!gcfg) return undefined;
+      const c = new GoogleMailConnector(mc.account, () => getGoogleAccessToken(mc.account, gcfg));
+      c.signature = r.signature;
+      c.displayName = r.displayName;
+      return c;
+    }
+
+    // The token is stored under the authenticating account (mc.account),
+    // not the shared address; target the shared mailbox via mc.mailbox.
+    const token = tokens.accounts[mc.account];
+    if (!token) return undefined;
+    const target = mc.mailbox ?? mc.account;
+    const isShared = !!mc.mailbox;
+    const getToken = () => getAccessToken(mc.account, oauth);
+
+    switch (token.tier) {
+      case "graph":
+        return new GraphMailConnector(target, getToken, isShared);
+      case "ews":
+        return new EwsMailConnector(target, getToken, isShared);
+      case "imap":
+        return new ImapMailConnector(mc.account, {
+          account: mc.account,
+          host: "outlook.office365.com",
+          smtpHost: "smtp.office365.com",
+          auth: "oauth",
+          getToken,
+        });
     }
     return undefined;
   }
@@ -207,16 +222,20 @@ export class ConnectorRegistry {
           continue;
         }
 
-        // M365 provider.
+        // M365 provider. For a shared/delegate mailbox authenticate as the
+        // configured account but TARGET cc.mailbox (else the connector returns
+        // the auth user's own calendar). Mirrors getMailConnectors.
         const token = tokens.accounts[cc.account];
         if (!token) continue;
+        const target = cc.mailbox ?? cc.account;
+        const isShared = !!cc.mailbox;
         const getToken = () => getAccessToken(cc.account, oauth);
         switch (token.tier) {
           case "graph":
-            connectors.push(new GraphCalendarConnector(cc.account, getToken, !!cc.mailbox));
+            connectors.push(new GraphCalendarConnector(target, getToken, isShared));
             break;
           case "ews":
-            connectors.push(new EwsCalendarConnector(cc.account, getToken));
+            connectors.push(new EwsCalendarConnector(target, getToken, isShared));
             break;
         }
       }
@@ -262,13 +281,15 @@ export class ConnectorRegistry {
 
         const token = tokens.accounts[cc.account];
         if (!token) continue;
+        const target = cc.mailbox ?? cc.account;
+        const isShared = !!cc.mailbox;
         const getToken = () => getAccessToken(cc.account, oauth);
         switch (token.tier) {
           case "graph":
-            connectors.push(new GraphContactConnector(cc.account, getToken, !!cc.mailbox));
+            connectors.push(new GraphContactConnector(target, getToken, isShared));
             break;
           case "ews":
-            connectors.push(new EwsContactConnector(cc.account, getToken));
+            connectors.push(new EwsContactConnector(target, getToken, isShared));
             break;
         }
       }
@@ -292,7 +313,15 @@ export class ConnectorRegistry {
             connectors.push(new SignalMessengerConnector(mc.account, mc.signalCliUrl));
           continue;
         }
-        // M365 Teams.
+        // M365 Teams. Delegated/shared chats are not supported (GraphTeamsConnector
+        // targets /me/chats). Fail loud rather than silently using the auth user's.
+        if (mc.mailbox) {
+          logger.error(
+            `Messenger connector '${mc.id}' sets mailbox='${mc.mailbox}' but shared/delegate ` +
+              `Teams is not supported — skipping.`,
+          );
+          continue;
+        }
         const token = tokens.accounts[mc.account];
         if (token?.tier !== "graph") continue;
         connectors.push(
@@ -322,6 +351,16 @@ export class ConnectorRegistry {
           continue;
         }
         if (fc.type !== "m365") continue;
+        // Delegated/shared OneDrive is not supported (GraphFileConnector targets
+        // /me/drive). Fail loud rather than silently returning the auth user's
+        // own files under a shared label.
+        if (fc.mailbox) {
+          logger.error(
+            `File connector '${fc.id}' sets mailbox='${fc.mailbox}' but shared/delegate ` +
+              `OneDrive is not supported — skipping (would return your OWN files).`,
+          );
+          continue;
+        }
         const token = tokens.accounts[fc.account];
         if (token?.tier !== "graph") continue;
         connectors.push(

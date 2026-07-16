@@ -3,3 +3,6 @@ dist/
 *.tsbuildinfo
 .env
 .DS_Store
+
+# Rust helper build output (Cargo.lock IS committed)
+helper/target/

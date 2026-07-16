@@ -3,9 +3,16 @@ language: de # de | en
 
 # OAuth settings — defaults to Thunderbird's app registration.
 # Override with your own Azure AD app if available.
+#
+# apiVersion: "v2" (default) uses the modern /oauth2/v2.0 endpoint with scope=.
+# Set "v1" for locked-down tenants where only a legacy public client is
+# consentable (Thunderbird, or "Apple Internet Accounts"
+# f8d98a96-0999-43f5-8af3-69971c7bb423 for EWS): v1 uses /oauth2 with resource=.
+# The v1-vs-v2 choice + client id are stored per token, so refresh reuses them.
 # oauth:
 #   clientId: "9e5f94bc-e8a4-4e73-b8be-63364c29d753"
 #   tenant: "common"
+#   apiVersion: "v2" # or "v1"
 
 # Optional: auto-authentication with TOTP for headless re-auth.
 # Only used when refresh token expires and CA policy requires re-login.
@@ -25,10 +32,12 @@ roles:
         - id: vpdit-personal
           type: m365
           account: fabian@hs-hannover.de
+        # Shared/delegate mailbox: authenticate as your own account, read the
+        # shared one via `mailbox:` (NOT a `shared:` flag — that does nothing).
         - id: vpdit-shared
           type: m365
-          account: vp-dit@hs-hannover.de
-          shared: true
+          account: fabian@hs-hannover.de
+          mailbox: vp-dit@hs-hannover.de
       calendar:
         - id: vpdit-cal
           type: m365

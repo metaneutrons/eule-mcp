@@ -4,19 +4,11 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { writeFileSync } from "node:fs";
 import type { ApiTier, AutoAuthConfig, OAuthConfig, AccountToken } from "../../../types/index.js";
-import { TIER_SCOPES, loadTokens, saveTokens } from "./oauth.js";
+import { authEndpoint, tokenEndpoint, tierAuthParam, loadTokens, saveTokens } from "./oauth.js";
 import { randomBytes, createHash } from "node:crypto";
 
 const REDIRECT_URI = "https://login.microsoftonline.com/common/oauth2/nativeclient";
 const DEBUG_DIR = join(homedir(), ".eule");
-
-function authEndpoint(oauth: OAuthConfig): string {
-  return `https://login.microsoftonline.com/${oauth.tenant}/oauth2/v2.0/authorize`;
-}
-
-function tokenEndpoint(oauth: OAuthConfig): string {
-  return `https://login.microsoftonline.com/${oauth.tenant}/oauth2/v2.0/token`;
-}
 
 function generatePkce(): { verifier: string; challenge: string } {
   const verifier = randomBytes(32).toString("base64url");
@@ -81,14 +73,13 @@ export async function autoAuthenticate(
 ): Promise<AccountToken | null> {
   const { verifier, challenge } = generatePkce();
   const state = randomBytes(16).toString("hex");
-  const scope = TIER_SCOPES[tier];
 
   const params = new URLSearchParams({
     client_id: oauth.clientId,
     response_type: "code",
     redirect_uri: REDIRECT_URI,
     response_mode: "query",
-    scope,
+    ...tierAuthParam(oauth, tier),
     state,
     code_challenge: challenge,
     code_challenge_method: "S256",
@@ -263,7 +254,7 @@ export async function autoAuthenticate(
       code,
       redirect_uri: REDIRECT_URI,
       code_verifier: verifier,
-      scope,
+      ...tierAuthParam(oauth, tier),
     });
 
     const res = await fetch(tokenEndpoint(oauth), {
@@ -290,6 +281,8 @@ export async function autoAuthenticate(
       refreshToken: data.refresh_token,
       expiresAt: Date.now() + data.expires_in * 1000,
       tier,
+      clientId: oauth.clientId,
+      apiVersion: oauth.apiVersion,
     };
 
     const store = loadTokens();

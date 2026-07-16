@@ -48,6 +48,24 @@ jobs:
       - run: pnpm run test
       - run: pnpm run build
 
+  helper:
+    name: Rust helper (fmt, clippy, build)
+    runs-on: macos-14 # native WKWebView — no extra system deps needed
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: helper -> target
+      - run: cargo fmt --check
+        working-directory: helper
+      - run: cargo clippy --all-targets -- -D warnings
+        working-directory: helper
+      - run: cargo build --release
+        working-directory: helper
+
   commitlint:
     name: Conventional commits
     runs-on: ubuntu-latest
