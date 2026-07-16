@@ -9,6 +9,7 @@ import {
   ftsPhrase,
   assertSecureUrl,
   fetchWithTimeout,
+  isBase32Secret,
 } from "../src/utils/security.js";
 
 describe("escapeXml", () => {
@@ -89,5 +90,20 @@ describe("fetchWithTimeout", () => {
   it("aborts and reports a timeout for a hanging endpoint", async () => {
     // A route we never resolve; 1ms timeout forces the abort path.
     await expect(fetchWithTimeout("http://127.0.0.1:9/never", {}, 1)).rejects.toThrow();
+  });
+});
+
+describe("isBase32Secret", () => {
+  it("accepts real base32 TOTP secrets (incl. spaced/lowercase/padded)", () => {
+    expect(isBase32Secret("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")).toBe(true);
+    expect(isBase32Secret("gezd gnbv-gy3t qojq gezd gnbv gy3t qojq")).toBe(true);
+    expect(isBase32Secret("JBSWY3DPEHPK3PXP")).toBe(true); // 16 symbols
+    expect(isBase32Secret("JBSWY3DPEHPK3PXPMFRA====")).toBe(true); // 20 symbols + padding
+  });
+  it("rejects non-base32 / too-short input", () => {
+    expect(isBase32Secret("not!a!secret")).toBe(false);
+    expect(isBase32Secret("0189")).toBe(false); // 0,1,8,9 not in the alphabet
+    expect(isBase32Secret("ABC")).toBe(false); // too short
+    expect(isBase32Secret("")).toBe(false);
   });
 });

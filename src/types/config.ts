@@ -24,8 +24,12 @@ export interface ConnectorConfig {
 /** Optional auto-authentication credentials for an account. */
 export interface AutoAuthConfig {
   readonly account: string;
-  readonly password: string;
-  readonly totpSecret: string;
+  /** Only needed for the headless Playwright password flow. Omitted when the
+   *  account is used solely for `login --capture` TOTP autofill (password typed
+   *  by the user). */
+  readonly password?: string;
+  /** base32 TOTP secret for MFA autofill. */
+  readonly totpSecret?: string;
 }
 
 /** Connectors grouped by domain. */

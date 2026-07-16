@@ -71,6 +71,16 @@ export async function autoAuthenticate(
   credentials: AutoAuthConfig,
   oauth: OAuthConfig,
 ): Promise<AccountToken | null> {
+  // The headless Playwright flow needs BOTH the password and the TOTP secret. An
+  // autoAuth entry carrying only a totpSecret (for `login --capture` MFA
+  // autofill) can't drive it — fall back to interactive.
+  const password = credentials.password;
+  const totpSecret = credentials.totpSecret;
+  if (!password || !totpSecret) {
+    logger.info("  Auto-auth skipped: needs both password and totpSecret.");
+    return null;
+  }
+
   const { verifier, challenge } = generatePkce();
   const state = randomBytes(16).toString("hex");
 
@@ -133,7 +143,7 @@ export async function autoAuthenticate(
     try {
       const passwordInput = page.locator('input[type="password"]').first();
       await passwordInput.waitFor({ state: "visible", timeout: 10000 });
-      await passwordInput.fill(credentials.password);
+      await passwordInput.fill(password);
       await page
         .locator('input[type="submit"], button[type="submit"], button[id="idSIButton9"]')
         .first()
@@ -196,7 +206,7 @@ export async function autoAuthenticate(
         )
         .first();
       await totpInput.waitFor({ state: "visible", timeout: 10000 });
-      const code = generateTotp(credentials.totpSecret);
+      const code = generateTotp(totpSecret);
       logger.info("  Entering TOTP code...");
       await totpInput.fill(code);
       await page

@@ -101,19 +101,22 @@ function parseGoogleOAuth(raw: unknown): GoogleOAuthConfig | undefined {
 
 function parseAutoAuth(raw: unknown): AutoAuthConfig[] | undefined {
   if (!Array.isArray(raw)) return undefined;
-  return (raw as unknown[])
-    .filter((c): c is Record<string, unknown> => typeof c === "object" && c !== null)
-    .filter(
-      (c) =>
-        typeof c.account === "string" &&
-        typeof c.password === "string" &&
-        typeof c.totpSecret === "string",
-    )
-    .map((c) => ({
-      account: String(c.account),
-      password: String(c.password),
-      totpSecret: String(c.totpSecret),
-    }));
+  return (
+    (raw as unknown[])
+      .filter((c): c is Record<string, unknown> => typeof c === "object" && c !== null)
+      // account + at least one credential (password for headless Playwright,
+      // totpSecret for --capture MFA autofill, or both).
+      .filter(
+        (c) =>
+          typeof c.account === "string" &&
+          (typeof c.password === "string" || typeof c.totpSecret === "string"),
+      )
+      .map((c) => ({
+        account: String(c.account),
+        ...(typeof c.password === "string" ? { password: c.password } : {}),
+        ...(typeof c.totpSecret === "string" ? { totpSecret: c.totpSecret } : {}),
+      }))
+  );
 }
 
 function parseOAuth(raw: unknown): OAuthConfig {
@@ -230,6 +233,18 @@ export class ConfigManager {
     const roles = this.config.roles.filter((r) => r.id !== id);
     if (roles.length === this.config.roles.length) throw new Error(`Role "${id}" not found`);
     this.save({ ...this.config, roles });
+  }
+
+  /** Create or update an account's autoAuth credentials (merging with any
+   *  existing entry), then persist. Used by the credential-window setup so a
+   *  secret lands in config.yaml without ever passing through the model. */
+  upsertAutoAuth(account: string, patch: { password?: string; totpSecret?: string }): void {
+    const existing = this.config.autoAuth ?? [];
+    const idx = existing.findIndex((a) => a.account === account);
+    const next = [...existing];
+    if (idx === -1) next.push({ account, ...patch });
+    else next[idx] = { ...next[idx], account, ...patch };
+    this.save({ ...this.config, autoAuth: next });
   }
 
   private load(): AppConfig {

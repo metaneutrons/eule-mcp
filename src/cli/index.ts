@@ -7,7 +7,11 @@ import {
   tierAuthParam,
   loadTokens,
 } from "../providers/m365/index.js";
-import { oauthCapture } from "../helper/run.js";
+import { oauthCapture, secretPrompt } from "../helper/run.js";
+import { isBase32Secret } from "../utils/security.js";
+import { readFileSync, unlinkSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { join } from "node:path";
 import type { ApiTier, OAuthConfig } from "../types/index.js";
 
 const args = process.argv.slice(2);
@@ -166,6 +170,54 @@ async function login(): Promise<void> {
   }
 }
 
+async function secretCmd(): Promise<void> {
+  const sub = args[1];
+  const flags = parseFlags(args.slice(2));
+  if (sub !== "totp") {
+    console.log("Usage: eule-mcp secret totp --account <email>");
+    process.exit(1);
+  }
+  const account = typeof flags.account === "string" ? flags.account : undefined;
+  if (!account) {
+    console.error("--account <email> is required");
+    process.exit(1);
+  }
+
+  // The secret is entered in the helper's local window → written 0600 to a temp
+  // file → folded into config.yaml → temp file unlinked. It never appears in
+  // argv, this process's output, or the model context.
+  const cfgMgr = new ConfigManager();
+  const out = join(cfgMgr.euleDirPath, `.totp-${randomBytes(8).toString("hex")}.tmp`);
+  let exitCode = 0;
+  try {
+    const code = await secretPrompt(`TOTP secret (base32) for ${account}`, out);
+    if (code !== 0) {
+      console.error("\n❌ Cancelled.");
+      exitCode = code;
+    } else {
+      const secret = readFileSync(out, "utf-8").trim();
+      if (!isBase32Secret(secret)) {
+        console.error("\n❌ That isn't a base32 TOTP secret (A–Z, 2–7) — not stored.");
+        exitCode = 1;
+      } else {
+        cfgMgr.upsertAutoAuth(account, { totpSecret: secret });
+        console.log(`\n✅ TOTP secret stored for ${account} (config.yaml, 0600).`);
+        console.log(`   Use it:  eule-mcp login --capture --account ${account} …`);
+      }
+    }
+  } catch (err) {
+    console.error("\n❌ Failed:", err instanceof Error ? err.message : String(err));
+    exitCode = 1;
+  } finally {
+    try {
+      unlinkSync(out);
+    } catch {
+      /* already gone / never created */
+    }
+  }
+  if (exitCode) process.exit(exitCode);
+}
+
 async function main(): Promise<void> {
   switch (command) {
     case "setup":
@@ -173,6 +225,9 @@ async function main(): Promise<void> {
       break;
     case "login":
       await login();
+      break;
+    case "secret":
+      await secretCmd();
       break;
     case "serve":
       await import("../server/index.js");
@@ -185,6 +240,9 @@ async function main(): Promise<void> {
       console.log("       [--account <email>] [--client-id <id>] [--api-version v1|v2]");
       console.log("  eule-mcp login --capture [--tier ews] Webview capture (broker-only clients)");
       console.log("  eule-mcp login [--tier graph] …       Browser (paste-redirect) login");
+      console.log(
+        "  eule-mcp secret totp --account <email> Store a TOTP secret via a local window",
+      );
       console.log("  eule-mcp serve                        Start MCP server (stdio)");
       console.log("  eule-mcp help                         Show this help");
   }

@@ -76,6 +76,17 @@ export function ftsPhrase(query: string): string {
   return `"${query.replace(/"/g, '""')}"`;
 }
 
+/**
+ * True if `s` is a plausible base32 TOTP secret (RFC 4648 alphabet A–Z/2–7,
+ * spaces/dashes allowed as grouping, optional `=` padding, ≥ 16 symbols). Used
+ * to reject a mistyped/wrong-format secret before it's written to config.yaml —
+ * the Rust helper only accepts base32.
+ */
+export function isBase32Secret(s: string): boolean {
+  const cleaned = s.replace(/[\s-]/g, "").toUpperCase();
+  return /^[A-Z2-7]{16,}=*$/.test(cleaned);
+}
+
 function isLoopbackHost(hostname: string): boolean {
   return (
     hostname === "localhost" ||
