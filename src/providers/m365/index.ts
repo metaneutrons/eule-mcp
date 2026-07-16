@@ -1,5 +1,6 @@
 export {
   authenticateAccount,
+  authenticateAccountDeviceCode,
   getAccessToken,
   refreshAccessToken,
   loadTokens,
@@ -7,6 +8,7 @@ export {
   InteractionRequiredError,
   TIER_SCOPES,
 } from "./auth/oauth.js";
+export type { DeviceCodePrompt } from "./auth/oauth.js";
 
 export { GraphMailConnector } from "./graph-mail.js";
 export { EwsMailConnector } from "./ews-mail.js";

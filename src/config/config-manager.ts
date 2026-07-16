@@ -122,6 +122,7 @@ function parseOAuth(raw: unknown): OAuthConfig {
   return {
     clientId: typeof obj.clientId === "string" ? obj.clientId : DEFAULT_OAUTH.clientId,
     tenant: typeof obj.tenant === "string" ? obj.tenant : DEFAULT_OAUTH.tenant,
+    apiVersion: obj.apiVersion === "v1" || obj.apiVersion === "v2" ? obj.apiVersion : undefined,
   };
 }
 

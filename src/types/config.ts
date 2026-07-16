@@ -55,6 +55,11 @@ export interface RoleConfig {
 export interface OAuthConfig {
   readonly clientId: string;
   readonly tenant: string;
+  /** Azure AD endpoint generation. Some older public-client app registrations
+   *  (e.g. Thunderbird's) are only consented for the legacy v1 endpoint
+   *  (`resource=`) and behave unpredictably against the v2.0 endpoint
+   *  (`scope=`) even with an identical client ID. Default: "v2". */
+  readonly apiVersion?: "v1" | "v2";
 }
 
 export interface GoogleOAuthConfig {
@@ -83,6 +88,16 @@ export interface AccountToken {
   readonly tier: ApiTier;
   readonly icalUrl?: string;
   readonly provider?: "m365" | "google";
+  /** OAuth app that issued this token, when it differs from the configured
+   *  default (e.g. a tenant only consents one public-client app per tier —
+   *  Thunderbird for IMAP, Apple Internet Accounts for EWS). Refreshes must
+   *  reuse this client ID; a mismatched one is rejected by Microsoft. */
+  readonly clientId?: string;
+  /** Azure AD endpoint generation this token was minted with. The v1-vs-v2
+   *  choice is a property of the issuing client (Thunderbird/Apple are v1-only),
+   *  NOT of global config — so refresh must reuse it, or a mixed v1+v2 store
+   *  breaks. Falls back to the global oauth.apiVersion when absent. */
+  readonly apiVersion?: "v1" | "v2";
 }
 
 /** Persisted token store (all accounts). */

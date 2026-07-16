@@ -30,20 +30,39 @@ const DEFAULT_OAUTH: OAuthConfig = {
 const REDIRECT_URI = "https://login.microsoftonline.com/common/oauth2/nativeclient";
 
 function authEndpoint(oauth: OAuthConfig): string {
-  return `https://login.microsoftonline.com/${oauth.tenant}/oauth2/v2.0/authorize`;
+  const suffix = oauth.apiVersion === "v1" ? "oauth2/authorize" : "oauth2/v2.0/authorize";
+  return `https://login.microsoftonline.com/${oauth.tenant}/${suffix}`;
+}
+
+function deviceCodeEndpoint(oauth: OAuthConfig): string {
+  const suffix = oauth.apiVersion === "v1" ? "oauth2/devicecode" : "oauth2/v2.0/devicecode";
+  return `https://login.microsoftonline.com/${oauth.tenant}/${suffix}`;
 }
 
 function tokenEndpoint(oauth: OAuthConfig): string {
-  return `https://login.microsoftonline.com/${oauth.tenant}/oauth2/v2.0/token`;
+  const suffix = oauth.apiVersion === "v1" ? "oauth2/token" : "oauth2/v2.0/token";
+  return `https://login.microsoftonline.com/${oauth.tenant}/${suffix}`;
 }
 
-/** Scope sets per API tier. */
+/** Scope sets per API tier (v2.0 endpoint — `scope=`). */
 export const TIER_SCOPES: Record<ApiTier, string> = {
   graph:
     "https://graph.microsoft.com/Mail.ReadWrite https://graph.microsoft.com/Calendars.ReadWrite https://graph.microsoft.com/Contacts.Read offline_access",
   ews: "https://outlook.office.com/EWS.AccessAsUser.All offline_access",
   imap: "https://outlook.office.com/IMAP.AccessAsUser.All https://outlook.office.com/SMTP.Send offline_access",
   google: "", // Google scopes handled in google-auth.ts
+};
+
+/**
+ * Resource identifiers per API tier (legacy v1 endpoint — `resource=`).
+ * v1 has no per-permission scope string; permissions are whatever was
+ * consented for the app against this resource as a whole.
+ */
+export const TIER_RESOURCES: Record<ApiTier, string> = {
+  graph: "https://graph.microsoft.com",
+  ews: "https://outlook.office.com",
+  imap: "https://outlook.office.com",
+  google: "", // N/A — Google auth never goes through this module.
 };
 
 /** Thrown when CA policy requires interactive re-authentication (e.g. sign-in frequency). */
@@ -118,18 +137,27 @@ export async function refreshAccessToken(
   account: string,
   oauth: OAuthConfig = DEFAULT_OAUTH,
 ): Promise<AccountToken | null> {
-  const store = loadTokens();
-  const token = store.accounts[account];
+  const token = loadTokens().accounts[account];
   if (!token?.refreshToken) return null;
 
+  // The v1-vs-v2 endpoint generation is a property of the issuing CLIENT, not of
+  // global config: Thunderbird/Apple public clients are v1-only. Reuse what the
+  // token was minted with (falling back to global config for pre-migration
+  // tokens) so a mixed v1+v2 store, or a changed global default, can't silently
+  // rebuild the wrong request and fail refresh.
+  const clientId = token.clientId ?? oauth.clientId;
+  const apiVersion = token.apiVersion ?? oauth.apiVersion;
+  const endpointOauth: OAuthConfig = { ...oauth, clientId, apiVersion };
   const body = new URLSearchParams({
-    client_id: oauth.clientId,
+    client_id: clientId,
     grant_type: "refresh_token",
     refresh_token: token.refreshToken,
-    scope: TIER_SCOPES[token.tier],
+    ...(apiVersion === "v1"
+      ? { resource: TIER_RESOURCES[token.tier] }
+      : { scope: TIER_SCOPES[token.tier] }),
   });
 
-  const res = await fetch(tokenEndpoint(oauth), {
+  const res = await fetch(tokenEndpoint(endpointOauth), {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: body.toString(),
@@ -137,11 +165,16 @@ export async function refreshAccessToken(
 
   if (!res.ok) {
     const errBody = await res.text();
-    // Detect CA sign-in frequency or MFA re-prompt.
+    // Treat both interactive-required (CA sign-in frequency / MFA) AND a
+    // dead refresh token (expired, revoked, rotated-away, consent withdrawn)
+    // as "must re-authenticate" — otherwise these surface as a silent null
+    // that a connector reports as "no data", indistinguishable from an empty
+    // mailbox. AADSTS700082=RT expired, 700084/50173=revoked/pw-change,
+    // 65001=consent revoked; invalid_grant is the umbrella error class.
     if (
-      errBody.includes("interaction_required") ||
-      errBody.includes("AADSTS50076") ||
-      errBody.includes("AADSTS50078")
+      /interaction_required|invalid_grant|AADSTS(50076|50078|700082|700084|50173|65001)/.test(
+        errBody,
+      )
     ) {
       throw new InteractionRequiredError(account);
     }
@@ -150,11 +183,21 @@ export async function refreshAccessToken(
 
   const data = parseTokenResponse(await res.json());
 
+  // Re-read the store immediately before writing (rather than reusing the
+  // snapshot from the top of this function): v1 refresh ROTATES the refresh
+  // token every call, and concurrent refreshes of sibling accounts (e.g.
+  // BriefingService's Promise.all over calendar+mail) would otherwise let the
+  // last writer clobber a sibling's freshly-rotated refresh token, killing its
+  // auth. Read-modify-write of only this account's key keeps siblings intact.
+  const store = loadTokens();
+  const prior = store.accounts[account] ?? token;
   const updated: AccountToken = {
-    ...token,
+    ...prior,
     accessToken: data.access_token,
-    refreshToken: data.refresh_token ?? token.refreshToken,
+    refreshToken: data.refresh_token ?? prior.refreshToken,
     expiresAt: Date.now() + data.expires_in * 1000,
+    clientId,
+    apiVersion,
   };
 
   store.accounts[account] = updated;
@@ -185,7 +228,7 @@ export async function getAccessToken(
 async function exchangeCode(
   code: string,
   verifier: string,
-  scope: string,
+  scopeOrResource: string,
   oauth: OAuthConfig,
 ): Promise<AccountToken> {
   const body = new URLSearchParams({
@@ -194,7 +237,7 @@ async function exchangeCode(
     code,
     redirect_uri: REDIRECT_URI,
     code_verifier: verifier,
-    scope,
+    ...(oauth.apiVersion === "v1" ? { resource: scopeOrResource } : { scope: scopeOrResource }),
   });
 
   const res = await fetch(tokenEndpoint(oauth), {
@@ -251,14 +294,14 @@ export async function authenticateAccount(
 
   const { verifier, challenge } = generatePkce();
   const state = randomBytes(16).toString("hex");
-  const scope = TIER_SCOPES[tier];
+  const scopeOrResource = oauth.apiVersion === "v1" ? TIER_RESOURCES[tier] : TIER_SCOPES[tier];
 
   const params = new URLSearchParams({
     client_id: oauth.clientId,
     response_type: "code",
     redirect_uri: REDIRECT_URI,
     response_mode: "query",
-    scope,
+    ...(oauth.apiVersion === "v1" ? { resource: scopeOrResource } : { scope: scopeOrResource }),
     state,
     code_challenge: challenge,
     code_challenge_method: "S256",
@@ -312,8 +355,13 @@ export async function authenticateAccount(
 
           void (async () => {
             try {
-              const tokenData = await exchangeCode(code, verifier, scope, oauth);
-              const result: AccountToken = { ...tokenData, tier };
+              const tokenData = await exchangeCode(code, verifier, scopeOrResource, oauth);
+              const result: AccountToken = {
+                ...tokenData,
+                tier,
+                clientId: oauth.clientId,
+                apiVersion: oauth.apiVersion,
+              };
 
               const store = loadTokens();
               store.accounts[result.account] = result;
@@ -386,6 +434,121 @@ button{padding:10px 20px;font-size:16px;cursor:pointer;background:#0078d4;color:
       5 * 60 * 1000,
     );
   });
+}
+
+/** Prompt shown to the user to complete a device-code login. */
+export interface DeviceCodePrompt {
+  readonly userCode: string;
+  readonly verificationUrl: string;
+  readonly message: string;
+  readonly expiresInSeconds: number;
+}
+
+/**
+ * Device-code OAuth flow (cross-platform: pure HTTP, no redirect URI, no
+ * webview, works over SSH). The user opens a URL on ANY device and types the
+ * code; we poll the token endpoint until they finish.
+ *
+ * This is the portable alternative to authenticateAccount's browser-paste
+ * flow, which cannot work with clients whose only redirect URIs are broker-
+ * bound (e.g. Apple Internet Accounts). NOTE: a tenant Conditional Access
+ * policy can block the device-code *authentication flow* entirely (a common
+ * anti-phishing control) — the initiation still returns a user_code but the
+ * poll ends in access_denied/authorization_declined; fall back to the webview
+ * capture in that case.
+ *
+ * The token is stamped with `clientId` and `apiVersion` (so refresh reuses the
+ * exact app + endpoint that issued it) and merged into the token store.
+ */
+export async function authenticateAccountDeviceCode(
+  tier: ApiTier,
+  oauth: OAuthConfig = DEFAULT_OAUTH,
+  onPrompt?: (p: DeviceCodePrompt) => void,
+): Promise<AccountToken> {
+  const isV1 = oauth.apiVersion === "v1";
+
+  // 1. Request a device + user code.
+  const initBody = new URLSearchParams({
+    client_id: oauth.clientId,
+    ...(isV1 ? { resource: TIER_RESOURCES[tier] } : { scope: TIER_SCOPES[tier] }),
+  });
+  const initRes = await fetch(deviceCodeEndpoint(oauth), {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: initBody.toString(),
+  });
+  if (!initRes.ok) {
+    throw new Error(`Device-code initiation failed: ${await initRes.text()}`);
+  }
+  const init = (await initRes.json()) as {
+    device_code: string;
+    user_code: string;
+    verification_url?: string;
+    verification_uri?: string;
+    expires_in: number;
+    interval: number;
+    message?: string;
+  };
+  const verificationUrl =
+    init.verification_uri ?? init.verification_url ?? "https://microsoft.com/devicelogin";
+  const prompt: DeviceCodePrompt = {
+    userCode: init.user_code,
+    verificationUrl,
+    message: init.message ?? `Open ${verificationUrl} and enter code ${init.user_code}`,
+    expiresInSeconds: init.expires_in || 900,
+  };
+  if (onPrompt) onPrompt(prompt);
+  else logger.info(`\n${prompt.message}\n`);
+
+  // 2. Poll the token endpoint until the user completes (or it fails/expires).
+  const deadline = Date.now() + prompt.expiresInSeconds * 1000;
+  let intervalMs = (init.interval || 5) * 1000;
+  const grantType = isV1 ? "device_code" : "urn:ietf:params:oauth:grant-type:device_code";
+
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, intervalMs));
+    const pollBody = new URLSearchParams({
+      client_id: oauth.clientId,
+      grant_type: grantType,
+      // v1 names the field `code`; v2 names it `device_code`.
+      ...(isV1 ? { code: init.device_code } : { device_code: init.device_code }),
+      ...(isV1 ? { resource: TIER_RESOURCES[tier] } : {}),
+    });
+    const res = await fetch(tokenEndpoint(oauth), {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: pollBody.toString(),
+    });
+    if (res.ok) {
+      const raw = (await res.json()) as { access_token: string };
+      const data = parseTokenResponse(raw);
+      const account = extractEmail(data.access_token) ?? "unknown";
+      const token: AccountToken = {
+        account,
+        accessToken: data.access_token,
+        refreshToken: data.refresh_token ?? "",
+        expiresAt: Date.now() + data.expires_in * 1000,
+        tier,
+        clientId: oauth.clientId,
+        apiVersion: oauth.apiVersion,
+      };
+      const store = loadTokens();
+      store.accounts[account] = token;
+      saveTokens(store);
+      return token;
+    }
+    const err = (await res.json()) as { error?: string; error_description?: string };
+    if (err.error === "authorization_pending") continue;
+    if (err.error === "slow_down") {
+      intervalMs += 5000;
+      continue;
+    }
+    // authorization_declined / access_denied / expired_token / bad_verification_code,
+    // or a Conditional Access block on the device-code flow.
+    const desc = (err.error_description ?? "").split("\n")[0] ?? "";
+    throw new Error(`Device-code login failed: ${err.error ?? "unknown"} — ${desc}`);
+  }
+  throw new Error("Device-code login timed out.");
 }
 
 /** Extract email (upn) from a JWT access token without verification. */

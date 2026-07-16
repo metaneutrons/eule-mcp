@@ -1,11 +1,33 @@
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { ConfigManager } from "../config/index.js";
-import { authenticateAccount, loadTokens } from "../providers/m365/index.js";
-import type { ApiTier } from "../types/index.js";
+import {
+  authenticateAccount,
+  authenticateAccountDeviceCode,
+  loadTokens,
+} from "../providers/m365/index.js";
+import type { ApiTier, OAuthConfig } from "../types/index.js";
 
 const args = process.argv.slice(2);
 const command = args[0] ?? "help";
+
+/** Minimal --flag / --flag value parser for the flags after the command word. */
+function parseFlags(argv: string[]): Record<string, string | boolean> {
+  const out: Record<string, string | boolean> = {};
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (!a?.startsWith("--")) continue;
+    const key = a.slice(2);
+    const next = argv[i + 1];
+    if (next === undefined || next.startsWith("--")) {
+      out[key] = true;
+    } else {
+      out[key] = next;
+      i++;
+    }
+  }
+  return out;
+}
 
 async function prompt(question: string): Promise<string> {
   const rl = createInterface({ input: stdin, output: stdout });
@@ -63,10 +85,60 @@ async function setup(): Promise<void> {
   }
 }
 
+async function login(): Promise<void> {
+  const flags = parseFlags(args.slice(1));
+  const config = new ConfigManager().get();
+
+  const tier: ApiTier = (
+    ["graph", "ews", "imap"].includes(String(flags.tier)) ? String(flags.tier) : "ews"
+  ) as ApiTier;
+  const account = typeof flags.account === "string" ? flags.account : undefined;
+
+  // Overlay CLI flags on the configured oauth defaults. --client-id lets you
+  // pick the app the tenant actually consents (e.g. Apple Internet Accounts for
+  // EWS); --api-version v1 is required for legacy public clients.
+  const apiVersion =
+    flags["api-version"] === "v1" || flags["api-version"] === "v2"
+      ? flags["api-version"]
+      : config.oauth.apiVersion;
+  const oauth: OAuthConfig = {
+    clientId: typeof flags["client-id"] === "string" ? flags["client-id"] : config.oauth.clientId,
+    tenant: typeof flags.tenant === "string" ? flags.tenant : config.oauth.tenant,
+    apiVersion,
+  };
+
+  try {
+    if (flags.device) {
+      console.log(`\nDevice-code login — tier ${tier}, client ${oauth.clientId}\n`);
+      const token = await authenticateAccountDeviceCode(tier, oauth, (p) => {
+        console.log("==================================================");
+        console.log(`  Open:  ${p.verificationUrl}`);
+        console.log(`  Code:  ${p.userCode}`);
+        console.log("==================================================");
+        console.log("  Waiting for you to complete sign-in…\n");
+      });
+      console.log(`\n✅ Success! ${token.account} (tier ${token.tier})`);
+      console.log(`   Expires: ${new Date(token.expiresAt).toLocaleString()}`);
+      return;
+    }
+    // Browser authorization-code (paste-the-redirect) fallback.
+    const autoAuth = account ? config.autoAuth?.find((a) => a.account === account) : undefined;
+    const token = await authenticateAccount(tier, account, oauth, autoAuth);
+    console.log(`\n✅ Success! ${token.account} (tier ${token.tier})`);
+    console.log(`   Expires: ${new Date(token.expiresAt).toLocaleString()}`);
+  } catch (err) {
+    console.error("\n❌ Login failed:", err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  }
+}
+
 async function main(): Promise<void> {
   switch (command) {
     case "setup":
       await setup();
+      break;
+    case "login":
+      await login();
       break;
     case "serve":
       await import("../server/index.js");
@@ -74,10 +146,12 @@ async function main(): Promise<void> {
     default:
       console.log("Eule MCP — Kiro Office Agent 🦉\n");
       console.log("Usage:");
-      console.log("  eule-mcp setup          Interactive account setup");
-      console.log("  eule-mcp setup --probe  Re-probe API tiers");
-      console.log("  eule-mcp serve          Start MCP server (stdio)");
-      console.log("  eule-mcp help           Show this help");
+      console.log("  eule-mcp setup                        Interactive account setup");
+      console.log("  eule-mcp login --device [--tier ews]  Cross-platform device-code login");
+      console.log("       [--account <email>] [--client-id <id>] [--api-version v1|v2]");
+      console.log("  eule-mcp login [--tier graph] …       Browser (paste-redirect) login");
+      console.log("  eule-mcp serve                        Start MCP server (stdio)");
+      console.log("  eule-mcp help                         Show this help");
   }
 }
 

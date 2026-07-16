@@ -191,7 +191,42 @@ pnpm run build
 node dist/cli/index.js setup
 ```
 
-This opens a browser window for Microsoft OAuth login. After authentication, configure your roles in `~/.eule/config.yaml`:
+#### Login methods
+
+- **Browser (default):** `node dist/cli/index.js login --tier graph` — opens a
+  browser, you paste the redirect URL back. Needs an app whose redirect URIs
+  include the `nativeclient` URL (Thunderbird's does).
+- **Device code (cross-platform, no browser redirect):**
+  `node dist/cli/index.js login --device --tier ews` — prints a URL + code you
+  open on any device. Pure HTTP, works over SSH/headless. Best for
+  Windows/Linux. Note: a tenant can block the device-code flow via Conditional
+  Access (a common anti-phishing control) — if the poll never completes, use a
+  browser/webview method instead.
+- **Flags:** `--account <email>`, `--client-id <id>`, `--api-version v1|v2`,
+  `--tier graph|ews|imap`.
+
+#### Locked-down tenants (only a legacy public client is consentable)
+
+Some tenants only consent specific first-party public clients. If Graph is
+blocked, EWS via a legacy client on the **v1** endpoint often works. The
+"Apple Internet Accounts" client (`f8d98a96-0999-43f5-8af3-69971c7bb423`)
+yields `EWS.AccessAsUser.All`; its only redirect URIs are broker-bound
+(`urn:ietf:wg:oauth:2.0:oob`), so a plain browser paste won't work. Two paths:
+
+1. **Device code** (if the tenant allows it):
+   `login --device --tier ews --client-id f8d98a96-… --api-version v1`.
+2. **macOS webview capture** (if device code is CA-blocked): build and run
+   `scripts/apple-oauth-capture.swift` (a WKWebView that intercepts the
+   non-navigable `urn:` redirect), exchange the captured code at
+   `/common/oauth2/token` with `resource=https://outlook.office.com`, and write
+   the result into `~/.eule/tokens.json` (fields: `account`, `accessToken`,
+   `refreshToken`, `expiresAt`, `tier: "ews"`, `clientId`, `apiVersion: "v1"`).
+   A cross-platform port would use Rust `wry` (WKWebView/WebView2/WebKitGTK).
+
+The `clientId` and `apiVersion` are stored per token so refresh reuses the
+exact app + endpoint that issued it (a mixed v1+v2 store is supported).
+
+After authentication, configure your roles in `~/.eule/config.yaml`:
 
 ```yaml
 language: de
@@ -306,6 +341,8 @@ autoAuth:
 ## Roadmap
 
 - [x] OAuth with PKCE + headless TOTP auto-auth
+- [x] Device-code login (cross-platform, no redirect URI; CA-blockable)
+- [x] Legacy v1 endpoint + per-token client-id/apiVersion (locked-down tenants)
 - [x] Multi-tier M365 support (Graph / EWS / IMAP)
 - [x] Mail tools (list, read, search, send, reply, attachments)
 - [x] HTML → Markdown rendering with thread splitting
