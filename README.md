@@ -210,7 +210,9 @@ node dist/cli/index.js setup
   (`urn:ietf:wg:oauth:2.0:oob` / custom scheme) that no browser can navigate to.
   The only path that works for clients like "Apple Internet Accounts" when
   device code is CA-blocked. The helper writes the token itself — it never
-  returns through the MCP/LLM.
+  returns through the MCP/LLM. If the account has a TOTP secret configured
+  (`autoAuth[].totpSecret`), the MFA code is auto-filled (the password is still
+  typed by you); pass `--no-totp` to disable.
 - **Flags:** `--account <email>`, `--client-id <id>`, `--api-version v1|v2`,
   `--tier graph|ews|imap`, `--redirect-uri <uri>`.
 

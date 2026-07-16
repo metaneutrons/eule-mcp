@@ -43,6 +43,12 @@ within a few days.
   GitHub release and verified against its published SHA-256 before being cached
   `0700` and executed. The macOS build is a Developer-ID-signed, notarized
   universal binary (hardened runtime + secure timestamp).
+- **MFA autofill is opt-in and secret-in-process.** `login --capture` fills a
+  TOTP code only if you configure `autoAuth[].totpSecret`; the secret is passed
+  to the helper via an environment variable (never argv) and stays in the helper
+  process — it is never injected into page JavaScript. Note the trade-off:
+  storing a TOTP secret at rest weakens MFA (the second factor sits next to the
+  config), so this is off unless you enable it. The password is never stored.
 - **Auth debug artifacts** (DOM/screenshots of the login flow) are written only
   when `EULE_AUTH_DEBUG` is set, and then `0600`.
 
