@@ -11,13 +11,19 @@ export interface OauthCaptureOpts {
   tenant?: string;
   loginHint?: string;
   redirectUri?: string;
+  /** base32 TOTP secret — passed to the helper via env (never argv) to
+   *  auto-fill the MFA code. Password stays manual. */
+  totpSecret?: string;
 }
 
-function run(subcommand: string, args: string[]): Promise<number> {
+function run(subcommand: string, args: string[], extraEnv?: NodeJS.ProcessEnv): Promise<number> {
   return new Promise((resolve, reject) => {
     void ensureHelper()
       .then((bin) => {
-        const child = spawn(bin, [subcommand, ...args], { stdio: "inherit" });
+        const child = spawn(bin, [subcommand, ...args], {
+          stdio: "inherit",
+          env: extraEnv ? { ...process.env, ...extraEnv } : process.env,
+        });
         child.on("error", reject);
         child.on("close", (code) => {
           resolve(code ?? 1);
@@ -35,7 +41,9 @@ export async function oauthCapture(o: OauthCaptureOpts): Promise<number> {
   if (o.tenant) args.push("--tenant", o.tenant);
   if (o.loginHint) args.push("--login-hint", o.loginHint);
   if (o.redirectUri) args.push("--redirect-uri", o.redirectUri);
-  return run("oauth-capture", args);
+  // Secret goes via env so it never appears in the process argument list.
+  const extraEnv = o.totpSecret ? { EULE_TOTP_SECRET: o.totpSecret } : undefined;
+  return run("oauth-capture", args, extraEnv);
 }
 
 /** Prompt for a secret in a local window; the helper writes it 0600 to `out`. */

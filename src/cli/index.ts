@@ -116,7 +116,17 @@ async function login(): Promise<void> {
       // neither the paste-redirect nor device-code flow works. The helper writes
       // tokens.json itself; the secret/code never returns through this process.
       const param = tierAuthParam(oauth, tier);
-      console.log(`\nWebview capture — tier ${tier}, client ${oauth.clientId}\n`);
+      // Opt-in MFA autofill: if this account has a TOTP secret in autoAuth, hand
+      // it to the helper (via env, not argv) so it auto-enters the code. Skipped
+      // with --no-totp. The password is always typed by the user.
+      const totpSecret =
+        flags["no-totp"] || !account
+          ? undefined
+          : config.autoAuth?.find((a) => a.account === account)?.totpSecret;
+      console.log(
+        `\nWebview capture — tier ${tier}, client ${oauth.clientId}` +
+          `${totpSecret ? " (auto-TOTP)" : ""}\n`,
+      );
       const code = await oauthCapture({
         clientId: oauth.clientId,
         tier,
@@ -126,6 +136,7 @@ async function login(): Promise<void> {
         tenant: oauth.tenant,
         loginHint: account,
         redirectUri: typeof flags["redirect-uri"] === "string" ? flags["redirect-uri"] : undefined,
+        totpSecret,
       });
       if (code !== 0) process.exit(code);
       console.log("\n✅ Token written to ~/.eule/tokens.json");
