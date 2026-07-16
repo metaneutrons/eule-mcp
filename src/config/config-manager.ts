@@ -15,6 +15,9 @@ import type {
 const EULE_DIR = join(homedir(), ".eule");
 const CONFIG_PATH = join(EULE_DIR, "config.yaml");
 
+/** Connector domains on a role (mail | calendar | contacts | messenger | files | documents). */
+export type ConnectorKind = keyof RoleConfig["connectors"];
+
 const DEFAULT_OAUTH: OAuthConfig = {
   clientId: "9e5f94bc-e8a4-4e73-b8be-63364c29d753", // Thunderbird
   tenant: "common",
@@ -245,6 +248,35 @@ export class ConfigManager {
     if (idx === -1) next.push({ account, ...patch });
     else next[idx] = { ...next[idx], account, ...patch };
     this.save({ ...this.config, autoAuth: next });
+  }
+
+  /** Patch the oauth block (clientId/tenant/apiVersion). Structural only — no
+   *  secret is involved (M365 public-client auth carries no client secret). */
+  setOAuth(patch: Partial<Pick<OAuthConfig, "clientId" | "tenant" | "apiVersion">>): void {
+    this.save({ ...this.config, oauth: { ...this.config.oauth, ...patch } });
+  }
+
+  /** Append a connector to a role. Rejects a duplicate id. The connector must
+   *  NOT carry a secret (password/token) — those are set out-of-band via the
+   *  credential window, never through a tool argument. */
+  addConnector(roleId: string, kind: ConnectorKind, connector: ConnectorConfig): void {
+    const role = this.config.roles.find((r) => r.id === roleId);
+    if (!role) throw new Error(`Role "${roleId}" not found`);
+    const list = role.connectors[kind] ?? [];
+    if (list.some((c) => c.id === connector.id))
+      throw new Error(`Connector "${connector.id}" already exists in role "${roleId}" ${kind}`);
+    this.updateRole(roleId, { connectors: { ...role.connectors, [kind]: [...list, connector] } });
+  }
+
+  /** Remove a connector (by id) from a role. */
+  removeConnector(roleId: string, kind: ConnectorKind, connectorId: string): void {
+    const role = this.config.roles.find((r) => r.id === roleId);
+    if (!role) throw new Error(`Role "${roleId}" not found`);
+    const list = role.connectors[kind] ?? [];
+    const next = list.filter((c) => c.id !== connectorId);
+    if (next.length === list.length)
+      throw new Error(`Connector "${connectorId}" not found in role "${roleId}" ${kind}`);
+    this.updateRole(roleId, { connectors: { ...role.connectors, [kind]: next } });
   }
 
   private load(): AppConfig {

@@ -15,7 +15,7 @@ import { resolveAttachmentPaths } from "../utils/outgoing-attachments.js";
 import { extractAttachmentText } from "../utils/attachment-extract.js";
 
 setLogOutput("stderr");
-import type { ApiTier, MailMessage, CalendarEvent } from "../types/index.js";
+import type { ApiTier, MailMessage, CalendarEvent, ConnectorConfig } from "../types/index.js";
 
 const configManager = new ConfigManager();
 const registry = new ConnectorRegistry(configManager);
@@ -246,6 +246,208 @@ server.tool(
     }
 
     return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+  },
+);
+
+// ===========================================================================
+// Config-management tools — WRITE ~/.eule/config.yaml. STRUCTURAL ONLY: none of
+// them accept a secret (password / clientSecret / token / totpSecret). Secrets
+// are entered exclusively in the local credential window via the CLI
+// (`eule secret totp …`), so a prompt-injected tool call cannot smuggle one in.
+// ===========================================================================
+
+const CONNECTOR_KINDS = [
+  "mail",
+  "calendar",
+  "contacts",
+  "messenger",
+  "files",
+  "documents",
+] as const;
+
+function toolError(e: unknown) {
+  return {
+    content: [{ type: "text" as const, text: `❌ ${e instanceof Error ? e.message : String(e)}` }],
+    isError: true,
+  };
+}
+
+// --- config_get tool (read-only; secrets redacted) ---
+server.tool(
+  "config_get",
+  "Show the current configuration (roles, connectors, oauth, autoAuth) with every secret redacted. Read-only.",
+  {},
+  async () => {
+    const c = configManager.get();
+    const lines: string[] = [];
+    lines.push(`language: ${c.language}`);
+    lines.push(
+      `oauth: clientId=${c.oauth.clientId} tenant=${c.oauth.tenant} apiVersion=${c.oauth.apiVersion ?? "v2"}`,
+    );
+    lines.push(`google: ${c.google ? "configured (clientSecret set)" : "—"}`);
+    const aa = c.autoAuth ?? [];
+    lines.push(`autoAuth (${String(aa.length)}):`);
+    for (const a of aa) {
+      lines.push(
+        `  ${a.account}: password=${a.password ? "set" : "—"} totpSecret=${a.totpSecret ? "set" : "—"}`,
+      );
+    }
+    lines.push(`roles (${String(c.roles.length)}):`);
+    for (const r of c.roles) {
+      lines.push(`  ${r.id}: ${r.name} (${String(r.weeklyHours)}h)`);
+      for (const kind of CONNECTOR_KINDS) {
+        for (const cn of r.connectors[kind] ?? []) {
+          lines.push(
+            `    ${kind}: ${cn.id} [${cn.type}] ${cn.mailbox ?? cn.account}${cn.mailbox ? " (shared)" : ""}`,
+          );
+        }
+      }
+    }
+    return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+  },
+);
+
+// --- role_upsert tool [WRITES] ---
+server.tool(
+  "role_upsert",
+  "Create or update a role's metadata. [WRITES config.yaml]",
+  {
+    id: z.string().describe("Role id (stable key)"),
+    name: z.string().optional().describe("Display name (required when creating a new role)"),
+    weeklyHours: z.number().optional(),
+    contexts: z.array(z.string()).optional(),
+  },
+  async ({ id, name, weeklyHours, contexts }) => {
+    try {
+      if (configManager.get().roles.some((r) => r.id === id)) {
+        configManager.updateRole(id, {
+          ...(name !== undefined ? { name } : {}),
+          ...(weeklyHours !== undefined ? { weeklyHours } : {}),
+          ...(contexts !== undefined ? { contexts } : {}),
+        });
+        return { content: [{ type: "text" as const, text: `✅ Updated role "${id}".` }] };
+      }
+      if (!name) {
+        return {
+          content: [{ type: "text" as const, text: "A new role needs a name." }],
+          isError: true,
+        };
+      }
+      configManager.addRole({
+        id,
+        name,
+        weeklyHours: weeklyHours ?? 0,
+        contexts: contexts ?? [],
+        connectors: {},
+      });
+      return { content: [{ type: "text" as const, text: `✅ Created role "${id}".` }] };
+    } catch (e) {
+      return toolError(e);
+    }
+  },
+);
+
+// --- role_remove tool [WRITES] ---
+server.tool(
+  "role_remove",
+  "Remove a role and its connectors. [WRITES config.yaml]",
+  { id: z.string() },
+  async ({ id }) => {
+    try {
+      configManager.removeRole(id);
+      return { content: [{ type: "text" as const, text: `✅ Removed role "${id}".` }] };
+    } catch (e) {
+      return toolError(e);
+    }
+  },
+);
+
+// --- account_add tool [WRITES] ---
+server.tool(
+  "account_add",
+  "Add a connector (account) to a role. STRUCTURAL ONLY — never pass a password/secret; " +
+    "for imap/caldav/carddav/paperless the secret must be set separately via the local " +
+    "credential window (CLI) before the connector works. [WRITES config.yaml]",
+  {
+    role: z.string(),
+    kind: z.enum(CONNECTOR_KINDS),
+    type: z.enum(["m365", "imap", "google", "caldav", "carddav", "ical", "signal", "paperless"]),
+    account: z.string(),
+    id: z.string().optional().describe("Connector id (default derived from type+account)"),
+    mailbox: z.string().optional().describe("Shared/delegate mailbox to target"),
+    host: z.string().optional(),
+    port: z.number().optional(),
+    smtpHost: z.string().optional(),
+    smtpPort: z.number().optional(),
+    url: z.string().optional().describe("CalDAV/CardDAV/iCal/Paperless base URL"),
+  },
+  async (p) => {
+    try {
+      const id = p.id ?? `${p.type}-${p.account.replace(/[^a-zA-Z0-9]+/g, "-")}`;
+      const connector: ConnectorConfig = {
+        id,
+        type: p.type,
+        account: p.account,
+        ...(p.mailbox ? { mailbox: p.mailbox } : {}),
+        ...(p.host ? { host: p.host } : {}),
+        ...(p.port !== undefined ? { port: p.port } : {}),
+        ...(p.smtpHost ? { smtpHost: p.smtpHost } : {}),
+        ...(p.smtpPort !== undefined ? { smtpPort: p.smtpPort } : {}),
+        ...(p.url ? { url: p.url } : {}),
+      };
+      configManager.addConnector(p.role, p.kind, connector);
+      const needsSecret = ["imap", "caldav", "carddav", "paperless"].includes(p.type);
+      const note = needsSecret
+        ? " ⚠ Needs a secret — set it via the local credential window (CLI); it can't be set through a tool."
+        : "";
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `✅ Added ${p.kind} connector "${id}" to role "${p.role}".${note}`,
+          },
+        ],
+      };
+    } catch (e) {
+      return toolError(e);
+    }
+  },
+);
+
+// --- account_remove tool [WRITES] ---
+server.tool(
+  "account_remove",
+  "Remove a connector (by id) from a role. [WRITES config.yaml]",
+  { role: z.string(), kind: z.enum(CONNECTOR_KINDS), id: z.string() },
+  async ({ role, kind, id }) => {
+    try {
+      configManager.removeConnector(role, kind, id);
+      return {
+        content: [{ type: "text" as const, text: `✅ Removed ${kind} connector "${id}".` }],
+      };
+    } catch (e) {
+      return toolError(e);
+    }
+  },
+);
+
+// --- config_set_oauth tool [WRITES] ---
+server.tool(
+  "config_set_oauth",
+  "Set the M365 OAuth app id / tenant / endpoint generation. No secret involved " +
+    "(public-client auth carries none). [WRITES config.yaml]",
+  {
+    clientId: z.string().optional(),
+    tenant: z.string().optional(),
+    apiVersion: z.enum(["v1", "v2"]).optional(),
+  },
+  async (p) => {
+    try {
+      configManager.setOAuth(p);
+      return { content: [{ type: "text" as const, text: "✅ Updated oauth settings." }] };
+    } catch (e) {
+      return toolError(e);
+    }
   },
 );
 

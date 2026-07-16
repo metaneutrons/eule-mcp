@@ -60,7 +60,7 @@ Eule is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) serve
 - **Role-based context** — map accounts and connectors to professional roles
 - **LLM-optimized output** — HTML emails rendered as clean Markdown with thread splitting
 
-## Tools (38)
+## Tools (47)
 
 ### 🔐 Auth (3)
 
@@ -70,11 +70,23 @@ Eule is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) serve
 | `auth_login` | Authenticate an account (M365 or Google) via browser OAuth |
 | `auth_probe` | Test which API tier works for an account |
 
-### 👤 Roles (1)
+### 👤 Roles & config (7)
+
+Structural config editing over MCP. **These never accept a secret** — passwords,
+client secrets, tokens and TOTP secrets are entered only in the local credential
+window via the CLI (`eule secret …`), so a prompt-injected tool call can't
+smuggle one in. Read (`config_get`, `role_list`) and write (`[WRITES]`) tools
+are kept clearly separate.
 
 | Tool | Description |
 |---|---|
 | `role_list` | List all configured roles with connectors and weekly hours |
+| `config_get` | Full config (roles, connectors, oauth, autoAuth) — secrets redacted |
+| `role_upsert` | Create/update a role's metadata `[WRITES]` |
+| `role_remove` | Remove a role and its connectors `[WRITES]` |
+| `account_add` | Add a connector (account) to a role — structural only `[WRITES]` |
+| `account_remove` | Remove a connector from a role `[WRITES]` |
+| `config_set_oauth` | Set the M365 client id / tenant / api-version `[WRITES]` |
 
 ### 📧 Mail (8)
 
