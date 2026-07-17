@@ -89,6 +89,26 @@ describe("configuration SSOT schema", () => {
             id: "personal",
             name: "Personal",
             weeklyHours: 0,
+            connectors: {
+              mail: [
+                {
+                  ...connector,
+                  credentialRef: "connector/user@example.com/mail/icloud",
+                },
+              ],
+            },
+          },
+        ],
+      }),
+    ).not.toThrow();
+    expect(() =>
+      parseAppConfig({
+        ...base,
+        roles: [
+          {
+            id: "personal",
+            name: "Personal",
+            weeklyHours: 0,
             connectors: { mail: [{ ...connector, credentialRef: "other-app/key" }] },
           },
         ],

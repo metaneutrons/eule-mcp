@@ -44,7 +44,7 @@ export const connectorSchema = z
     credentialRef: z
       .string()
       .regex(
-        /^connector\/[A-Za-z0-9][A-Za-z0-9._-]*\/(?:mail|calendar|contacts|messenger|files|documents)\/[A-Za-z0-9][A-Za-z0-9._-]*$/,
+        /^connector\/[A-Za-z0-9@][A-Za-z0-9@._-]*\/(?:mail|calendar|contacts|messenger|files|documents)\/[A-Za-z0-9@][A-Za-z0-9@._-]*$/,
       )
       .optional(),
     url: z.url().optional(),

@@ -46,11 +46,20 @@ async function configure(): Promise<void> {
     const existing = config.get().roles.find((role) => role.id === roleId);
     if (!existing) {
       const name = (await io.question("Role name [Personal]: ")).trim() || "Personal";
-      const hoursText = (await io.question("Weekly hours [0]: ")).trim();
+      let weeklyHours: number | undefined;
+      do {
+        const hoursText = (await io.question("Weekly hours [0]: ")).trim();
+        const candidate = hoursText ? Number(hoursText) : 0;
+        if (Number.isFinite(candidate) && candidate >= 0 && candidate <= 168) {
+          weeklyHours = candidate;
+        } else {
+          console.log("Enter a number from 0 to 168.");
+        }
+      } while (weeklyHours === undefined);
       config.addRole({
         id: roleId,
         name,
-        weeklyHours: hoursText ? Number(hoursText) : 0,
+        weeklyHours,
         contexts: [],
         connectors: {},
       });
