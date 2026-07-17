@@ -14,7 +14,7 @@ use tao::{
     event_loop::{ControlFlow, EventLoopBuilder},
     window::WindowBuilder,
 };
-use wry::WebViewBuilder;
+use wry::{PageLoadEvent, WebViewBuilder};
 
 /// Event-loop message: the injected page script found the OTP field and wants a
 /// fresh TOTP code filled in (kept off the injected JS so the secret stays in
@@ -22,6 +22,8 @@ use wry::WebViewBuilder;
 #[derive(Debug, Clone, Copy)]
 enum UserEvent {
     FillTotp,
+    /// A page finished loading — (re)inject the MFA poller into the new document.
+    InjectPoller,
 }
 
 #[derive(ClapArgs)]
@@ -184,12 +186,18 @@ fn gen_totp(secret_b32: &str) -> Option<String> {
     totp_at(secret_b32, now)
 }
 
-/// Injected at document start ONLY when auto-TOTP is enabled. Pure JS, carries
-/// no secret: it walks the Microsoft login UI to the verification-code step and,
-/// once the OTP field is present, asks the Rust side for a code over IPC. Mirrors
-/// the selectors/labels the Playwright auto-auth path uses.
+/// Injected at document start ONLY when auto-TOTP is enabled (or debug is on).
+/// Pure JS, carries no secret: it walks the Microsoft login UI from whatever MFA
+/// method is offered first (number-match push, FIDO, …) to the verification-code
+/// step, and once the OTP field is present asks Rust for a code over IPC. With
+/// `__EULE_DEBUG__` = true it also streams a per-tick DOM snapshot (URL + visible
+/// clickable texts + input name/id/aria-label — NEVER any field VALUE) so the
+/// selectors can be tuned to a specific tenant.
 const AUTO_TOTP_INIT_JS: &str = r#"
 (function () {
+  if (window.__eulePoller) return;   // idempotent per document (re-injected each page load)
+  window.__eulePoller = true;
+  var EULE_DEBUG = __EULE_DEBUG__;
   var requested = false;
   function vis(e) { return e && e.offsetParent !== null; }
   function byText(re) {
@@ -200,11 +208,30 @@ const AUTO_TOTP_INIT_JS: &str = r#"
     return document.querySelector(
       'input[name="otc"],input[autocomplete="one-time-code"],input[id="idTxtBx_SAOTCC_OTC"],input[aria-label*="ode"],input[placeholder*="ode"]');
   }
+  function snapshot() {
+    try {
+      var clk = [].slice.call(document.querySelectorAll('a,button,div[role=button],input[type=submit]'))
+        .filter(vis).map(function (e) { return e.tagName + ':' + ((e.textContent || e.value || '').trim().slice(0, 70)); });
+      var inp = [].slice.call(document.querySelectorAll('input'))
+        .map(function (e) { return e.type + '#' + (e.id || '') + '/' + (e.name || '') + '/' + (e.getAttribute('aria-label') || ''); });
+      window.ipc.postMessage('eule:debug:' + JSON.stringify({ url: location.href, clickables: clk, inputs: inp }));
+    } catch (e) {}
+  }
   function tick() {
     try {
-      if (location.href.indexOf('/fido/') > -1) { var a = byText(/andere Weise|another way/i); if (a) { a.click(); return; } }
-      if (!otp()) { var vc = byText(/verification code|Pr(ü|u)fcode/i); if (vc) { vc.click(); return; } }
-      if (otp() && !requested) { requested = true; window.ipc.postMessage('eule:need-totp'); setTimeout(function () { requested = false; }, 35000); return; }
+      if (EULE_DEBUG) snapshot();
+      // At the code field → request a fill (once; re-arm after 35s for a fresh code).
+      if (otp()) {
+        if (!requested) { requested = true; window.ipc.postMessage('eule:need-totp'); setTimeout(function () { requested = false; }, 35000); }
+        return;
+      }
+      // Prefer the verification-code method wherever it's offered.
+      var vc = byText(/verification code|Pr(ü|u)fcode|Verifizierungscode/i);
+      if (vc) { vc.click(); return; }
+      // Otherwise step off the default method (number-match push, FIDO, …) to the
+      // method list via any "use another way / can't use my app" affordance.
+      var alt = byText(/andere Weise|another way|can.?t use|can ?not use|nicht verwenden|andere.{0,3}(Methode|Verifizierung)|weitere.{0,3}Methode|try another|verwenden Sie eine andere/i);
+      if (alt) { alt.click(); return; }
       var k = document.querySelector('#idSIButton9');
       if (k && /angemeldet bleiben|stay signed in/i.test(document.body.innerText || '')) { k.click(); }
     } catch (e) {}
@@ -281,6 +308,10 @@ pub fn run(args: Args) -> Result<(), String> {
     let totp_secret = std::env::var("EULE_TOTP_SECRET")
         .ok()
         .filter(|s| !s.is_empty());
+    // EULE_AUTH_DEBUG streams a DOM snapshot of each MFA screen to
+    // ~/.eule/auth-debug.log (0600) so selectors can be tuned. No secret/value.
+    let debug = std::env::var_os("EULE_AUTH_DEBUG").is_some();
+    let debug_log = util::eule_path("auth-debug.log");
 
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     let window = WindowBuilder::new()
@@ -313,17 +344,47 @@ pub fn run(args: Args) -> Result<(), String> {
             true
         });
 
-    if totp_secret.is_some() {
-        // The init script drives the MFA UI and pings us; we answer with a fresh
-        // code via a user event so evaluate_script runs on the event-loop thread.
-        let proxy = event_loop.create_proxy();
-        builder = builder
-            .with_initialization_script(AUTO_TOTP_INIT_JS)
-            .with_ipc_handler(move |req| {
-                if req.into_body() == "eule:need-totp" {
-                    let _ = proxy.send_event(UserEvent::FillTotp);
+    let auto = totp_secret.is_some() || debug;
+    // The poller is (re)injected on every page load via evaluate_script — NOT
+    // with_initialization_script, which in practice only ran on the first page,
+    // so the MFA screens (which arrive as later navigations) were never seen.
+    let poller_js = auto
+        .then(|| AUTO_TOTP_INIT_JS.replace("__EULE_DEBUG__", if debug { "true" } else { "false" }));
+
+    if auto {
+        if debug {
+            eprintln!("EULE_AUTH_DEBUG: DOM snapshots → {}", debug_log.display());
+        }
+        // ipc: page → Rust (need a code / a debug snapshot).
+        let ipc_proxy = event_loop.create_proxy();
+        builder = builder.with_ipc_handler(move |req| {
+            let body = req.into_body();
+            if let Some(payload) = body.strip_prefix("eule:debug:") {
+                use std::io::Write;
+                if let Ok(mut f) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&debug_log)
+                {
+                    let _ = std::fs::set_permissions(
+                        &debug_log,
+                        <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(
+                            0o600,
+                        ),
+                    );
+                    let _ = writeln!(f, "{payload}");
                 }
-            });
+            } else if body == "eule:need-totp" {
+                let _ = ipc_proxy.send_event(UserEvent::FillTotp);
+            }
+        });
+        // Re-inject the poller into each new document once it finishes loading.
+        let load_proxy = event_loop.create_proxy();
+        builder = builder.with_on_page_load_handler(move |event, _url| {
+            if matches!(event, PageLoadEvent::Finished) {
+                let _ = load_proxy.send_event(UserEvent::InjectPoller);
+            }
+        });
     }
 
     let webview = builder
@@ -333,6 +394,11 @@ pub fn run(args: Args) -> Result<(), String> {
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
         match event {
+            Event::UserEvent(UserEvent::InjectPoller) => {
+                if let Some(js) = &poller_js {
+                    let _ = webview.evaluate_script(js);
+                }
+            }
             Event::UserEvent(UserEvent::FillTotp) => {
                 if let Some(secret) = totp_secret.as_deref() {
                     match gen_totp(secret) {
