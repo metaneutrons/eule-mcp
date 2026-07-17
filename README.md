@@ -428,6 +428,23 @@ Contributions are welcome! This project is in early development, so there's plen
 
 Please follow [Conventional Commits](https://www.conventionalcommits.org/) for commit messages.
 
+### Releases and versioning
+
+`package.json` is the single source of truth for the Eule product version. Do
+not edit versions or create release tags manually. Release Please watches
+Conventional Commits on `main` and maintains a release PR containing the SemVer
+bump, `CHANGELOG.md`, Rust helper metadata, and lockfile updates. Merging that
+PR creates the `v<version>` GitHub release and builds checksum-protected helper
+binaries for every supported platform.
+
+- `fix:` produces a patch release.
+- `feat:` produces a minor release.
+- `feat!:`/`fix!:` or a `BREAKING CHANGE:` footer produces a major release.
+- Run `pnpm version:check` locally to verify all release metadata agrees.
+
+Package-registry publication is intentionally separate and is not performed by
+the release workflow.
+
 Architecture and security details are documented in
 [ARCHITECTURE.md](ARCHITECTURE.md), [SECURITY.md](SECURITY.md), and
 [FINAL_SECURITY_REVIEW.md](FINAL_SECURITY_REVIEW.md).

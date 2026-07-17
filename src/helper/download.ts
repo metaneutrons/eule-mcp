@@ -11,7 +11,7 @@ import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { EULE_VERSION } from "../version.js";
 
 const REPO = "metaneutrons/eule-mcp";
 
@@ -38,22 +38,6 @@ export function helperPath(): string {
   return join(homedir(), ".eule", "bin", name);
 }
 
-/** Read this package's version by walking up from the running module to package.json. */
-function packageVersion(): string {
-  let dir = dirname(fileURLToPath(import.meta.url));
-  for (let i = 0; i < 6; i++) {
-    const p = join(dir, "package.json");
-    if (existsSync(p)) {
-      const pkg = JSON.parse(readFileSync(p, "utf-8")) as { name?: string; version?: string };
-      if (pkg.name === "eule-mcp" && pkg.version) return pkg.version;
-    }
-    const up = dirname(dir);
-    if (up === dir) break;
-    dir = up;
-  }
-  throw new Error("Could not determine eule-mcp version for the helper download.");
-}
-
 function sha256(buf: Buffer): string {
   return createHash("sha256").update(buf).digest("hex");
 }
@@ -69,7 +53,7 @@ async function fetchBuffer(url: string): Promise<Buffer> {
  * needed. Returns its absolute path. `version` defaults to this package's
  * version (→ tag `v<version>`), overridable for tests.
  */
-export async function ensureHelper(version = packageVersion()): Promise<string> {
+export async function ensureHelper(version = EULE_VERSION): Promise<string> {
   const dest = helperPath();
   const asset = assetName();
   const base = `https://github.com/${REPO}/releases/download/v${version}/${asset}`;

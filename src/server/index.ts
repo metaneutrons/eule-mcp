@@ -26,6 +26,7 @@ import { registerTaskTools } from "../tools/task-tools.js";
 import { ConnectorRegistry } from "../connectors/index.js";
 import { tokenRepository } from "../auth/token-repository.js";
 import { setLogOutput, logger } from "../utils/logger.js";
+import { EULE_VERSION } from "../version.js";
 
 setLogOutput("stderr");
 
@@ -37,7 +38,7 @@ export const dbManager = new DatabaseManager();
 
 const server = new McpServer({
   name: "eule",
-  version: "0.1.0",
+  version: EULE_VERSION,
 });
 
 registerAuthTools(server, new AuthService(configManager, tokenRepository));
