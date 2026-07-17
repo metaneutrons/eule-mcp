@@ -22,6 +22,11 @@ language: de # de | en
 #   - account: "user@example.com"
 #     totpSecret: "YOUR_BASE32_TOTP_SECRET"
 
+# Password/API-token connectors should be created with `eule-mcp configure`.
+# Their secret is stored by the OS; YAML contains only a non-secret reference:
+# credentialRef: "connector/private/mail/icloud"
+# Inline `password:` and `token:` remain supported for migration only.
+
 roles:
   - id: VPDIT
     name: "VP Hochschule Hannover"

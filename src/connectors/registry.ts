@@ -31,12 +31,19 @@ import { GoogleContactConnector } from "../providers/google/google-contacts.js";
 import { GoogleDriveConnector } from "../providers/google/google-drive.js";
 import { PaperlessConnector } from "../providers/paperless/index.js";
 import { RolePolicyService, type AccessMode } from "../config/index.js";
+import { readCredential } from "../helper/credential-store.js";
 
 export class ConnectorRegistry {
   private readonly policy: RolePolicyService;
 
   constructor(private readonly config: ConfigManager) {
     this.policy = new RolePolicyService(() => this.config.get());
+  }
+
+  private secret(connector: ConnectorConfig): string | undefined {
+    return connector.credentialRef
+      ? readCredential(connector.credentialRef, this.config.euleDirPath)
+      : (connector.password ?? connector.token);
   }
 
   /** Get all mail connectors, optionally filtered by role. */
@@ -62,7 +69,7 @@ export class ConnectorRegistry {
               port: mc.port,
               smtpPort: mc.smtpPort,
               auth: mc.auth ?? "password",
-              password: mc.password,
+              password: this.secret(mc),
             }),
           );
           continue;
@@ -155,7 +162,7 @@ export class ConnectorRegistry {
         port: mc.port,
         smtpPort: mc.smtpPort,
         auth: mc.auth ?? "password",
-        password: mc.password,
+        password: this.secret(mc),
       });
     }
 
@@ -205,12 +212,13 @@ export class ConnectorRegistry {
     for (const r of roles) {
       for (const cc of r.connectors.calendar ?? []) {
         if (cc.type === "caldav") {
-          if (cc.url && cc.password) {
+          const password = this.secret(cc);
+          if (cc.url && password) {
             connectors.push(
               new CalDavCalendarConnector(cc.account, {
                 account: cc.account,
                 url: cc.url,
-                password: cc.password,
+                password,
               }),
             );
           }
@@ -265,12 +273,13 @@ export class ConnectorRegistry {
     for (const r of roles) {
       for (const cc of r.connectors.contacts ?? []) {
         if (cc.type === "carddav") {
-          if (cc.url && cc.password) {
+          const password = this.secret(cc);
+          if (cc.url && password) {
             connectors.push(
               new CardDavContactConnector(cc.account, {
                 account: cc.account,
                 url: cc.url,
-                password: cc.password,
+                password,
               }),
             );
           }
@@ -386,8 +395,9 @@ export class ConnectorRegistry {
     const roles = this.policy.select(role, "documents", mode);
     for (const r of roles) {
       for (const dc of r.connectors.documents ?? []) {
-        if (dc.type === "paperless" && dc.url && dc.token) {
-          connectors.push(new PaperlessConnector(dc.account || dc.id, dc.url, dc.token));
+        const token = this.secret(dc);
+        if (dc.type === "paperless" && dc.url && token) {
+          connectors.push(new PaperlessConnector(dc.account || dc.id, dc.url, token));
         }
       }
     }

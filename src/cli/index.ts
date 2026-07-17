@@ -5,12 +5,14 @@ import {
   tierAuthParam,
   loadTokens,
 } from "../providers/m365/index.js";
-import { oauthCapture, secretPrompt } from "../helper/run.js";
+import { credentialPrompt, oauthCapture, secretPrompt } from "../helper/run.js";
 import { isBase32Secret } from "../utils/security.js";
 import { readFileSync, unlinkSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
-import type { ApiTier, OAuthConfig } from "../types/index.js";
+import { createInterface } from "node:readline/promises";
+import { deleteCredential } from "../helper/credential-store.js";
+import type { ApiTier, ConnectorConfig, ConnectorKind, OAuthConfig } from "../types/index.js";
 
 const args = process.argv.slice(2);
 const command = args[0] ?? "help";
@@ -31,6 +33,102 @@ function parseFlags(argv: string[]): Record<string, string | boolean> {
     }
   }
   return out;
+}
+
+async function configure(): Promise<void> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY)
+    throw new Error("configure requires an interactive local terminal");
+  const io = createInterface({ input: process.stdin, output: process.stdout });
+  const config = new ConfigManager();
+  try {
+    console.log("\nEule configuration wizard — secrets stay in your OS credential store\n");
+    const roleId = (await io.question("Role id [personal]: ")).trim() || "personal";
+    const existing = config.get().roles.find((role) => role.id === roleId);
+    if (!existing) {
+      const name = (await io.question("Role name [Personal]: ")).trim() || "Personal";
+      let weeklyHours: number | undefined;
+      do {
+        const hoursText = (await io.question("Weekly hours [0]: ")).trim();
+        const candidate = hoursText ? Number(hoursText) : 0;
+        if (Number.isFinite(candidate) && candidate >= 0 && candidate <= 168) {
+          weeklyHours = candidate;
+        } else {
+          console.log("Enter a number from 0 to 168.");
+        }
+      } while (weeklyHours === undefined);
+      config.addRole({
+        id: roleId,
+        name,
+        weeklyHours,
+        contexts: [],
+        connectors: {},
+      });
+    }
+
+    console.log("1) Microsoft 365  2) IMAP/SMTP  3) CalDAV  4) CardDAV  5) Paperless");
+    const choice = (await io.question("Connector type: ")).trim();
+    const definitions: Record<
+      string,
+      { type: ConnectorConfig["type"]; kind: ConnectorKind; secret?: string }
+    > = {
+      "1": { type: "m365", kind: "mail" },
+      "2": { type: "imap", kind: "mail", secret: "IMAP/SMTP password" },
+      "3": { type: "caldav", kind: "calendar", secret: "CalDAV password" },
+      "4": { type: "carddav", kind: "contacts", secret: "CardDAV password" },
+      "5": { type: "paperless", kind: "documents", secret: "Paperless API token" },
+    };
+    const definition = definitions[choice];
+    if (!definition) throw new Error("Unsupported connector selection");
+    const account = (await io.question("Account / username: ")).trim();
+    if (!account) throw new Error("Account is required");
+    const id = (await io.question(`Connector id [${definition.type}]: `)).trim() || definition.type;
+    const reference = `connector/${roleId}/${definition.kind}/${id}`;
+    let connector: ConnectorConfig;
+    if (definition.type === "imap") {
+      connector = {
+        id,
+        type: definition.type,
+        account,
+        credentialRef: reference,
+        host: (await io.question("IMAP host: ")).trim(),
+        smtpHost: (await io.question("SMTP host: ")).trim(),
+        auth: "password",
+      };
+    } else if (["caldav", "carddav", "paperless"].includes(definition.type)) {
+      connector = {
+        id,
+        type: definition.type,
+        account,
+        credentialRef: reference,
+        url: (await io.question("Service URL (https://): ")).trim(),
+      };
+    } else {
+      connector = { id, type: definition.type, account };
+    }
+
+    if (definition.secret) {
+      console.log("\nA branded Eule window will request the credential locally.");
+      const code = await credentialPrompt(`${definition.secret} for ${account}`, reference);
+      if (code !== 0) throw new Error("Credential entry was cancelled");
+    }
+    try {
+      config.addConnector(roleId, definition.kind, connector);
+    } catch (error) {
+      if (definition.secret) {
+        try {
+          deleteCredential(reference);
+        } catch {
+          // Preserve the configuration failure; the credential is still isolated in the OS store.
+        }
+      }
+      throw error;
+    }
+    console.log(`\n✅ Configured ${definition.type} connector ${roleId}/${definition.kind}/${id}.`);
+    if (definition.type === "m365")
+      console.log("Next: run eule-mcp login --device --account " + account);
+  } finally {
+    io.close();
+  }
 }
 
 /** Deprecated — kept as a thin alias so existing docs/muscle-memory still work.
@@ -186,6 +284,9 @@ async function main(): Promise<void> {
     case "login":
       await login();
       break;
+    case "configure":
+      await configure();
+      break;
     case "secret":
       await secretCmd();
       break;
@@ -195,6 +296,7 @@ async function main(): Promise<void> {
     default:
       console.log("Eule MCP — Kiro Office Agent 🦉\n");
       console.log("Usage:");
+      console.log("  eule-mcp configure                    Local role/account setup wizard");
       console.log("  eule-mcp setup                        Interactive account setup");
       console.log("  eule-mcp login --device [--tier ews]  Cross-platform device-code login");
       console.log("       [--account <email>] [--client-id <id>] [--api-version v1|v2]");

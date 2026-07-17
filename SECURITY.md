@@ -19,10 +19,12 @@ within a few days.
   a hidden `Bcc:` or extra headers (`src/utils/security.ts`, mail connectors).
 - **No upstream injection.** EWS SOAP, Microsoft Graph OData `$filter`, Graph
   URL path segments, and iCalendar/vCard values are escaped/encoded before use.
-- **Secrets at rest.** `~/.eule` is created `0700`; `config.yaml` and
-  `tokens.json` are atomically written `0600` (and re-chmodded on rewrite). The
-  token store reads defensively — a corrupt file starts empty rather than
-  throwing. These files are permission-protected, not encrypted.
+- **Secrets at rest.** Connector passwords and API tokens created through
+  `eule-mcp configure` are stored in macOS Keychain, Windows Credential Manager,
+  or Linux Secret Service; YAML retains only an opaque reference. Legacy inline
+  connector secrets remain supported for migration. `~/.eule` is `0700`, while
+  `config.yaml` and `tokens.json` are atomically written `0600`. OAuth tokens and
+  optional TOTP autofill secrets remain permission-protected, not encrypted.
 - **TLS enforced for credentialed connectors.** CalDAV, CardDAV and Paperless
   URLs must be `https://` (loopback `http://` is allowed for local tools). SMTP
   uses `requireTLS` so a stripped-STARTTLS MITM cannot downgrade to cleartext.
@@ -41,8 +43,8 @@ within a few days.
   authorization codes are obtained through an interactive browser, CLI, or the
   native `eule-helper`, then written directly to `tokens.json`. MCP auth tools
   return only account, provider, tier, expiry, and health metadata. The helper's
-  `secret-prompt` window writes entered values without exposing them to the
-  model.
+  branded `secret-prompt` window writes entered values directly to the native
+  credential store without exposing them to the model, stdout, argv, or logs.
 - **Tool policy and routing.** Work-context policies centrally enforce enabled,
   read-only, and connector-domain restrictions. Mutations are role/account
   scoped; these controls are not multi-human RBAC because stdio has one OS

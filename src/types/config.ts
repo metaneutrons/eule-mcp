@@ -13,6 +13,8 @@ export interface ConnectorConfig {
   readonly smtpPort?: number;
   readonly auth?: "oauth" | "password";
   readonly password?: string;
+  /** Opaque key in the OS credential store. Preferred over inline secrets. */
+  readonly credentialRef?: string;
   // CalDAV/CardDAV/iCal fields.
   readonly url?: string;
   // Paperless-NGX fields (type: "paperless").

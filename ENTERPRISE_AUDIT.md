@@ -71,9 +71,11 @@ negative cases. Per-tenant encryption keys should be managed outside config.
 
 ### P0: secret management
 
-Move OAuth refresh tokens, passwords, API tokens, client secrets, and TOTP seeds
-from YAML/JSON into OS keychains or an enterprise secret manager. Store only
-opaque secret references in configuration and support rotation/revocation.
+Connector passwords and API tokens now use opaque references backed by macOS
+Keychain, Windows Credential Manager, or Linux Secret Service when created with
+the local wizard. Remaining work is to migrate OAuth refresh tokens, Google
+client secrets, and optional TOTP seeds, and to add enterprise secret-manager
+adapters plus explicit rotation workflows.
 
 ### P1: complete the auditable command architecture
 

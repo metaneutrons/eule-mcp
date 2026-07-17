@@ -7,6 +7,8 @@ import type {
   OAuthConfig,
   RoleConfig,
 } from "../types/index.js";
+import { deleteCredential } from "../helper/credential-store.js";
+import { logger } from "../utils/logger.js";
 
 export interface RoleUpsertInput {
   readonly id: string;
@@ -26,7 +28,10 @@ export interface AccountBinding {
 
 /** Application boundary for structural configuration and account inventory. */
 export class ConfigService {
-  constructor(private readonly config: ConfigManager) {}
+  constructor(
+    private readonly config: ConfigManager,
+    private readonly removeCredential: (reference: string) => void = deleteCredential,
+  ) {}
 
   get(): AppConfig {
     return this.config.get();
@@ -71,7 +76,12 @@ export class ConfigService {
   }
 
   removeRole(id: string): void {
+    const role = this.config.get().roles.find((candidate) => candidate.id === id);
     this.config.removeRole(id);
+    if (role)
+      for (const kind of CONNECTOR_KINDS)
+        for (const connector of role.connectors[kind] ?? [])
+          if (connector.credentialRef) this.tryRemoveCredential(connector.credentialRef);
   }
 
   listAccounts(roleId?: string): AccountBinding[] {
@@ -104,10 +114,25 @@ export class ConfigService {
   }
 
   removeAccount(role: string, kind: ConnectorKind, id: string): void {
+    const connector = this.config
+      .get()
+      .roles.find((candidate) => candidate.id === role)
+      ?.connectors[kind]?.find((candidate) => candidate.id === id);
     this.config.removeConnector(role, kind, id);
+    if (connector?.credentialRef) this.tryRemoveCredential(connector.credentialRef);
   }
 
   setOAuth(patch: Partial<Pick<OAuthConfig, "clientId" | "tenant" | "apiVersion">>): void {
     this.config.setOAuth(patch);
+  }
+
+  private tryRemoveCredential(reference: string): void {
+    try {
+      this.removeCredential(reference);
+    } catch (error) {
+      logger.warn(
+        `Configuration removed, but its OS credential could not be deleted: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 }
