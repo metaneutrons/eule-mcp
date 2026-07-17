@@ -1,5 +1,11 @@
 # Eule MCP — Implementation Plan
 
+> [!NOTE]
+> This is the original historical implementation plan. It is retained for
+> design context and is not the current source of truth. See `README.md` for the
+> supported tool inventory, `ARCHITECTURE.md` for the implemented structure,
+> and `FINAL_SECURITY_REVIEW.md` for current security boundaries.
+
 ## Kiro Office Agent ("Büro-Eule" 🦉)
 
 ### Problem Statement
@@ -92,7 +98,7 @@ resource planning, and an idea memory — accessible via Kiro CLI.
 ```
 ~/.eule/
 ├── config.yaml
-├── tokens.json (encrypted)
+├── tokens.json (owner-only 0600; not encrypted)
 ├── eule.db (SQLite)
 └── knowledge/ (Markdown → indexed by Kiro KB)
     ├── notes/
@@ -175,12 +181,12 @@ roles:
 ## Tool Inventory
 
 ```
-Auth:       auth_login  auth_status  auth_probe
-Mail:       mail_list  mail_read  mail_send  mail_reply  mail_search
-Calendar:   calendar_list  calendar_today  calendar_create  calendar_update
-Tasks:      task_add  task_list  task_update  task_complete  task_inbox
+Auth:       auth_login  auth_status  auth_probe  auth_accounts  auth_logout
+Mail:       mail_list  mail_read  mail_search  mail_send  mail_draft  mail_send_draft  mail_update  mail_attachment_get
+Calendar:   calendar_calendars  calendar_list  calendar_today  calendar_create  calendar_update  calendar_delete
+Tasks:      task_add  task_list  task_update  task_complete  task_search
 Ideas:      idea_capture  idea_list  idea_search  idea_promote
-Roles:      role_list  role_add  role_update  role_remove
+Roles:      role_list  role_upsert  role_remove  account_list  account_add  account_remove
 Contexts:   context_list  context_add
 Planning:   plan_block  plan_week  plan_capacity
 Contacts:   contact_list  contact_add  contact_note
@@ -215,12 +221,12 @@ Markdown knowledge directory, CLI entry points.
 ### Task 2: OAuth authentication — CLI setup flow
 
 `eule-mcp setup` with browser-based OAuth2 (authorization code + PKCE),
-Thunderbird's client_id, multi-account, encrypted token persistence.
+Thunderbird's client_id and multi-account owner-only token persistence.
 
 - Local HTTP server on random port for redirect
 - Browser opens to Microsoft authorize URL
 - Exchange auth code for tokens
-- Store in `~/.eule/tokens.json` (encrypted)
+- Store in `~/.eule/tokens.json` (`0600`; encryption/keychain migration remains future work)
 - Auto-refresh: intercept 401 → refresh token → retry → if fails, `auth_login` re-auth
 - Interactive: "Add account?" → email → browser → "Success"
 
@@ -273,7 +279,7 @@ Send/reply across Graph, EWS, SMTP.
 - Graph: `POST /me/sendMail`, `POST /me/messages/{id}/reply`
 - EWS: CreateItem SendOnly, ReplyToItem
 - SMTP: `nodemailer` with XOAUTH2 to `smtp.office365.com:587`
-- `mail_send` and `mail_reply` MCP tools
+- `mail_send` handles new messages, replies, and forwards
 
 ---
 
@@ -294,13 +300,14 @@ SQLite schema + GTD tasks + Markdown rendering for Kiro KB.
 
 - Schema: tasks, projects, tags
 - On create/update: SQLite → render Markdown to `~/.eule/knowledge/`
-- `task_inbox`, `task_add`, `task_list`, `task_update`, `task_complete` tools
+- `task_add`, `task_list`, `task_update`, `task_complete`, `task_search` tools
 
 ### Task 11: Role and context management
 
 CRUD roles/contexts, persist to YAML.
 
-- `role_list`, `role_add`, `role_update`, `role_remove`, `context_list`, `context_add` tools
+- `role_list`, `role_upsert`, `role_remove`, `account_list`, `account_add`, and
+  `account_remove` tools; contexts are managed through `role_upsert`
 
 ---
 

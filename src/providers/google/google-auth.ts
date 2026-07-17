@@ -4,6 +4,7 @@ import { randomBytes, createHash } from "node:crypto";
 import open from "open";
 import type { GoogleOAuthConfig, AccountToken } from "../../types/index.js";
 import { loadTokens, saveTokens, parseTokenResponse } from "../m365/auth/oauth.js";
+import { fetchWithExecutionContext as fetch } from "../../utils/execution-context.js";
 
 const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";

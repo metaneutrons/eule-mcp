@@ -56,25 +56,53 @@ Eule is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) serve
 
 - **Multi-provider architecture** — M365, Google Workspace, CalDAV, CardDAV, IMAP, iCal, Signal
 - **Tiered API access** — Graph API → EWS → IMAP/SMTP, auto-detected per tenant
-- **Headless re-authentication** — optional TOTP auto-auth via Playwright when tokens expire
+- **Native webview login** — cross-platform helper for broker-only clients, with optional TOTP autofill
 - **Role-based context** — map accounts and connectors to professional roles
 - **LLM-optimized output** — HTML emails rendered as clean Markdown with thread splitting
 
-## Tools (38)
+## Tools (50)
 
-### 🔐 Auth (3)
+### 🔐 Auth (5)
 
 | Tool | Description |
 |---|---|
 | `auth_status` | Show authentication status and configuration |
 | `auth_login` | Authenticate an account (M365 or Google) via browser OAuth |
 | `auth_probe` | Test which API tier works for an account |
+| `auth_accounts` | List token health without exposing credentials |
+| `auth_logout` | Remove locally stored tokens for an account |
 
-### 👤 Roles (1)
+### 👤 Roles & config (8)
+
+Structural config editing over MCP. **These never accept a secret** — passwords,
+client secrets, tokens and TOTP secrets are entered only in the local credential
+window via the CLI (`eule secret …`), so a prompt-injected tool call can't
+smuggle one in. Read (`config_get`, `role_list`) and write (`[WRITES]`) tools
+are kept clearly separate.
 
 | Tool | Description |
 |---|---|
 | `role_list` | List all configured roles with connectors and weekly hours |
+| `account_list` | SSOT inventory of accounts and every role/connector binding |
+| `config_get` | Full config (roles, connectors, oauth, autoAuth) — secrets redacted |
+| `role_upsert` | Create/update a role's metadata `[WRITES]` |
+| `role_remove` | Remove a role and its connectors `[WRITES]` |
+| `account_add` | Add a connector (account) to a role — structural only `[WRITES]` |
+| `account_remove` | Remove a connector from a role `[WRITES]` |
+| `config_set_oauth` | Set the M365 client id / tenant / api-version `[WRITES]` |
+
+Roles can define an enforceable `policy` with `enabled`, `readOnly`, and
+`allowedConnectorKinds`. Policy checks happen centrally in the connector
+registry, including account-specific routing, so a disabled/read-only context
+cannot be bypassed by selecting an account directly. These are work-context
+policies; stdio transport does not authenticate distinct human callers and is
+therefore not a substitute for multi-user RBAC.
+
+> **Configuration validation:** startup now fails closed on unknown keys,
+> malformed URLs/ports, invalid IDs, duplicate role IDs, and duplicate connector
+> IDs within a role. Existing minimal configs still receive defaults for
+> language and OAuth settings. Back up `~/.eule/config.yaml` before upgrading
+> and fix any path-specific validation errors reported at startup.
 
 ### 📧 Mail (8)
 
@@ -95,6 +123,8 @@ Eule is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) serve
 > pymupdf4llm/pandoc), or `inline` (return an image so the model can see it).
 > Attachments on **reply/forward** are supported on Graph, Gmail and IMAP; on the
 > EWS fallback tier, attach via a new message or draft instead.
+> `mail_send` and `mail_send_draft` accept an optional `idempotency_key` to
+> prevent duplicate submission within the running server process.
 
 ### 💬 Messenger (3)
 
@@ -104,7 +134,7 @@ Eule is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) serve
 | `chat_read` | Read messages from a conversation |
 | `chat_send` | Send a message to a conversation |
 
-### 📁 Files (4)
+### 📁 Files (5)
 
 | Tool | Description |
 |---|---|
@@ -112,6 +142,7 @@ Eule is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) serve
 | `file_read` | Read file content (text extraction) |
 | `file_list` | List recently modified files |
 | `file_upload` | Upload a file to OneDrive or Google Drive |
+| `file_download` | Download a file from OneDrive or Google Drive |
 
 ### 📅 Calendar (6)
 
@@ -189,9 +220,11 @@ pnpm run build
 ### Setup
 
 ```bash
-# Interactive setup — authenticates your M365 account
-node dist/cli/index.js setup
+# Authenticate your M365 account (pick a login method below)
+node dist/cli/index.js login --device --tier ews
 ```
+
+> The old `setup` subcommand is a deprecated alias for `login` — prefer `login`.
 
 #### Login methods
 
@@ -210,7 +243,9 @@ node dist/cli/index.js setup
   (`urn:ietf:wg:oauth:2.0:oob` / custom scheme) that no browser can navigate to.
   The only path that works for clients like "Apple Internet Accounts" when
   device code is CA-blocked. The helper writes the token itself — it never
-  returns through the MCP/LLM.
+  returns through the MCP/LLM. If the account has a TOTP secret configured
+  (`autoAuth[].totpSecret`), the MFA code is auto-filled (the password is still
+  typed by you); pass `--no-totp` to disable.
 - **Flags:** `--account <email>`, `--client-id <id>`, `--api-version v1|v2`,
   `--tier graph|ews|imap`, `--redirect-uri <uri>`.
 
@@ -307,7 +342,7 @@ roles:
         - id: paperless
           type: paperless
           account: "paperless.local"
-          url: "http://paperless:8000"
+          url: "https://paperless.example.com"
           token: "your-api-token"
 ```
 
@@ -332,28 +367,30 @@ kiro-cli mcp add --name eule --command node --args "/path/to/eule-mcp/dist/serve
 }
 ```
 
-### Optional: Headless TOTP auto-auth
+### Optional: TOTP autofill for `login --capture`
 
-For unattended re-authentication when tokens expire (e.g., on a server):
+When you log in via the native webview (`login --capture`), the MFA code can be
+filled automatically from a stored TOTP secret. You still type the password
+yourself in the window; only the 6-digit code is auto-entered. Store the secret
+via the credential window (it never passes through the model or argv):
 
 ```bash
-# Playwright is already an npm dependency, but the Chromium browser
-# binary (~150MB) needs to be downloaded separately:
-npx playwright install chromium
+node dist/cli/index.js secret totp --account you@example.com
 ```
 
-Add to `~/.eule/config.yaml`:
+This writes an `autoAuth` entry to `~/.eule/config.yaml`:
 
 ```yaml
 autoAuth:
   - account: "you@example.com"
-    password: "your-password"
     totpSecret: "YOUR_BASE32_TOTP_SECRET"
 ```
 
+Pass `--no-totp` to `login --capture` to skip autofill for a given login.
+
 ## Roadmap
 
-- [x] OAuth with PKCE + headless TOTP auto-auth
+- [x] OAuth with PKCE + webview TOTP autofill
 - [x] Device-code login (cross-platform, no redirect URI; CA-blockable)
 - [x] Legacy v1 endpoint + per-token client-id/apiVersion (locked-down tenants)
 - [x] Webview capture helper (Rust/wry) — cross-platform, signed + notarized releases
@@ -373,7 +410,7 @@ autoAuth:
 - [x] Paperless-ngx connector
 - [ ] Apple Notes (macOS-only, AppleScript/SQLite)
 - [ ] Messengers — iMessage (macOS), WhatsApp (Business API), Telegram, Discord, Slack, Matrix
-- [ ] Google Workspace (Gmail API, Google Calendar API)
+- [x] Google Workspace (Gmail, Calendar, Contacts, and Drive APIs)
 - [ ] Auto-auth i18n resilience
 - [ ] IETF OAuth for Open Public Clients (`draft-ietf-mailmaint-oauth-public`) — provider-agnostic auth with dynamic client registration
 - [ ] Exchange on-premise support (Basic/NTLM auth, configurable EWS URL)
@@ -390,6 +427,27 @@ Contributions are welcome! This project is in early development, so there's plen
 5. Open a Pull Request
 
 Please follow [Conventional Commits](https://www.conventionalcommits.org/) for commit messages.
+
+### Releases and versioning
+
+`package.json` is the single source of truth for the Eule product version. Do
+not edit versions or create release tags manually. Release Please watches
+Conventional Commits on `main` and maintains a release PR containing the SemVer
+bump, `CHANGELOG.md`, Rust helper metadata, and lockfile updates. Merging that
+PR creates the `v<version>` GitHub release and builds checksum-protected helper
+binaries for every supported platform.
+
+- `fix:` produces a patch release.
+- `feat:` produces a minor release.
+- `feat!:`/`fix!:` or a `BREAKING CHANGE:` footer produces a major release.
+- Run `pnpm version:check` locally to verify all release metadata agrees.
+
+Package-registry publication is intentionally separate and is not performed by
+the release workflow.
+
+Architecture and security details are documented in
+[ARCHITECTURE.md](ARCHITECTURE.md), [SECURITY.md](SECURITY.md), and
+[FINAL_SECURITY_REVIEW.md](FINAL_SECURITY_REVIEW.md).
 
 ## License
 

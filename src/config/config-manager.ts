@@ -1,19 +1,23 @@
-/* eslint-disable @typescript-eslint/no-base-to-string */
-import { readFileSync, writeFileSync, existsSync, mkdirSync, chmodSync } from "node:fs";
+import {
+  readFileSync,
+  writeFileSync,
+  existsSync,
+  mkdirSync,
+  chmodSync,
+  renameSync,
+  rmSync,
+} from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import yaml from "js-yaml";
-import type {
-  AppConfig,
-  AutoAuthConfig,
-  OAuthConfig,
-  GoogleOAuthConfig,
-  RoleConfig,
-  ConnectorConfig,
-} from "../types/index.js";
+import type { AppConfig, OAuthConfig, RoleConfig, ConnectorConfig } from "../types/index.js";
+import { parseAppConfig } from "./schema.js";
 
 const EULE_DIR = join(homedir(), ".eule");
 const CONFIG_PATH = join(EULE_DIR, "config.yaml");
+
+/** Connector domains on a role (mail | calendar | contacts | messenger | files | documents). */
+export type ConnectorKind = keyof RoleConfig["connectors"];
 
 const DEFAULT_OAUTH: OAuthConfig = {
   clientId: "9e5f94bc-e8a4-4e73-b8be-63364c29d753", // Thunderbird
@@ -54,33 +58,14 @@ function ensureDirectories(): void {
 
 /** Validates a loaded config object. Throws on invalid structure. */
 function validate(raw: unknown): AppConfig {
-  if (typeof raw !== "object" || raw === null) {
-    throw new Error("Config must be a YAML object");
-  }
-
-  const obj = raw as Record<string, unknown>;
-  const language = obj.language === "en" ? "en" : "de";
-  const oauth = parseOAuth(obj.oauth);
-  const autoAuth = parseAutoAuth(obj.autoAuth);
-  const roles: RoleConfig[] = [];
-
-  if (Array.isArray(obj.roles)) {
-    for (const r of obj.roles as unknown[]) {
-      if (typeof r !== "object" || r === null) continue;
-      const role = r as Record<string, unknown>;
-      roles.push({
-        id: String(role.id ?? ""),
-        name: String(role.name ?? ""),
-        weeklyHours: Number(role.weeklyHours ?? 0),
-        contexts: Array.isArray(role.contexts) ? (role.contexts as unknown[]).map(String) : [],
-        connectors: parseConnectors(role.connectors),
-        signature:
-          typeof role.signature === "string" ? resolveSignature(role.signature) : undefined,
-      });
-    }
-  }
-
-  return { language, oauth, google: parseGoogleOAuth(obj.google), autoAuth, roles };
+  const parsed = parseAppConfig(raw);
+  return {
+    ...parsed,
+    roles: parsed.roles.map((role) => ({
+      ...role,
+      signature: role.signature ? resolveSignature(role.signature) : undefined,
+    })),
+  };
 }
 
 /** If value looks like a file path and exists, read it; otherwise treat as inline HTML. */
@@ -90,78 +75,6 @@ function resolveSignature(value: string): string {
     return readFileSync(expanded, "utf-8");
   }
   return value;
-}
-
-function parseGoogleOAuth(raw: unknown): GoogleOAuthConfig | undefined {
-  if (typeof raw !== "object" || raw === null) return undefined;
-  const o = raw as Record<string, unknown>;
-  if (typeof o.clientId !== "string" || typeof o.clientSecret !== "string") return undefined;
-  return { clientId: o.clientId, clientSecret: o.clientSecret };
-}
-
-function parseAutoAuth(raw: unknown): AutoAuthConfig[] | undefined {
-  if (!Array.isArray(raw)) return undefined;
-  return (raw as unknown[])
-    .filter((c): c is Record<string, unknown> => typeof c === "object" && c !== null)
-    .filter(
-      (c) =>
-        typeof c.account === "string" &&
-        typeof c.password === "string" &&
-        typeof c.totpSecret === "string",
-    )
-    .map((c) => ({
-      account: String(c.account),
-      password: String(c.password),
-      totpSecret: String(c.totpSecret),
-    }));
-}
-
-function parseOAuth(raw: unknown): OAuthConfig {
-  if (typeof raw !== "object" || raw === null) return DEFAULT_OAUTH;
-  const obj = raw as Record<string, unknown>;
-  return {
-    clientId: typeof obj.clientId === "string" ? obj.clientId : DEFAULT_OAUTH.clientId,
-    tenant: typeof obj.tenant === "string" ? obj.tenant : DEFAULT_OAUTH.tenant,
-    apiVersion: obj.apiVersion === "v1" || obj.apiVersion === "v2" ? obj.apiVersion : undefined,
-  };
-}
-
-function parseConnectors(raw: unknown): RoleConfig["connectors"] {
-  if (typeof raw !== "object" || raw === null) return {};
-  const obj = raw as Record<string, unknown>;
-  return {
-    mail: parseConnectorList(obj.mail),
-    calendar: parseConnectorList(obj.calendar),
-    contacts: parseConnectorList(obj.contacts),
-    messenger: parseConnectorList(obj.messenger),
-    files: parseConnectorList(obj.files),
-    documents: parseConnectorList(obj.documents),
-  };
-}
-
-function parseConnectorList(raw: unknown): RoleConfig["connectors"]["mail"] {
-  if (!Array.isArray(raw)) return undefined;
-  return (raw as unknown[])
-    .filter((c): c is Record<string, unknown> => typeof c === "object" && c !== null)
-    .map((c) => ({
-      id: String(c.id ?? ""),
-      type: (["imap", "caldav", "carddav", "ical", "signal", "google", "paperless"].includes(
-        String(c.type),
-      )
-        ? String(c.type)
-        : "m365") as ConnectorConfig["type"],
-      account: String(c.account ?? ""),
-      mailbox: typeof c.mailbox === "string" ? c.mailbox : undefined,
-      host: typeof c.host === "string" ? c.host : undefined,
-      port: typeof c.port === "number" ? c.port : undefined,
-      smtpHost: typeof c.smtpHost === "string" ? c.smtpHost : undefined,
-      smtpPort: typeof c.smtpPort === "number" ? c.smtpPort : undefined,
-      auth: c.auth === "oauth" || c.auth === "password" ? c.auth : undefined,
-      password: typeof c.password === "string" ? c.password : undefined,
-      url: typeof c.url === "string" ? c.url : undefined,
-      token: typeof c.token === "string" ? c.token : undefined,
-      signalCliUrl: typeof c.signalCliUrl === "string" ? c.signalCliUrl : undefined,
-    }));
 }
 
 export class ConfigManager {
@@ -195,14 +108,24 @@ export class ConfigManager {
 
   /** Writes the current config back to disk with owner-only (0600) permissions. */
   save(config: AppConfig): void {
-    this.config = config;
-    writeFileSync(CONFIG_PATH, yaml.dump(config, { lineWidth: 120 }), {
-      encoding: "utf-8",
-      mode: 0o600,
-    });
-    // writeFileSync only applies `mode` when creating the file; enforce it on
-    // rewrite so a pre-existing config that held looser perms is tightened.
-    chmodSync(CONFIG_PATH, 0o600);
+    const validated = validate(config);
+    const temporaryPath = `${CONFIG_PATH}.${String(process.pid)}.tmp`;
+    try {
+      writeFileSync(temporaryPath, yaml.dump(validated, { lineWidth: 120 }), {
+        encoding: "utf-8",
+        mode: 0o600,
+      });
+      chmodSync(temporaryPath, 0o600);
+      renameSync(temporaryPath, CONFIG_PATH);
+      this.config = validated;
+    } catch (error) {
+      try {
+        rmSync(temporaryPath, { force: true });
+      } catch {
+        // Preserve the original failure.
+      }
+      throw error;
+    }
   }
 
   /** Add a new role. */
@@ -230,6 +153,47 @@ export class ConfigManager {
     const roles = this.config.roles.filter((r) => r.id !== id);
     if (roles.length === this.config.roles.length) throw new Error(`Role "${id}" not found`);
     this.save({ ...this.config, roles });
+  }
+
+  /** Create or update an account's autoAuth TOTP secret (merging with any
+   *  existing entry), then persist. Used by the credential-window setup so the
+   *  secret lands in config.yaml without ever passing through the model. */
+  upsertAutoAuth(account: string, patch: { totpSecret?: string }): void {
+    const existing = this.config.autoAuth ?? [];
+    const idx = existing.findIndex((a) => a.account === account);
+    const next = [...existing];
+    if (idx === -1) next.push({ account, ...patch });
+    else next[idx] = { ...next[idx], account, ...patch };
+    this.save({ ...this.config, autoAuth: next });
+  }
+
+  /** Patch the oauth block (clientId/tenant/apiVersion). Structural only — no
+   *  secret is involved (M365 public-client auth carries no client secret). */
+  setOAuth(patch: Partial<Pick<OAuthConfig, "clientId" | "tenant" | "apiVersion">>): void {
+    this.save({ ...this.config, oauth: { ...this.config.oauth, ...patch } });
+  }
+
+  /** Append a connector to a role. Rejects a duplicate id. The connector must
+   *  NOT carry a secret (password/token) — those are set out-of-band via the
+   *  credential window, never through a tool argument. */
+  addConnector(roleId: string, kind: ConnectorKind, connector: ConnectorConfig): void {
+    const role = this.config.roles.find((r) => r.id === roleId);
+    if (!role) throw new Error(`Role "${roleId}" not found`);
+    const list = role.connectors[kind] ?? [];
+    if (list.some((c) => c.id === connector.id))
+      throw new Error(`Connector "${connector.id}" already exists in role "${roleId}" ${kind}`);
+    this.updateRole(roleId, { connectors: { ...role.connectors, [kind]: [...list, connector] } });
+  }
+
+  /** Remove a connector (by id) from a role. */
+  removeConnector(roleId: string, kind: ConnectorKind, connectorId: string): void {
+    const role = this.config.roles.find((r) => r.id === roleId);
+    if (!role) throw new Error(`Role "${roleId}" not found`);
+    const list = role.connectors[kind] ?? [];
+    const next = list.filter((c) => c.id !== connectorId);
+    if (next.length === list.length)
+      throw new Error(`Connector "${connectorId}" not found in role "${roleId}" ${kind}`);
+    this.updateRole(roleId, { connectors: { ...role.connectors, [kind]: next } });
   }
 
   private load(): AppConfig {

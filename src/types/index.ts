@@ -5,6 +5,8 @@ export type {
   AutoAuthConfig,
   RoleConfig,
   RoleConnectors,
+  RolePolicy,
+  ConnectorKind,
   ConnectorConfig,
   ApiTier,
   AccountToken,

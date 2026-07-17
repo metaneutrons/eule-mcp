@@ -6,6 +6,12 @@ name: Release helper binaries
 on:
   push:
     tags: ["v*"]
+  workflow_call:
+    inputs:
+      tag:
+        description: "Existing release tag to attach binaries to"
+        required: true
+        type: string
   workflow_dispatch:
     inputs:
       tag:
@@ -143,7 +149,7 @@ jobs:
       - name: Attach to release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          tag_name: ${{ inputs.tag || github.event.inputs.tag || github.ref_name }}
           files: |
             helper/${{ matrix.asset }}
             helper/${{ matrix.asset }}.sha256

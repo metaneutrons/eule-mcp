@@ -1,0 +1,248 @@
+import type { ConnectorRegistry } from "../connectors/index.js";
+import type { MailConnector, MailMessage, MailMessageFull, MailSendOpts } from "../types/index.js";
+import { resolveAttachmentPaths } from "../utils/outgoing-attachments.js";
+import { assertNoHeaderInjection } from "../utils/security.js";
+import {
+  collectProviderResults,
+  selectConnector,
+  type ProviderFailure,
+} from "./provider-orchestration.js";
+
+const MAX_RECIPIENTS = 100;
+const MAX_ATTACHMENTS = 20;
+
+export function parseRecipients(value: string | undefined, required = false): string[] | undefined {
+  const recipients =
+    value
+      ?.split(",")
+      .map((item) => item.trim())
+      .filter(Boolean) ?? [];
+  if (required && recipients.length === 0) throw new Error("At least one recipient is required");
+  if (recipients.length > MAX_RECIPIENTS)
+    throw new Error(`At most ${String(MAX_RECIPIENTS)} recipients are allowed per field`);
+  for (const recipient of recipients) {
+    assertNoHeaderInjection(recipient, "recipient");
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient))
+      throw new Error(`Invalid email address: ${recipient}`);
+  }
+  return recipients.length ? recipients : undefined;
+}
+
+export interface MailSendInput {
+  readonly to: string;
+  readonly subject?: string;
+  readonly body: string;
+  readonly role?: string;
+  readonly account?: string;
+  readonly replyTo?: string;
+  readonly forwardId?: string;
+  readonly signature?: boolean;
+  readonly cc?: string;
+  readonly bcc?: string;
+  readonly attachments?: readonly string[];
+  readonly idempotencyKey?: string;
+}
+
+export class MailService {
+  private readonly connectorLocks = new WeakMap<MailConnector, Promise<void>>();
+  private readonly idempotency = new Map<
+    string,
+    { promise: Promise<string>; createdAt: number; fingerprint: string }
+  >();
+  private readonly draftSubmissionIdempotency = new Map<
+    string,
+    { promise: Promise<void>; createdAt: number }
+  >();
+  constructor(private readonly registry: ConnectorRegistry) {}
+
+  async list(
+    role?: string,
+    folder = "inbox",
+    limit = 10,
+  ): Promise<{ messages: MailMessage[]; failures: ProviderFailure[] }> {
+    const result = await collectProviderResults(this.registry.getMailConnectors(role), (c) =>
+      c.listMessages(folder, limit),
+    );
+    result.values.sort((a, b) => b.receivedAt.localeCompare(a.receivedAt));
+    return { messages: result.values, failures: result.failures };
+  }
+  async search(
+    query: string,
+    role?: string,
+    folder?: string,
+    limit = 10,
+  ): Promise<{ messages: MailMessage[]; failures: ProviderFailure[] }> {
+    const result = await collectProviderResults(this.registry.getMailConnectors(role), (c) =>
+      c.searchMessages(query, limit, folder),
+    );
+    result.values.sort((a, b) => b.receivedAt.localeCompare(a.receivedAt));
+    return { messages: result.values, failures: result.failures };
+  }
+  async read(id: string, account: string, role?: string): Promise<MailMessageFull> {
+    const connector = this.registry.getMailConnectorForAccount(account, role);
+    if (!connector) throw new Error(`No connector for ${account}`);
+    return connector.getMessage(id);
+  }
+  async send(input: MailSendInput): Promise<string> {
+    if (input.replyTo && input.forwardId)
+      throw new Error("reply_to and forward_id are mutually exclusive");
+    const operation = async (): Promise<string> => {
+      const connector = input.account
+        ? this.registry.getMailConnectorForAccount(input.account, input.role, "write")
+        : this.registry.getMailConnectors(input.role, "write")[0];
+      if (!connector) throw new Error("No mail connector available.");
+      const to = parseRecipients(input.to, !input.replyTo) ?? [];
+      const options = this.sendOptions(input);
+      const attachmentNote = options.attachments?.length
+        ? ` with ${String(options.attachments.length)} attachment(s)`
+        : "";
+      return this.withSignature(connector, input.signature !== false, async () => {
+        if (input.replyTo) {
+          await connector.replyToMessage(input.replyTo, input.body, options);
+          return `✅ Reply sent from ${connector.account}${attachmentNote}`;
+        }
+        if (input.forwardId) {
+          await connector.forwardMessage(input.forwardId, to, input.body, options);
+          return `✅ Forwarded from ${connector.account} to ${input.to}${attachmentNote}`;
+        }
+        await connector.sendMessage(to, input.subject ?? "(no subject)", input.body, options);
+        return `✅ Sent from ${connector.account} to ${input.to}${attachmentNote}`;
+      });
+    };
+    if (!input.idempotencyKey) return operation();
+    this.pruneIdempotency();
+    const fingerprint = JSON.stringify({ ...input, idempotencyKey: undefined });
+    const existing = this.idempotency.get(input.idempotencyKey);
+    if (existing) {
+      if (existing.fingerprint !== fingerprint)
+        throw new Error("Idempotency key was already used for a different mail command");
+      return existing.promise;
+    }
+    const pending = operation();
+    this.idempotency.set(input.idempotencyKey, {
+      promise: pending,
+      createdAt: Date.now(),
+      fingerprint,
+    });
+    try {
+      return await pending;
+    } catch (error) {
+      this.idempotency.delete(input.idempotencyKey);
+      throw error;
+    }
+  }
+  async draft(input: MailSendInput): Promise<MailMessage> {
+    const connector = selectConnector(
+      this.registry.getMailConnectors(input.role, "write"),
+      input.account,
+      (c) => c.createDraft != null,
+    );
+    if (!connector?.createDraft) throw new Error("No mail connector with draft support found.");
+    const createDraft = connector.createDraft.bind(connector);
+    const to = parseRecipients(input.to, true) ?? [];
+    return this.withSignature(connector, input.signature !== false, () =>
+      createDraft(to, input.subject ?? "(no subject)", input.body, this.sendOptions(input)),
+    );
+  }
+  async sendDraft(
+    id: string,
+    account: string,
+    role?: string,
+    idempotencyKey?: string,
+  ): Promise<void> {
+    const connector = this.registry.getMailConnectorForAccount(account, role, "write");
+    if (!connector?.sendDraft)
+      throw new Error(`sendDraft not supported for ${connector?.tier ?? account}`);
+    const sendDraft = connector.sendDraft.bind(connector);
+    const submit = async (): Promise<void> => sendDraft(id);
+    if (!idempotencyKey) return submit();
+    this.pruneIdempotency();
+    const scopedKey = `${account}\u0000${id}\u0000${idempotencyKey}`;
+    const existing = this.draftSubmissionIdempotency.get(scopedKey);
+    if (existing) return existing.promise;
+    const pending = submit();
+    this.draftSubmissionIdempotency.set(scopedKey, { promise: pending, createdAt: Date.now() });
+    try {
+      await pending;
+    } catch (error) {
+      this.draftSubmissionIdempotency.delete(scopedKey);
+      throw error;
+    }
+  }
+  async update(
+    id: string,
+    account: string,
+    role: string | undefined,
+    patch: { isRead?: boolean; moveTo?: string; delete?: boolean },
+  ): Promise<string[]> {
+    if (patch.isRead === undefined && !patch.moveTo && !patch.delete)
+      throw new Error("At least one update action is required");
+    const connector = this.registry.getMailConnectorForAccount(account, role, "write");
+    if (!connector) throw new Error(`No connector for ${account}`);
+    const actions: string[] = [];
+    if (patch.isRead !== undefined) {
+      await connector.markRead(id, patch.isRead);
+      actions.push(patch.isRead ? "marked read" : "marked unread");
+    }
+    if (patch.moveTo) {
+      await connector.moveMessage(id, patch.moveTo);
+      actions.push(`moved to ${patch.moveTo}`);
+    }
+    if (patch.delete) {
+      await connector.deleteMessage(id);
+      actions.push("deleted");
+    }
+    return actions;
+  }
+  getConnector(account: string, role?: string): MailConnector {
+    const connector = this.registry.getMailConnectorForAccount(account, role);
+    if (!connector) throw new Error(`No connector for ${account}`);
+    return connector;
+  }
+  private sendOptions(input: MailSendInput): MailSendOpts {
+    if ((input.attachments?.length ?? 0) > MAX_ATTACHMENTS)
+      throw new Error(`At most ${String(MAX_ATTACHMENTS)} attachments are allowed`);
+    return {
+      cc: parseRecipients(input.cc),
+      bcc: parseRecipients(input.bcc),
+      attachments: input.attachments?.length
+        ? resolveAttachmentPaths([...input.attachments])
+        : undefined,
+    };
+  }
+  private async withSignature<T>(
+    connector: MailConnector,
+    enabled: boolean,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const previous = this.connectorLocks.get(connector) ?? Promise.resolve();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.connectorLocks.set(
+      connector,
+      previous.then(() => gate),
+    );
+    await previous;
+    const signature = connector.signature;
+    if (!enabled) connector.signature = undefined;
+    try {
+      return await operation();
+    } finally {
+      connector.signature = signature;
+      release();
+    }
+  }
+
+  private pruneIdempotency(): void {
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    for (const [key, entry] of this.idempotency) {
+      if (entry.createdAt < cutoff || this.idempotency.size > 1_000) this.idempotency.delete(key);
+    }
+    for (const [key, entry] of this.draftSubmissionIdempotency) {
+      if (entry.createdAt < cutoff || this.draftSubmissionIdempotency.size > 1_000)
+        this.draftSubmissionIdempotency.delete(key);
+    }
+  }
+}

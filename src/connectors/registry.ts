@@ -30,18 +30,23 @@ import { GoogleCalendarConnector } from "../providers/google/google-calendar.js"
 import { GoogleContactConnector } from "../providers/google/google-contacts.js";
 import { GoogleDriveConnector } from "../providers/google/google-drive.js";
 import { PaperlessConnector } from "../providers/paperless/index.js";
+import { RolePolicyService, type AccessMode } from "../config/index.js";
 
 export class ConnectorRegistry {
-  constructor(private readonly config: ConfigManager) {}
+  private readonly policy: RolePolicyService;
+
+  constructor(private readonly config: ConfigManager) {
+    this.policy = new RolePolicyService(() => this.config.get());
+  }
 
   /** Get all mail connectors, optionally filtered by role. */
-  getMailConnectors(role?: string): MailConnector[] {
+  getMailConnectors(role?: string, mode: AccessMode = "read"): MailConnector[] {
     const cfg = this.config.get();
     const oauth = cfg.oauth;
     const tokens = loadTokens();
     const connectors: MailConnector[] = [];
 
-    const roles = role ? cfg.roles.filter((r) => r.id === role) : cfg.roles;
+    const roles = this.policy.select(role, "mail", mode);
 
     for (const r of roles) {
       const sig = r.signature;
@@ -116,7 +121,11 @@ export class ConnectorRegistry {
   }
 
   /** Get a single mail connector by account email. */
-  getMailConnectorForAccount(account: string): MailConnector | undefined {
+  getMailConnectorForAccount(
+    account: string,
+    role?: string,
+    mode: AccessMode = "read",
+  ): MailConnector | undefined {
     const cfg = this.config.get();
     const oauth = cfg.oauth;
     const tokens = loadTokens();
@@ -128,7 +137,7 @@ export class ConnectorRegistry {
     // silently route a request for the auth account to its shared mailbox.
     let personal: { r: RoleConfig; mc: ConnectorConfig } | undefined;
     let sharedHit: { r: RoleConfig; mc: ConnectorConfig } | undefined;
-    for (const r of cfg.roles) {
+    for (const r of this.policy.select(role, "mail", mode)) {
       for (const mc of r.connectors.mail ?? []) {
         if (mc.account === account && !mc.mailbox) personal ??= { r, mc };
         else if (mc.mailbox === account) sharedHit ??= { r, mc };
@@ -185,13 +194,13 @@ export class ConnectorRegistry {
   }
 
   /** Get all calendar connectors, optionally filtered by role. */
-  getCalendarConnectors(role?: string): CalendarConnector[] {
+  getCalendarConnectors(role?: string, mode: AccessMode = "read"): CalendarConnector[] {
     const cfg = this.config.get();
     const oauth = cfg.oauth;
     const tokens = loadTokens();
     const connectors: CalendarConnector[] = [];
 
-    const roles = role ? cfg.roles.filter((r) => r.id === role) : cfg.roles;
+    const roles = this.policy.select(role, "calendar", mode);
 
     for (const r of roles) {
       for (const cc of r.connectors.calendar ?? []) {
@@ -245,13 +254,13 @@ export class ConnectorRegistry {
   }
 
   /** Get all contact connectors, optionally filtered by role. */
-  getContactConnectors(role?: string): ContactConnector[] {
+  getContactConnectors(role?: string, mode: AccessMode = "read"): ContactConnector[] {
     const cfg = this.config.get();
     const oauth = cfg.oauth;
     const tokens = loadTokens();
     const connectors: ContactConnector[] = [];
 
-    const roles = role ? cfg.roles.filter((r) => r.id === role) : cfg.roles;
+    const roles = this.policy.select(role, "contacts", mode);
 
     for (const r of roles) {
       for (const cc of r.connectors.contacts ?? []) {
@@ -299,12 +308,12 @@ export class ConnectorRegistry {
   }
 
   /** Get all messenger connectors, optionally filtered by role. */
-  getMessengerConnectors(role?: string): MessengerConnector[] {
+  getMessengerConnectors(role?: string, mode: AccessMode = "read"): MessengerConnector[] {
     const cfg = this.config.get();
     const oauth = cfg.oauth;
     const tokens = loadTokens();
     const connectors: MessengerConnector[] = [];
-    const roles = role ? cfg.roles.filter((r) => r.id === role) : cfg.roles;
+    const roles = this.policy.select(role, "messenger", mode);
 
     for (const r of roles) {
       for (const mc of r.connectors.messenger ?? []) {
@@ -333,12 +342,12 @@ export class ConnectorRegistry {
   }
 
   /** Get all file connectors, optionally filtered by role. */
-  getFileConnectors(role?: string): FileConnector[] {
+  getFileConnectors(role?: string, mode: AccessMode = "read"): FileConnector[] {
     const cfg = this.config.get();
     const oauth = cfg.oauth;
     const tokens = loadTokens();
     const connectors: FileConnector[] = [];
-    const roles = role ? cfg.roles.filter((r) => r.id === role) : cfg.roles;
+    const roles = this.policy.select(role, "files", mode);
 
     for (const r of roles) {
       for (const fc of r.connectors.files ?? []) {
@@ -372,10 +381,9 @@ export class ConnectorRegistry {
   }
 
   /** Get all document connectors, optionally filtered by role. */
-  getDocumentConnectors(role?: string): DocumentConnector[] {
-    const cfg = this.config.get();
+  getDocumentConnectors(role?: string, mode: AccessMode = "read"): DocumentConnector[] {
     const connectors: DocumentConnector[] = [];
-    const roles = role ? cfg.roles.filter((r) => r.id === role) : cfg.roles;
+    const roles = this.policy.select(role, "documents", mode);
     for (const r of roles) {
       for (const dc of r.connectors.documents ?? []) {
         if (dc.type === "paperless" && dc.url && dc.token) {

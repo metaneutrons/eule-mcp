@@ -1,19 +1,10 @@
 import { logger } from "../../../utils/logger.js";
 import { createServer } from "node:http";
 import { randomBytes, createHash } from "node:crypto";
-import { readFileSync, writeFileSync, existsSync, chmodSync } from "node:fs";
-import { join } from "node:path";
-import { homedir } from "node:os";
 import open from "open";
-import type {
-  ApiTier,
-  AutoAuthConfig,
-  OAuthConfig,
-  TokenStore,
-  AccountToken,
-} from "../../../types/index.js";
-
-const TOKENS_PATH = join(homedir(), ".eule", "tokens.json");
+import type { ApiTier, OAuthConfig, TokenStore, AccountToken } from "../../../types/index.js";
+import { tokenRepository } from "../../../auth/token-repository.js";
+import { fetchWithExecutionContext as fetch } from "../../../utils/execution-context.js";
 
 /** Default OAuth config — Thunderbird's registered app ID. */
 const DEFAULT_OAUTH: OAuthConfig = {
@@ -29,8 +20,8 @@ const DEFAULT_OAUTH: OAuthConfig = {
  */
 const REDIRECT_URI = "https://login.microsoftonline.com/common/oauth2/nativeclient";
 
-// Exported so the Playwright auto-auth path reuses the exact same endpoint +
-// param construction and can't drift back to a hardcoded v2/scope request.
+// Exported for unit tests (and any future auth path) so endpoint + param
+// construction has a single source of truth and can't drift.
 export function authEndpoint(oauth: OAuthConfig): string {
   const suffix = oauth.apiVersion === "v1" ? "oauth2/authorize" : "oauth2/v2.0/authorize";
   return `https://login.microsoftonline.com/${oauth.tenant}/${suffix}`;
@@ -49,7 +40,7 @@ export function tokenEndpoint(oauth: OAuthConfig): string {
 /**
  * The per-tier authorization parameter: v1 identifies the target API by
  * `resource=`, v2 by `scope=`. Single source of truth for every flow
- * (auth-code, refresh, device-code, auto-auth) so they can't diverge.
+ * (auth-code, refresh, device-code) so they can't diverge.
  */
 export function tierAuthParam(oauth: OAuthConfig, tier: ApiTier): Record<string, string> {
   return oauth.apiVersion === "v1"
@@ -100,29 +91,12 @@ function generatePkce(): { verifier: string; challenge: string } {
 
 /** Load token store from disk. Never throws — a corrupt store starts empty. */
 export function loadTokens(): TokenStore {
-  if (!existsSync(TOKENS_PATH)) return { accounts: {} };
-  try {
-    const parsed: unknown = JSON.parse(readFileSync(TOKENS_PATH, "utf-8"));
-    if (typeof parsed === "object" && parsed !== null && "accounts" in parsed) {
-      const accounts = (parsed as Record<string, unknown>).accounts;
-      if (typeof accounts === "object" && accounts !== null) {
-        return parsed as TokenStore;
-      }
-    }
-    logger.error(`Token store at ${TOKENS_PATH} has an unexpected shape; ignoring it.`);
-  } catch (err) {
-    logger.error(
-      `Failed to parse token store at ${TOKENS_PATH} (starting empty): ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
-  return { accounts: {} };
+  return tokenRepository.load();
 }
 
 /** Save token store to disk with owner-only (0600) permissions. */
 export function saveTokens(store: TokenStore): void {
-  writeFileSync(TOKENS_PATH, JSON.stringify(store, null, 2), { mode: 0o600 });
-  // `mode` is honored only on create; enforce on rewrite too.
-  chmodSync(TOKENS_PATH, 0o600);
+  tokenRepository.save(store);
 }
 
 /** Validates an OAuth token-endpoint response, rejecting malformed payloads. */
@@ -289,23 +263,7 @@ export async function authenticateAccount(
   tier: ApiTier,
   accountHint?: string,
   oauth: OAuthConfig = DEFAULT_OAUTH,
-  autoAuthCredentials?: AutoAuthConfig,
 ): Promise<AccountToken> {
-  // Try headless auto-auth if TOTP credentials are configured.
-  if (autoAuthCredentials) {
-    try {
-      const { autoAuthenticate } = await import("./auto-auth.js");
-      const result = await autoAuthenticate(tier, autoAuthCredentials, oauth);
-      if (result) {
-        logger.info(`✅ Auto-authenticated: ${result.account} (headless)`);
-        return result;
-      }
-    } catch (err) {
-      logger.info(`Auto-auth unavailable: ${err instanceof Error ? err.message : String(err)}`);
-    }
-    logger.info("Falling back to manual browser auth...\n");
-  }
-
   const { verifier, challenge } = generatePkce();
   const state = randomBytes(16).toString("hex");
 

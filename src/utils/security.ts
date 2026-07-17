@@ -1,3 +1,5 @@
+import { currentExecutionSignal } from "./execution-context.js";
+
 /**
  * Shared security primitives used across connectors and the MCP server.
  *
@@ -76,6 +78,17 @@ export function ftsPhrase(query: string): string {
   return `"${query.replace(/"/g, '""')}"`;
 }
 
+/**
+ * True if `s` is a plausible base32 TOTP secret (RFC 4648 alphabet A–Z/2–7,
+ * spaces/dashes allowed as grouping, optional `=` padding, ≥ 16 symbols). Used
+ * to reject a mistyped/wrong-format secret before it's written to config.yaml —
+ * the Rust helper only accepts base32.
+ */
+export function isBase32Secret(s: string): boolean {
+  const cleaned = s.replace(/[\s-]/g, "").toUpperCase();
+  return /^[A-Z2-7]{16,}=*$/.test(cleaned);
+}
+
 function isLoopbackHost(hostname: string): boolean {
   return (
     hostname === "localhost" ||
@@ -115,13 +128,20 @@ export async function fetchWithTimeout(
   timeoutMs = 30_000,
 ): Promise<Response> {
   const controller = new AbortController();
+  const signals = [init.signal, currentExecutionSignal(), controller.signal].filter(
+    (signal): signal is AbortSignal => signal != null,
+  );
+  const signal = signals.length === 1 ? signals[0] : AbortSignal.any(signals);
   const timer = setTimeout(() => {
     controller.abort();
   }, timeoutMs);
   try {
-    return await fetch(input, { ...init, signal: controller.signal });
+    return await fetch(input, { ...init, signal });
   } catch (err) {
     if (err instanceof Error && err.name === "AbortError") {
+      if (init.signal?.aborted && !controller.signal.aborted) {
+        throw new Error(`Request cancelled: ${String(input)}`, { cause: err });
+      }
       throw new Error(`Request timed out after ${String(timeoutMs)}ms: ${String(input)}`, {
         cause: err,
       });

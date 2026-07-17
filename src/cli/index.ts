@@ -1,5 +1,3 @@
-import { createInterface } from "node:readline/promises";
-import { stdin, stdout } from "node:process";
 import { ConfigManager } from "../config/index.js";
 import {
   authenticateAccount,
@@ -7,7 +5,11 @@ import {
   tierAuthParam,
   loadTokens,
 } from "../providers/m365/index.js";
-import { oauthCapture } from "../helper/run.js";
+import { oauthCapture, secretPrompt } from "../helper/run.js";
+import { isBase32Secret } from "../utils/security.js";
+import { readFileSync, unlinkSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { join } from "node:path";
 import type { ApiTier, OAuthConfig } from "../types/index.js";
 
 const args = process.argv.slice(2);
@@ -31,60 +33,23 @@ function parseFlags(argv: string[]): Record<string, string | boolean> {
   return out;
 }
 
-async function prompt(question: string): Promise<string> {
-  const rl = createInterface({ input: stdin, output: stdout });
-  const answer = await rl.question(question);
-  rl.close();
-  return answer.trim();
-}
-
+/** Deprecated — kept as a thin alias so existing docs/muscle-memory still work.
+ *  `login` is the real entry (device-code / webview capture / browser). */
 async function setup(): Promise<void> {
-  const configManager = new ConfigManager();
-  const config = configManager.get();
   const tokens = loadTokens();
-
-  console.log("Eule MCP — Setup 🦉\n");
-  console.log(`Config: ${configManager.euleDirPath}/config.yaml`);
-  console.log(`Roles: ${String(config.roles.length)} configured`);
-  console.log(`Accounts: ${String(Object.keys(tokens.accounts).length)} authenticated\n`);
-
-  // Show existing accounts.
+  console.log("Note: `setup` is deprecated — use `login`. Delegating…\n");
   if (Object.keys(tokens.accounts).length > 0) {
     console.log("Authenticated accounts:");
     for (const [account, token] of Object.entries(tokens.accounts)) {
       const expired = token.expiresAt < Date.now() ? " (expired, will refresh)" : "";
       console.log(`  ${account}: tier ${token.tier}${expired}`);
     }
-    console.log("");
+    console.log(
+      "\nTip: eule-mcp login --device --tier ews   (or --capture for broker-only clients)\n",
+    );
   }
-
-  const action = await prompt("Add a new account? (y/n): ");
-  if (action.toLowerCase() !== "y") {
-    console.log("Done.");
-    return;
-  }
-
-  const accountHint = await prompt("Email address (login hint, optional): ");
-
-  // Start with Graph (tier 1), user can re-probe later.
-  const tierInput = await prompt("Try which tier first? (graph/ews/imap) [graph]: ");
-  const tier: ApiTier = (
-    ["graph", "ews", "imap"].includes(tierInput) ? tierInput : "graph"
-  ) as ApiTier;
-
-  console.log(`\nAuthenticating with tier: ${tier}`);
-  console.log("A browser window will open for Microsoft login...\n");
-
-  try {
-    const autoAuth = config.autoAuth?.find((a) => a.account === accountHint);
-    const token = await authenticateAccount(tier, accountHint || undefined, config.oauth, autoAuth);
-    console.log(`\n✅ Success! Account: ${token.account}`);
-    console.log(`   Tier: ${token.tier}`);
-    console.log(`   Token expires: ${new Date(token.expiresAt).toLocaleString()}`);
-  } catch (err) {
-    console.error("\n❌ Authentication failed:", err instanceof Error ? err.message : String(err));
-    process.exit(1);
-  }
+  // Any flags after `setup` are honoured by login() (it parses args.slice(1)).
+  await login();
 }
 
 async function login(): Promise<void> {
@@ -116,7 +81,17 @@ async function login(): Promise<void> {
       // neither the paste-redirect nor device-code flow works. The helper writes
       // tokens.json itself; the secret/code never returns through this process.
       const param = tierAuthParam(oauth, tier);
-      console.log(`\nWebview capture — tier ${tier}, client ${oauth.clientId}\n`);
+      // Opt-in MFA autofill: if this account has a TOTP secret in autoAuth, hand
+      // it to the helper (via env, not argv) so it auto-enters the code. Skipped
+      // with --no-totp. The password is always typed by the user.
+      const totpSecret =
+        flags["no-totp"] || !account
+          ? undefined
+          : config.autoAuth?.find((a) => a.account === account)?.totpSecret;
+      console.log(
+        `\nWebview capture — tier ${tier}, client ${oauth.clientId}` +
+          `${totpSecret ? " (auto-TOTP)" : ""}\n`,
+      );
       const code = await oauthCapture({
         clientId: oauth.clientId,
         tier,
@@ -126,6 +101,7 @@ async function login(): Promise<void> {
         tenant: oauth.tenant,
         loginHint: account,
         redirectUri: typeof flags["redirect-uri"] === "string" ? flags["redirect-uri"] : undefined,
+        totpSecret,
       });
       if (code !== 0) process.exit(code);
       console.log("\n✅ Token written to ~/.eule/tokens.json");
@@ -145,14 +121,61 @@ async function login(): Promise<void> {
       return;
     }
     // Browser authorization-code (paste-the-redirect) fallback.
-    const autoAuth = account ? config.autoAuth?.find((a) => a.account === account) : undefined;
-    const token = await authenticateAccount(tier, account, oauth, autoAuth);
+    const token = await authenticateAccount(tier, account, oauth);
     console.log(`\n✅ Success! ${token.account} (tier ${token.tier})`);
     console.log(`   Expires: ${new Date(token.expiresAt).toLocaleString()}`);
   } catch (err) {
     console.error("\n❌ Login failed:", err instanceof Error ? err.message : String(err));
     process.exit(1);
   }
+}
+
+async function secretCmd(): Promise<void> {
+  const sub = args[1];
+  const flags = parseFlags(args.slice(2));
+  if (sub !== "totp") {
+    console.log("Usage: eule-mcp secret totp --account <email>");
+    process.exit(1);
+  }
+  const account = typeof flags.account === "string" ? flags.account : undefined;
+  if (!account) {
+    console.error("--account <email> is required");
+    process.exit(1);
+  }
+
+  // The secret is entered in the helper's local window → written 0600 to a temp
+  // file → folded into config.yaml → temp file unlinked. It never appears in
+  // argv, this process's output, or the model context.
+  const cfgMgr = new ConfigManager();
+  const out = join(cfgMgr.euleDirPath, `.totp-${randomBytes(8).toString("hex")}.tmp`);
+  let exitCode = 0;
+  try {
+    const code = await secretPrompt(`TOTP secret (base32) for ${account}`, out);
+    if (code !== 0) {
+      console.error("\n❌ Cancelled.");
+      exitCode = code;
+    } else {
+      const secret = readFileSync(out, "utf-8").trim();
+      if (!isBase32Secret(secret)) {
+        console.error("\n❌ That isn't a base32 TOTP secret (A–Z, 2–7) — not stored.");
+        exitCode = 1;
+      } else {
+        cfgMgr.upsertAutoAuth(account, { totpSecret: secret });
+        console.log(`\n✅ TOTP secret stored for ${account} (config.yaml, 0600).`);
+        console.log(`   Use it:  eule-mcp login --capture --account ${account} …`);
+      }
+    }
+  } catch (err) {
+    console.error("\n❌ Failed:", err instanceof Error ? err.message : String(err));
+    exitCode = 1;
+  } finally {
+    try {
+      unlinkSync(out);
+    } catch {
+      /* already gone / never created */
+    }
+  }
+  if (exitCode) process.exit(exitCode);
 }
 
 async function main(): Promise<void> {
@@ -162,6 +185,9 @@ async function main(): Promise<void> {
       break;
     case "login":
       await login();
+      break;
+    case "secret":
+      await secretCmd();
       break;
     case "serve":
       await import("../server/index.js");
@@ -174,6 +200,9 @@ async function main(): Promise<void> {
       console.log("       [--account <email>] [--client-id <id>] [--api-version v1|v2]");
       console.log("  eule-mcp login --capture [--tier ews] Webview capture (broker-only clients)");
       console.log("  eule-mcp login [--tier graph] …       Browser (paste-redirect) login");
+      console.log(
+        "  eule-mcp secret totp --account <email> Store a TOTP secret via a local window",
+      );
       console.log("  eule-mcp serve                        Start MCP server (stdio)");
       console.log("  eule-mcp help                         Show this help");
   }
