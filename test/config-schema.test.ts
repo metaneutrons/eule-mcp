@@ -54,6 +54,12 @@ describe("configuration SSOT schema", () => {
       }),
     ).toThrow();
   });
+
+  it("formats validation failures with the supported Zod 4 API", () => {
+    expect(() => parseAppConfig({ roles: "not-an-array" })).toThrow(
+      /Invalid config:[\s\S]*expected array/i,
+    );
+  });
 });
 
 describe("role policy enforcement", () => {

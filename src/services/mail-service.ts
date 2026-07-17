@@ -49,7 +49,10 @@ export class MailService {
     string,
     { promise: Promise<string>; createdAt: number; fingerprint: string }
   >();
-  private readonly draftSubmissionIdempotency = new Map<string, Promise<void>>();
+  private readonly draftSubmissionIdempotency = new Map<
+    string,
+    { promise: Promise<void>; createdAt: number }
+  >();
   constructor(private readonly registry: ConnectorRegistry) {}
 
   async list(
@@ -153,11 +156,12 @@ export class MailService {
     const sendDraft = connector.sendDraft.bind(connector);
     const submit = async (): Promise<void> => sendDraft(id);
     if (!idempotencyKey) return submit();
+    this.pruneIdempotency();
     const scopedKey = `${account}\u0000${id}\u0000${idempotencyKey}`;
     const existing = this.draftSubmissionIdempotency.get(scopedKey);
-    if (existing) return existing;
+    if (existing) return existing.promise;
     const pending = submit();
-    this.draftSubmissionIdempotency.set(scopedKey, pending);
+    this.draftSubmissionIdempotency.set(scopedKey, { promise: pending, createdAt: Date.now() });
     try {
       await pending;
     } catch (error) {
@@ -235,6 +239,10 @@ export class MailService {
     const cutoff = Date.now() - 24 * 60 * 60 * 1000;
     for (const [key, entry] of this.idempotency) {
       if (entry.createdAt < cutoff || this.idempotency.size > 1_000) this.idempotency.delete(key);
+    }
+    for (const [key, entry] of this.draftSubmissionIdempotency) {
+      if (entry.createdAt < cutoff || this.draftSubmissionIdempotency.size > 1_000)
+        this.draftSubmissionIdempotency.delete(key);
     }
   }
 }

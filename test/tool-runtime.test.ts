@@ -55,4 +55,19 @@ describe("tool execution runtime", () => {
     );
     vi.restoreAllMocks();
   });
+
+  it("honors a client signal that was already aborted", async () => {
+    vi.spyOn(logger, "error").mockImplementation(() => undefined);
+    const controller = new AbortController();
+    controller.abort();
+    const result = await executeTool("pre-cancelled", () => new Promise(() => undefined), {
+      timeoutMs: 1_000,
+      signal: controller.signal,
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.type === "text" && result.content[0].text).toContain(
+      "cancelled by client",
+    );
+    vi.restoreAllMocks();
+  });
 });

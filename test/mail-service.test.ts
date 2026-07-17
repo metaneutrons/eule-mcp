@@ -92,4 +92,22 @@ describe("MailService commands", () => {
       service(connector()).update("id", "sender@example.com", undefined, {}),
     ).rejects.toThrow(/one update action/);
   });
+
+  it("expires successful draft-submission idempotency entries", async () => {
+    vi.useFakeTimers();
+    try {
+      const mail = connector();
+      mail.sendDraft = vi.fn(async () => undefined);
+      const instance = service(mail);
+      await instance.sendDraft("draft-1", mail.account, undefined, "request-1");
+      await instance.sendDraft("draft-1", mail.account, undefined, "request-1");
+      expect(mail.sendDraft).toHaveBeenCalledTimes(1);
+
+      vi.advanceTimersByTime(24 * 60 * 60 * 1_000 + 1);
+      await instance.sendDraft("draft-1", mail.account, undefined, "request-1");
+      expect(mail.sendDraft).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

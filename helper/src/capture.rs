@@ -366,12 +366,14 @@ pub fn run(args: Args) -> Result<(), String> {
                     .append(true)
                     .open(&debug_log)
                 {
-                    let _ = std::fs::set_permissions(
-                        &debug_log,
-                        <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(
-                            0o600,
-                        ),
-                    );
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        let _ = std::fs::set_permissions(
+                            &debug_log,
+                            std::fs::Permissions::from_mode(0o600),
+                        );
+                    }
                     let _ = writeln!(f, "{payload}");
                 }
             } else if body == "eule:need-totp" {

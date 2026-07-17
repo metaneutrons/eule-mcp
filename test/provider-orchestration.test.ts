@@ -23,6 +23,11 @@ describe("provider orchestration", () => {
     expect(selectConnector(connectors, "a", (item) => item.writable)).toBeUndefined();
   });
 
+  it("matches account identifiers without case sensitivity", () => {
+    const connectors = [{ account: "User@Example.COM" }];
+    expect(selectConnector(connectors, "user@example.com")).toBe(connectors[0]);
+  });
+
   it("bounds provider concurrency", async () => {
     let active = 0;
     let peak = 0;

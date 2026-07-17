@@ -129,7 +129,7 @@ export async function fetchWithTimeout(
 ): Promise<Response> {
   const controller = new AbortController();
   const signals = [init.signal, currentExecutionSignal(), controller.signal].filter(
-    (signal): signal is AbortSignal => signal !== undefined,
+    (signal): signal is AbortSignal => signal != null,
   );
   const signal = signals.length === 1 ? signals[0] : AbortSignal.any(signals);
   const timer = setTimeout(() => {

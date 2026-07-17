@@ -48,16 +48,17 @@ export async function executeTool(
     logger.info(JSON.stringify({ event: "tool.started", tool, correlationId }));
     try {
       const aborted = new Promise<never>((_, reject) => {
-        signal.addEventListener(
-          "abort",
-          () => {
-            const message = options.signal?.aborted
-              ? "Tool execution cancelled by client"
-              : `Tool execution exceeded ${String(timeoutMs)}ms`;
-            reject(new Error(message));
-          },
-          { once: true },
-        );
+        const rejectAborted = (): void => {
+          const message = options.signal?.aborted
+            ? "Tool execution cancelled by client"
+            : `Tool execution exceeded ${String(timeoutMs)}ms`;
+          reject(new Error(message));
+        };
+        if (signal.aborted) {
+          rejectAborted();
+          return;
+        }
+        signal.addEventListener("abort", rejectAborted, { once: true });
       });
       const result = await Promise.race([Promise.resolve().then(handler), aborted]);
       logger.info(

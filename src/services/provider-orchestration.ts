@@ -56,7 +56,12 @@ export function selectConnector<C extends { readonly account: string }>(
   account: string | undefined,
   predicate: (connector: C) => boolean = () => true,
 ): C | undefined {
+  const normalizedAccount = account?.toLocaleLowerCase("en-US");
   return account
-    ? connectors.find((connector) => connector.account === account && predicate(connector))
+    ? connectors.find(
+        (connector) =>
+          connector.account.toLocaleLowerCase("en-US") === normalizedAccount &&
+          predicate(connector),
+      )
     : connectors.find(predicate);
 }
