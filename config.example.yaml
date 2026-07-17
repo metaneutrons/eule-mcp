@@ -14,12 +14,12 @@ language: de # de | en
 #   tenant: "common"
 #   apiVersion: "v2" # or "v1"
 
-# Optional: auto-authentication with TOTP for headless re-auth.
-# Only used when refresh token expires and CA policy requires re-login.
-# Requires playwright: npx playwright install chromium
+# Optional: TOTP autofill for `login --capture` (the native webview helper).
+# The password is always typed by you in the webview; only the MFA code is
+# auto-entered from this secret. Set it via the credential window, not by hand:
+#   node dist/cli/index.js secret totp --account user@example.com
 # autoAuth:
 #   - account: "user@example.com"
-#     password: "your-password"
 #     totpSecret: "YOUR_BASE32_TOTP_SECRET"
 
 roles:

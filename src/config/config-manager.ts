@@ -107,16 +107,10 @@ function parseAutoAuth(raw: unknown): AutoAuthConfig[] | undefined {
   return (
     (raw as unknown[])
       .filter((c): c is Record<string, unknown> => typeof c === "object" && c !== null)
-      // account + at least one credential (password for headless Playwright,
-      // totpSecret for --capture MFA autofill, or both).
-      .filter(
-        (c) =>
-          typeof c.account === "string" &&
-          (typeof c.password === "string" || typeof c.totpSecret === "string"),
-      )
+      // account + a totpSecret for --capture MFA autofill.
+      .filter((c) => typeof c.account === "string" && typeof c.totpSecret === "string")
       .map((c) => ({
         account: String(c.account),
-        ...(typeof c.password === "string" ? { password: c.password } : {}),
         ...(typeof c.totpSecret === "string" ? { totpSecret: c.totpSecret } : {}),
       }))
   );
@@ -238,10 +232,10 @@ export class ConfigManager {
     this.save({ ...this.config, roles });
   }
 
-  /** Create or update an account's autoAuth credentials (merging with any
-   *  existing entry), then persist. Used by the credential-window setup so a
+  /** Create or update an account's autoAuth TOTP secret (merging with any
+   *  existing entry), then persist. Used by the credential-window setup so the
    *  secret lands in config.yaml without ever passing through the model. */
-  upsertAutoAuth(account: string, patch: { password?: string; totpSecret?: string }): void {
+  upsertAutoAuth(account: string, patch: { totpSecret?: string }): void {
     const existing = this.config.autoAuth ?? [];
     const idx = existing.findIndex((a) => a.account === account);
     const next = [...existing];

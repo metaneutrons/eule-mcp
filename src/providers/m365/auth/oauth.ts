@@ -5,13 +5,7 @@ import { readFileSync, writeFileSync, existsSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import open from "open";
-import type {
-  ApiTier,
-  AutoAuthConfig,
-  OAuthConfig,
-  TokenStore,
-  AccountToken,
-} from "../../../types/index.js";
+import type { ApiTier, OAuthConfig, TokenStore, AccountToken } from "../../../types/index.js";
 
 const TOKENS_PATH = join(homedir(), ".eule", "tokens.json");
 
@@ -29,8 +23,8 @@ const DEFAULT_OAUTH: OAuthConfig = {
  */
 const REDIRECT_URI = "https://login.microsoftonline.com/common/oauth2/nativeclient";
 
-// Exported so the Playwright auto-auth path reuses the exact same endpoint +
-// param construction and can't drift back to a hardcoded v2/scope request.
+// Exported for unit tests (and any future auth path) so endpoint + param
+// construction has a single source of truth and can't drift.
 export function authEndpoint(oauth: OAuthConfig): string {
   const suffix = oauth.apiVersion === "v1" ? "oauth2/authorize" : "oauth2/v2.0/authorize";
   return `https://login.microsoftonline.com/${oauth.tenant}/${suffix}`;
@@ -49,7 +43,7 @@ export function tokenEndpoint(oauth: OAuthConfig): string {
 /**
  * The per-tier authorization parameter: v1 identifies the target API by
  * `resource=`, v2 by `scope=`. Single source of truth for every flow
- * (auth-code, refresh, device-code, auto-auth) so they can't diverge.
+ * (auth-code, refresh, device-code) so they can't diverge.
  */
 export function tierAuthParam(oauth: OAuthConfig, tier: ApiTier): Record<string, string> {
   return oauth.apiVersion === "v1"
@@ -289,23 +283,7 @@ export async function authenticateAccount(
   tier: ApiTier,
   accountHint?: string,
   oauth: OAuthConfig = DEFAULT_OAUTH,
-  autoAuthCredentials?: AutoAuthConfig,
 ): Promise<AccountToken> {
-  // Try headless auto-auth if TOTP credentials are configured.
-  if (autoAuthCredentials) {
-    try {
-      const { autoAuthenticate } = await import("./auto-auth.js");
-      const result = await autoAuthenticate(tier, autoAuthCredentials, oauth);
-      if (result) {
-        logger.info(`✅ Auto-authenticated: ${result.account} (headless)`);
-        return result;
-      }
-    } catch (err) {
-      logger.info(`Auto-auth unavailable: ${err instanceof Error ? err.message : String(err)}`);
-    }
-    logger.info("Falling back to manual browser auth...\n");
-  }
-
   const { verifier, challenge } = generatePkce();
   const state = randomBytes(16).toString("hex");
 

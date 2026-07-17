@@ -12,7 +12,7 @@ export default defineConfig({
   sourcemap: true,
   dts: false,
   splitting: true,
-  external: ["playwright", "better-sqlite3", "imapflow"],
+  external: ["better-sqlite3", "imapflow"],
   banner: {
     js: "#!/usr/bin/env node",
   },

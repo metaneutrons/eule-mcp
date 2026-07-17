@@ -90,8 +90,7 @@ server.tool(
       }
       const apiTier: ApiTier = tier ?? "graph";
       const config = configManager.get();
-      const autoAuth = account ? config.autoAuth?.find((a) => a.account === account) : undefined;
-      const token = await authenticateAccount(apiTier, account, config.oauth, autoAuth);
+      const token = await authenticateAccount(apiTier, account, config.oauth);
       return {
         content: [
           {
@@ -215,7 +214,7 @@ server.tool(
         content: [
           {
             type: "text" as const,
-            text: "No roles configured. Edit ~/.eule/config.yaml or use role_add.",
+            text: "No roles configured. Edit ~/.eule/config.yaml or use role_upsert.",
           },
         ],
       };
@@ -288,9 +287,7 @@ server.tool(
     const aa = c.autoAuth ?? [];
     lines.push(`autoAuth (${String(aa.length)}):`);
     for (const a of aa) {
-      lines.push(
-        `  ${a.account}: password=${a.password ? "set" : "—"} totpSecret=${a.totpSecret ? "set" : "—"}`,
-      );
+      lines.push(`  ${a.account}: totpSecret=${a.totpSecret ? "set" : "—"}`);
     }
     lines.push(`roles (${String(c.roles.length)}):`);
     for (const r of c.roles) {

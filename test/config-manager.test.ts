@@ -52,18 +52,16 @@ describe("ConfigManager mutations (backing the MCP config tools)", () => {
     expect(() => cm.removeConnector("work", "mail", "hs-mail")).toThrow(/not found/);
   });
 
-  it("upsertAutoAuth merges into one entry (totpSecret-only is kept)", () => {
+  it("upsertAutoAuth stores and updates a single totpSecret entry", () => {
     const cm = new ConfigManager();
     cm.upsertAutoAuth("me@x.de", { totpSecret: "GEZDGNBVGY3TQOJQ" });
-    // parseAutoAuth must keep an entry that has ONLY a totpSecret.
+    // parseAutoAuth must keep an entry that has a totpSecret.
     let entry = new ConfigManager().get().autoAuth?.find((a) => a.account === "me@x.de");
     expect(entry?.totpSecret).toBe("GEZDGNBVGY3TQOJQ");
-    expect(entry?.password).toBeUndefined();
 
-    cm.upsertAutoAuth("me@x.de", { password: "pw" });
+    cm.upsertAutoAuth("me@x.de", { totpSecret: "MFRGGZDFMZTWQ2LK" });
     entry = new ConfigManager().get().autoAuth?.find((a) => a.account === "me@x.de");
-    expect(entry?.totpSecret).toBe("GEZDGNBVGY3TQOJQ"); // preserved
-    expect(entry?.password).toBe("pw"); // merged in
+    expect(entry?.totpSecret).toBe("MFRGGZDFMZTWQ2LK"); // updated in place
     expect(new ConfigManager().get().autoAuth).toHaveLength(1); // still one entry
   });
 

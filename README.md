@@ -56,7 +56,7 @@ Eule is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) serve
 
 - **Multi-provider architecture** — M365, Google Workspace, CalDAV, CardDAV, IMAP, iCal, Signal
 - **Tiered API access** — Graph API → EWS → IMAP/SMTP, auto-detected per tenant
-- **Headless re-authentication** — optional TOTP auto-auth via Playwright when tokens expire
+- **Native webview login** — cross-platform helper for broker-only clients, with optional TOTP autofill
 - **Role-based context** — map accounts and connectors to professional roles
 - **LLM-optimized output** — HTML emails rendered as clean Markdown with thread splitting
 
@@ -201,9 +201,11 @@ pnpm run build
 ### Setup
 
 ```bash
-# Interactive setup — authenticates your M365 account
-node dist/cli/index.js setup
+# Authenticate your M365 account (pick a login method below)
+node dist/cli/index.js login --device --tier ews
 ```
+
+> The old `setup` subcommand is a deprecated alias for `login` — prefer `login`.
 
 #### Login methods
 
@@ -346,28 +348,30 @@ kiro-cli mcp add --name eule --command node --args "/path/to/eule-mcp/dist/serve
 }
 ```
 
-### Optional: Headless TOTP auto-auth
+### Optional: TOTP autofill for `login --capture`
 
-For unattended re-authentication when tokens expire (e.g., on a server):
+When you log in via the native webview (`login --capture`), the MFA code can be
+filled automatically from a stored TOTP secret. You still type the password
+yourself in the window; only the 6-digit code is auto-entered. Store the secret
+via the credential window (it never passes through the model or argv):
 
 ```bash
-# Playwright is already an npm dependency, but the Chromium browser
-# binary (~150MB) needs to be downloaded separately:
-npx playwright install chromium
+node dist/cli/index.js secret totp --account you@example.com
 ```
 
-Add to `~/.eule/config.yaml`:
+This writes an `autoAuth` entry to `~/.eule/config.yaml`:
 
 ```yaml
 autoAuth:
   - account: "you@example.com"
-    password: "your-password"
     totpSecret: "YOUR_BASE32_TOTP_SECRET"
 ```
 
+Pass `--no-totp` to `login --capture` to skip autofill for a given login.
+
 ## Roadmap
 
-- [x] OAuth with PKCE + headless TOTP auto-auth
+- [x] OAuth with PKCE + webview TOTP autofill
 - [x] Device-code login (cross-platform, no redirect URI; CA-blockable)
 - [x] Legacy v1 endpoint + per-token client-id/apiVersion (locked-down tenants)
 - [x] Webview capture helper (Rust/wry) — cross-platform, signed + notarized releases

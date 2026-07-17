@@ -1,5 +1,3 @@
-import { createInterface } from "node:readline/promises";
-import { stdin, stdout } from "node:process";
 import { ConfigManager } from "../config/index.js";
 import {
   authenticateAccount,
@@ -35,60 +33,23 @@ function parseFlags(argv: string[]): Record<string, string | boolean> {
   return out;
 }
 
-async function prompt(question: string): Promise<string> {
-  const rl = createInterface({ input: stdin, output: stdout });
-  const answer = await rl.question(question);
-  rl.close();
-  return answer.trim();
-}
-
+/** Deprecated — kept as a thin alias so existing docs/muscle-memory still work.
+ *  `login` is the real entry (device-code / webview capture / browser). */
 async function setup(): Promise<void> {
-  const configManager = new ConfigManager();
-  const config = configManager.get();
   const tokens = loadTokens();
-
-  console.log("Eule MCP — Setup 🦉\n");
-  console.log(`Config: ${configManager.euleDirPath}/config.yaml`);
-  console.log(`Roles: ${String(config.roles.length)} configured`);
-  console.log(`Accounts: ${String(Object.keys(tokens.accounts).length)} authenticated\n`);
-
-  // Show existing accounts.
+  console.log("Note: `setup` is deprecated — use `login`. Delegating…\n");
   if (Object.keys(tokens.accounts).length > 0) {
     console.log("Authenticated accounts:");
     for (const [account, token] of Object.entries(tokens.accounts)) {
       const expired = token.expiresAt < Date.now() ? " (expired, will refresh)" : "";
       console.log(`  ${account}: tier ${token.tier}${expired}`);
     }
-    console.log("");
+    console.log(
+      "\nTip: eule-mcp login --device --tier ews   (or --capture for broker-only clients)\n",
+    );
   }
-
-  const action = await prompt("Add a new account? (y/n): ");
-  if (action.toLowerCase() !== "y") {
-    console.log("Done.");
-    return;
-  }
-
-  const accountHint = await prompt("Email address (login hint, optional): ");
-
-  // Start with Graph (tier 1), user can re-probe later.
-  const tierInput = await prompt("Try which tier first? (graph/ews/imap) [graph]: ");
-  const tier: ApiTier = (
-    ["graph", "ews", "imap"].includes(tierInput) ? tierInput : "graph"
-  ) as ApiTier;
-
-  console.log(`\nAuthenticating with tier: ${tier}`);
-  console.log("A browser window will open for Microsoft login...\n");
-
-  try {
-    const autoAuth = config.autoAuth?.find((a) => a.account === accountHint);
-    const token = await authenticateAccount(tier, accountHint || undefined, config.oauth, autoAuth);
-    console.log(`\n✅ Success! Account: ${token.account}`);
-    console.log(`   Tier: ${token.tier}`);
-    console.log(`   Token expires: ${new Date(token.expiresAt).toLocaleString()}`);
-  } catch (err) {
-    console.error("\n❌ Authentication failed:", err instanceof Error ? err.message : String(err));
-    process.exit(1);
-  }
+  // Any flags after `setup` are honoured by login() (it parses args.slice(1)).
+  await login();
 }
 
 async function login(): Promise<void> {
@@ -160,8 +121,7 @@ async function login(): Promise<void> {
       return;
     }
     // Browser authorization-code (paste-the-redirect) fallback.
-    const autoAuth = account ? config.autoAuth?.find((a) => a.account === account) : undefined;
-    const token = await authenticateAccount(tier, account, oauth, autoAuth);
+    const token = await authenticateAccount(tier, account, oauth);
     console.log(`\n✅ Success! ${token.account} (tier ${token.tier})`);
     console.log(`   Expires: ${new Date(token.expiresAt).toLocaleString()}`);
   } catch (err) {
