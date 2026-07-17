@@ -1,16 +1,17 @@
-/* eslint-disable @typescript-eslint/no-base-to-string */
-import { readFileSync, writeFileSync, existsSync, mkdirSync, chmodSync } from "node:fs";
+import {
+  readFileSync,
+  writeFileSync,
+  existsSync,
+  mkdirSync,
+  chmodSync,
+  renameSync,
+  rmSync,
+} from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import yaml from "js-yaml";
-import type {
-  AppConfig,
-  AutoAuthConfig,
-  OAuthConfig,
-  GoogleOAuthConfig,
-  RoleConfig,
-  ConnectorConfig,
-} from "../types/index.js";
+import type { AppConfig, OAuthConfig, RoleConfig, ConnectorConfig } from "../types/index.js";
+import { parseAppConfig } from "./schema.js";
 
 const EULE_DIR = join(homedir(), ".eule");
 const CONFIG_PATH = join(EULE_DIR, "config.yaml");
@@ -57,33 +58,14 @@ function ensureDirectories(): void {
 
 /** Validates a loaded config object. Throws on invalid structure. */
 function validate(raw: unknown): AppConfig {
-  if (typeof raw !== "object" || raw === null) {
-    throw new Error("Config must be a YAML object");
-  }
-
-  const obj = raw as Record<string, unknown>;
-  const language = obj.language === "en" ? "en" : "de";
-  const oauth = parseOAuth(obj.oauth);
-  const autoAuth = parseAutoAuth(obj.autoAuth);
-  const roles: RoleConfig[] = [];
-
-  if (Array.isArray(obj.roles)) {
-    for (const r of obj.roles as unknown[]) {
-      if (typeof r !== "object" || r === null) continue;
-      const role = r as Record<string, unknown>;
-      roles.push({
-        id: String(role.id ?? ""),
-        name: String(role.name ?? ""),
-        weeklyHours: Number(role.weeklyHours ?? 0),
-        contexts: Array.isArray(role.contexts) ? (role.contexts as unknown[]).map(String) : [],
-        connectors: parseConnectors(role.connectors),
-        signature:
-          typeof role.signature === "string" ? resolveSignature(role.signature) : undefined,
-      });
-    }
-  }
-
-  return { language, oauth, google: parseGoogleOAuth(obj.google), autoAuth, roles };
+  const parsed = parseAppConfig(raw);
+  return {
+    ...parsed,
+    roles: parsed.roles.map((role) => ({
+      ...role,
+      signature: role.signature ? resolveSignature(role.signature) : undefined,
+    })),
+  };
 }
 
 /** If value looks like a file path and exists, read it; otherwise treat as inline HTML. */
@@ -93,75 +75,6 @@ function resolveSignature(value: string): string {
     return readFileSync(expanded, "utf-8");
   }
   return value;
-}
-
-function parseGoogleOAuth(raw: unknown): GoogleOAuthConfig | undefined {
-  if (typeof raw !== "object" || raw === null) return undefined;
-  const o = raw as Record<string, unknown>;
-  if (typeof o.clientId !== "string" || typeof o.clientSecret !== "string") return undefined;
-  return { clientId: o.clientId, clientSecret: o.clientSecret };
-}
-
-function parseAutoAuth(raw: unknown): AutoAuthConfig[] | undefined {
-  if (!Array.isArray(raw)) return undefined;
-  return (
-    (raw as unknown[])
-      .filter((c): c is Record<string, unknown> => typeof c === "object" && c !== null)
-      // account + a totpSecret for --capture MFA autofill.
-      .filter((c) => typeof c.account === "string" && typeof c.totpSecret === "string")
-      .map((c) => ({
-        account: String(c.account),
-        ...(typeof c.totpSecret === "string" ? { totpSecret: c.totpSecret } : {}),
-      }))
-  );
-}
-
-function parseOAuth(raw: unknown): OAuthConfig {
-  if (typeof raw !== "object" || raw === null) return DEFAULT_OAUTH;
-  const obj = raw as Record<string, unknown>;
-  return {
-    clientId: typeof obj.clientId === "string" ? obj.clientId : DEFAULT_OAUTH.clientId,
-    tenant: typeof obj.tenant === "string" ? obj.tenant : DEFAULT_OAUTH.tenant,
-    apiVersion: obj.apiVersion === "v1" || obj.apiVersion === "v2" ? obj.apiVersion : undefined,
-  };
-}
-
-function parseConnectors(raw: unknown): RoleConfig["connectors"] {
-  if (typeof raw !== "object" || raw === null) return {};
-  const obj = raw as Record<string, unknown>;
-  return {
-    mail: parseConnectorList(obj.mail),
-    calendar: parseConnectorList(obj.calendar),
-    contacts: parseConnectorList(obj.contacts),
-    messenger: parseConnectorList(obj.messenger),
-    files: parseConnectorList(obj.files),
-    documents: parseConnectorList(obj.documents),
-  };
-}
-
-function parseConnectorList(raw: unknown): RoleConfig["connectors"]["mail"] {
-  if (!Array.isArray(raw)) return undefined;
-  return (raw as unknown[])
-    .filter((c): c is Record<string, unknown> => typeof c === "object" && c !== null)
-    .map((c) => ({
-      id: String(c.id ?? ""),
-      type: (["imap", "caldav", "carddav", "ical", "signal", "google", "paperless"].includes(
-        String(c.type),
-      )
-        ? String(c.type)
-        : "m365") as ConnectorConfig["type"],
-      account: String(c.account ?? ""),
-      mailbox: typeof c.mailbox === "string" ? c.mailbox : undefined,
-      host: typeof c.host === "string" ? c.host : undefined,
-      port: typeof c.port === "number" ? c.port : undefined,
-      smtpHost: typeof c.smtpHost === "string" ? c.smtpHost : undefined,
-      smtpPort: typeof c.smtpPort === "number" ? c.smtpPort : undefined,
-      auth: c.auth === "oauth" || c.auth === "password" ? c.auth : undefined,
-      password: typeof c.password === "string" ? c.password : undefined,
-      url: typeof c.url === "string" ? c.url : undefined,
-      token: typeof c.token === "string" ? c.token : undefined,
-      signalCliUrl: typeof c.signalCliUrl === "string" ? c.signalCliUrl : undefined,
-    }));
 }
 
 export class ConfigManager {
@@ -195,14 +108,24 @@ export class ConfigManager {
 
   /** Writes the current config back to disk with owner-only (0600) permissions. */
   save(config: AppConfig): void {
-    this.config = config;
-    writeFileSync(CONFIG_PATH, yaml.dump(config, { lineWidth: 120 }), {
-      encoding: "utf-8",
-      mode: 0o600,
-    });
-    // writeFileSync only applies `mode` when creating the file; enforce it on
-    // rewrite so a pre-existing config that held looser perms is tightened.
-    chmodSync(CONFIG_PATH, 0o600);
+    const validated = validate(config);
+    const temporaryPath = `${CONFIG_PATH}.${String(process.pid)}.tmp`;
+    try {
+      writeFileSync(temporaryPath, yaml.dump(validated, { lineWidth: 120 }), {
+        encoding: "utf-8",
+        mode: 0o600,
+      });
+      chmodSync(temporaryPath, 0o600);
+      renameSync(temporaryPath, CONFIG_PATH);
+      this.config = validated;
+    } catch (error) {
+      try {
+        rmSync(temporaryPath, { force: true });
+      } catch {
+        // Preserve the original failure.
+      }
+      throw error;
+    }
   }
 
   /** Add a new role. */

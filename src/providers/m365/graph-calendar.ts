@@ -4,6 +4,7 @@ import type {
   CalendarEventInput,
   CalendarInfo,
 } from "../../types/index.js";
+import { currentExecutionSignal } from "../../utils/execution-context.js";
 
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
 
@@ -42,6 +43,7 @@ export class GraphCalendarConnector implements CalendarConnector {
     const h = await this.headers();
     const res = await fetch(`${this.base}/calendars?$select=id,name,color,isDefaultCalendar`, {
       headers: h,
+      signal: currentExecutionSignal(),
     });
     if (!res.ok) throw new Error(`Graph calendars: ${String(res.status)} ${await res.text()}`);
     const data = (await res.json()) as {
@@ -59,7 +61,7 @@ export class GraphCalendarConnector implements CalendarConnector {
   async listEvents(start: string, end: string): Promise<CalendarEvent[]> {
     const h = await this.headers();
     const url = `${this.base}/calendarView?startDateTime=${encodeURIComponent(start)}&endDateTime=${encodeURIComponent(end)}&$orderby=start/dateTime&$top=50&$select=id,subject,start,end,location,isAllDay,attendees`;
-    const res = await fetch(url, { headers: h });
+    const res = await fetch(url, { headers: h, signal: currentExecutionSignal() });
     if (!res.ok) throw new Error(`Graph calendarView: ${String(res.status)} ${await res.text()}`);
     const data = (await res.json()) as { value: GraphEvent[] };
     return data.value.map((e) => this.mapEvent(e));
@@ -88,6 +90,7 @@ export class GraphCalendarConnector implements CalendarConnector {
       method: "POST",
       headers: h,
       body: JSON.stringify(body),
+      signal: currentExecutionSignal(),
     });
     if (!res.ok) throw new Error(`Graph createEvent: ${String(res.status)} ${await res.text()}`);
     return this.mapEvent((await res.json()) as GraphEvent);
@@ -105,6 +108,7 @@ export class GraphCalendarConnector implements CalendarConnector {
       method: "PATCH",
       headers: h,
       body: JSON.stringify(body),
+      signal: currentExecutionSignal(),
     });
     if (!res.ok) throw new Error(`Graph updateEvent: ${String(res.status)} ${await res.text()}`);
     return this.mapEvent((await res.json()) as GraphEvent);
@@ -115,6 +119,7 @@ export class GraphCalendarConnector implements CalendarConnector {
     const res = await fetch(`${this.base}/events/${encodeURIComponent(id)}`, {
       method: "DELETE",
       headers: h,
+      signal: currentExecutionSignal(),
     });
     if (!res.ok) throw new Error(`Graph deleteEvent: ${String(res.status)} ${await res.text()}`);
   }

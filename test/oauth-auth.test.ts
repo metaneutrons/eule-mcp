@@ -11,6 +11,13 @@ vi.mock("node:fs", () => ({
     files[p] = data;
   },
   chmodSync: () => {},
+  renameSync: (from: string, to: string) => {
+    files[to] = files[from] ?? "";
+    delete files[from];
+  },
+  rmSync: (p: string) => {
+    delete files[p];
+  },
 }));
 
 const TOKENS_PATH = join(homedir(), ".eule", "tokens.json");

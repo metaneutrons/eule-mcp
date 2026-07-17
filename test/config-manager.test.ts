@@ -8,6 +8,13 @@ vi.mock("node:fs", () => ({
   writeFileSync: (p: string, data: string) => {
     files[p] = data;
   },
+  renameSync: (from: string, to: string) => {
+    files[to] = files[from] ?? "";
+    delete files[from];
+  },
+  rmSync: (p: string) => {
+    delete files[p];
+  },
   mkdirSync: () => undefined,
   chmodSync: () => undefined,
 }));

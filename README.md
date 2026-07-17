@@ -60,17 +60,19 @@ Eule is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) serve
 - **Role-based context** — map accounts and connectors to professional roles
 - **LLM-optimized output** — HTML emails rendered as clean Markdown with thread splitting
 
-## Tools (47)
+## Tools (50)
 
-### 🔐 Auth (3)
+### 🔐 Auth (5)
 
 | Tool | Description |
 |---|---|
 | `auth_status` | Show authentication status and configuration |
 | `auth_login` | Authenticate an account (M365 or Google) via browser OAuth |
 | `auth_probe` | Test which API tier works for an account |
+| `auth_accounts` | List token health without exposing credentials |
+| `auth_logout` | Remove locally stored tokens for an account |
 
-### 👤 Roles & config (7)
+### 👤 Roles & config (8)
 
 Structural config editing over MCP. **These never accept a secret** — passwords,
 client secrets, tokens and TOTP secrets are entered only in the local credential
@@ -81,12 +83,26 @@ are kept clearly separate.
 | Tool | Description |
 |---|---|
 | `role_list` | List all configured roles with connectors and weekly hours |
+| `account_list` | SSOT inventory of accounts and every role/connector binding |
 | `config_get` | Full config (roles, connectors, oauth, autoAuth) — secrets redacted |
 | `role_upsert` | Create/update a role's metadata `[WRITES]` |
 | `role_remove` | Remove a role and its connectors `[WRITES]` |
 | `account_add` | Add a connector (account) to a role — structural only `[WRITES]` |
 | `account_remove` | Remove a connector from a role `[WRITES]` |
 | `config_set_oauth` | Set the M365 client id / tenant / api-version `[WRITES]` |
+
+Roles can define an enforceable `policy` with `enabled`, `readOnly`, and
+`allowedConnectorKinds`. Policy checks happen centrally in the connector
+registry, including account-specific routing, so a disabled/read-only context
+cannot be bypassed by selecting an account directly. These are work-context
+policies; stdio transport does not authenticate distinct human callers and is
+therefore not a substitute for multi-user RBAC.
+
+> **Configuration validation:** startup now fails closed on unknown keys,
+> malformed URLs/ports, invalid IDs, duplicate role IDs, and duplicate connector
+> IDs within a role. Existing minimal configs still receive defaults for
+> language and OAuth settings. Back up `~/.eule/config.yaml` before upgrading
+> and fix any path-specific validation errors reported at startup.
 
 ### 📧 Mail (8)
 
@@ -107,6 +123,8 @@ are kept clearly separate.
 > pymupdf4llm/pandoc), or `inline` (return an image so the model can see it).
 > Attachments on **reply/forward** are supported on Graph, Gmail and IMAP; on the
 > EWS fallback tier, attach via a new message or draft instead.
+> `mail_send` and `mail_send_draft` accept an optional `idempotency_key` to
+> prevent duplicate submission within the running server process.
 
 ### 💬 Messenger (3)
 
@@ -116,7 +134,7 @@ are kept clearly separate.
 | `chat_read` | Read messages from a conversation |
 | `chat_send` | Send a message to a conversation |
 
-### 📁 Files (4)
+### 📁 Files (5)
 
 | Tool | Description |
 |---|---|
@@ -124,6 +142,7 @@ are kept clearly separate.
 | `file_read` | Read file content (text extraction) |
 | `file_list` | List recently modified files |
 | `file_upload` | Upload a file to OneDrive or Google Drive |
+| `file_download` | Download a file from OneDrive or Google Drive |
 
 ### 📅 Calendar (6)
 
@@ -323,7 +342,7 @@ roles:
         - id: paperless
           type: paperless
           account: "paperless.local"
-          url: "http://paperless:8000"
+          url: "https://paperless.example.com"
           token: "your-api-token"
 ```
 
@@ -391,7 +410,7 @@ Pass `--no-totp` to `login --capture` to skip autofill for a given login.
 - [x] Paperless-ngx connector
 - [ ] Apple Notes (macOS-only, AppleScript/SQLite)
 - [ ] Messengers — iMessage (macOS), WhatsApp (Business API), Telegram, Discord, Slack, Matrix
-- [ ] Google Workspace (Gmail API, Google Calendar API)
+- [x] Google Workspace (Gmail, Calendar, Contacts, and Drive APIs)
 - [ ] Auto-auth i18n resilience
 - [ ] IETF OAuth for Open Public Clients (`draft-ietf-mailmaint-oauth-public`) — provider-agnostic auth with dynamic client registration
 - [ ] Exchange on-premise support (Basic/NTLM auth, configurable EWS URL)
@@ -408,6 +427,10 @@ Contributions are welcome! This project is in early development, so there's plen
 5. Open a Pull Request
 
 Please follow [Conventional Commits](https://www.conventionalcommits.org/) for commit messages.
+
+Architecture and security details are documented in
+[ARCHITECTURE.md](ARCHITECTURE.md), [SECURITY.md](SECURITY.md), and
+[FINAL_SECURITY_REVIEW.md](FINAL_SECURITY_REVIEW.md).
 
 ## License
 

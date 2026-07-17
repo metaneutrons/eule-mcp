@@ -5,6 +5,7 @@ import type {
   MailSendOpts,
   OutgoingAttachment,
 } from "../../types/index.js";
+import { fetchWithExecutionContext as fetch } from "../../utils/execution-context.js";
 import { assembleHtml } from "../../utils/mail-html.js";
 import { assertResponseSize, fetchWithTimeout } from "../../utils/security.js";
 

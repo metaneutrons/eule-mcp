@@ -27,6 +27,13 @@ roles:
     name: "VP Hochschule Hannover"
     weeklyHours: 20
     contexts: ["@office", "@remote"]
+    # Optional enforceable work-context policy. Defaults: enabled, read/write,
+    # and all connector domains. A read-only role cannot send, upload, create,
+    # update, or delete through its connectors.
+    policy:
+      enabled: true
+      readOnly: false
+      allowedConnectorKinds: [mail, calendar, contacts, files]
     connectors:
       mail:
         - id: vpdit-personal
