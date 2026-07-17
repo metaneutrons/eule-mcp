@@ -50,3 +50,8 @@ export async function oauthCapture(o: OauthCaptureOpts): Promise<number> {
 export async function secretPrompt(label: string, out: string): Promise<number> {
   return run("secret-prompt", ["--label", label, "--out", out]);
 }
+
+/** Prompt locally and save directly to the native OS credential store. */
+export async function credentialPrompt(label: string, reference: string): Promise<number> {
+  return run("secret-prompt", ["--label", label, "--credential", reference]);
+}

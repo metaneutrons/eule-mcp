@@ -41,11 +41,25 @@ export const connectorSchema = z
     smtpPort: z.number().int().min(1).max(65535).optional(),
     auth: z.enum(["oauth", "password"]).optional(),
     password: z.string().optional(),
+    credentialRef: z
+      .string()
+      .regex(
+        /^connector\/[A-Za-z0-9][A-Za-z0-9._-]*\/(?:mail|calendar|contacts|messenger|files|documents)\/[A-Za-z0-9][A-Za-z0-9._-]*$/,
+      )
+      .optional(),
     url: z.url().optional(),
     token: z.string().optional(),
     signalCliUrl: z.url().optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((connector, ctx) => {
+    if (connector.credentialRef && (connector.password || connector.token))
+      ctx.addIssue({
+        code: "custom",
+        path: ["credentialRef"],
+        message: "credentialRef cannot be combined with inline password or token",
+      });
+  });
 
 const connectorGroups = z.object(
   Object.fromEntries(

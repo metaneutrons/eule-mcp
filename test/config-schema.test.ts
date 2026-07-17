@@ -60,6 +60,54 @@ describe("configuration SSOT schema", () => {
       /Invalid config:[\s\S]*expected array/i,
     );
   });
+
+  it("accepts opaque OS credential references and rejects arbitrary references", () => {
+    const connector = {
+      id: "icloud",
+      type: "imap",
+      account: "user@example.com",
+      credentialRef: "connector/personal/mail/icloud",
+    };
+    expect(
+      parseAppConfig({
+        ...base,
+        roles: [
+          {
+            id: "personal",
+            name: "Personal",
+            weeklyHours: 0,
+            connectors: { mail: [connector] },
+          },
+        ],
+      }).roles[0]?.connectors.mail?.[0]?.credentialRef,
+    ).toBe(connector.credentialRef);
+    expect(() =>
+      parseAppConfig({
+        ...base,
+        roles: [
+          {
+            id: "personal",
+            name: "Personal",
+            weeklyHours: 0,
+            connectors: { mail: [{ ...connector, credentialRef: "other-app/key" }] },
+          },
+        ],
+      }),
+    ).toThrow(/credentialRef/);
+    expect(() =>
+      parseAppConfig({
+        ...base,
+        roles: [
+          {
+            id: "personal",
+            name: "Personal",
+            weeklyHours: 0,
+            connectors: { mail: [{ ...connector, password: "legacy" }] },
+          },
+        ],
+      }),
+    ).toThrow(/cannot be combined/);
+  });
 });
 
 describe("role policy enforcement", () => {

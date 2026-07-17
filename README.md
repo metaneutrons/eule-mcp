@@ -220,9 +220,19 @@ pnpm run build
 ### Setup
 
 ```bash
+# Recommended: create a role and connector through the local wizard.
+node dist/cli/index.js configure
+
 # Authenticate your M365 account (pick a login method below)
 node dist/cli/index.js login --device --tier ews
 ```
+
+The wizard collects structural settings in the terminal. When a password or API
+token is required, a native window carrying the Eule logo opens so it is clear
+which application is requesting the credential. The secret is stored in macOS
+Keychain, Windows Credential Manager, or Linux Secret Service; `config.yaml`
+contains only an opaque `credentialRef`. Existing inline YAML secrets remain
+supported for migration, but new setups should use the wizard.
 
 > The old `setup` subcommand is a deprecated alias for `login` — prefer `login`.
 
@@ -274,7 +284,8 @@ If the tenant permits device code, `login --device …` also works. (A macOS-onl
 The `clientId` and `apiVersion` are stored per token so refresh reuses the
 exact app + endpoint that issued it (a mixed v1+v2 store is supported).
 
-After authentication, configure your roles in `~/.eule/config.yaml`:
+The wizard is the recommended configuration path. For unattended or advanced
+deployments, roles can still be configured directly in `~/.eule/config.yaml`:
 
 ```yaml
 language: de
@@ -324,7 +335,7 @@ roles:
           host: "imap.mail.me.com"
           smtpHost: "smtp.mail.me.com"
           auth: password
-          password: "xxxx-xxxx-xxxx-xxxx"
+          credentialRef: "connector/personal/mail/icloud"
       calendar:
         - id: gcal
           type: google
@@ -343,7 +354,7 @@ roles:
           type: paperless
           account: "paperless.local"
           url: "https://paperless.example.com"
-          token: "your-api-token"
+          credentialRef: "connector/personal/documents/paperless"
 ```
 
 ### Register with your AI assistant

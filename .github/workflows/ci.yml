@@ -64,6 +64,8 @@ jobs:
         working-directory: helper
       - run: cargo clippy --all-targets -- -D warnings
         working-directory: helper
+      - run: cargo test --locked
+        working-directory: helper
       - run: cargo build --release
         working-directory: helper
 

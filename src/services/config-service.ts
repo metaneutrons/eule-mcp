@@ -7,6 +7,8 @@ import type {
   OAuthConfig,
   RoleConfig,
 } from "../types/index.js";
+import { deleteCredential } from "../helper/credential-store.js";
+import { logger } from "../utils/logger.js";
 
 export interface RoleUpsertInput {
   readonly id: string;
@@ -104,7 +106,19 @@ export class ConfigService {
   }
 
   removeAccount(role: string, kind: ConnectorKind, id: string): void {
+    const connector = this.config
+      .get()
+      .roles.find((candidate) => candidate.id === role)
+      ?.connectors[kind]?.find((candidate) => candidate.id === id);
     this.config.removeConnector(role, kind, id);
+    if (connector?.credentialRef)
+      try {
+        deleteCredential(connector.credentialRef);
+      } catch (error) {
+        logger.warn(
+          `Connector removed, but its OS credential could not be deleted: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
   }
 
   setOAuth(patch: Partial<Pick<OAuthConfig, "clientId" | "tenant" | "apiVersion">>): void {

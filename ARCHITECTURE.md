@@ -49,6 +49,15 @@ domain interfaces/managers, not MCP types.
 All tool domains are extracted. `server/index.ts` is composition and process
 lifecycle only.
 
+## Credential boundary
+
+The native Rust helper is the credential-entry boundary. Its branded local
+window stores connector passwords and API tokens in the operating-system
+credential store. Configuration contains only scoped `credentialRef` values;
+Node retrieves a secret through an owner-only temporary file, deletes that file
+immediately, and caches the value only for the server process lifetime. Legacy
+inline connector secrets remain a migration fallback.
+
 ## Failure behavior
 
 Unexpected exceptions are converted into an MCP error containing a correlation

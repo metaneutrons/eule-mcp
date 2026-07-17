@@ -28,8 +28,10 @@
 
 - Stdio has one operating-system principal and cannot provide multi-human or
   multi-tenant RBAC. An authenticated HTTP/OIDC transport is still required.
-- Some legacy connector secrets remain in YAML until an OS keychain or external
-  secret manager is integrated.
+- New connector passwords and API tokens are stored in the native OS credential
+  store through the branded local helper. Legacy inline YAML secrets remain
+  readable for migration; OAuth refresh tokens, Google client secrets, and
+  optional TOTP seeds are not yet migrated to the keychain.
 - IMAP library operations cannot currently be force-cancelled by the shared
   execution signal; the tool deadline stops waiting but the socket may finish
   later.
