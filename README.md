@@ -60,7 +60,7 @@ Eule is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) serve
 - **Role-based context** — map accounts and connectors to professional roles
 - **LLM-optimized output** — HTML emails rendered as clean Markdown with thread splitting
 
-## Tools (50)
+## Tools (58)
 
 ### 🔐 Auth (5)
 
@@ -72,13 +72,13 @@ Eule is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) serve
 | `auth_accounts` | List token health without exposing credentials |
 | `auth_logout` | Remove locally stored tokens for an account |
 
-### 👤 Roles & config (8)
+### 👤 Roles, accounts & configuration (16)
 
-Structural config editing over MCP. **These never accept a secret** — passwords,
-client secrets, tokens and TOTP secrets are entered only in the local credential
-window via the CLI (`eule secret …`), so a prompt-injected tool call can't
-smuggle one in. Read (`config_get`, `role_list`) and write (`[WRITES]`) tools
-are kept clearly separate.
+Eule can be configured end-to-end by an LLM without the user editing YAML.
+**No MCP tool accepts a secret**: a write that needs a password, API token,
+Google client secret, or TOTP seed opens a branded local Eule window. The helper
+validates and writes the value directly to the OS credential store; MCP receives
+only success/failure and an opaque reference is committed to `config.yaml`.
 
 | Tool | Description |
 |---|---|
@@ -87,9 +87,17 @@ are kept clearly separate.
 | `config_get` | Full config (roles, connectors, oauth, autoAuth) — secrets redacted |
 | `role_upsert` | Create/update a role's metadata `[WRITES]` |
 | `role_remove` | Remove a role and its connectors `[WRITES]` |
-| `account_add` | Add a connector (account) to a role — structural only `[WRITES]` |
+| `connector_capabilities` | Discover valid connector/domain combinations, fields, credential mode, and next step |
+| `connector_configure` | Create/update a connector; capture any required secret locally `[WRITES]` |
+| `account_add` | Deprecated compatibility alias for `connector_configure` `[WRITES]` |
 | `account_remove` | Remove a connector from a role `[WRITES]` |
 | `config_set_oauth` | Set the M365 client id / tenant / api-version `[WRITES]` |
+| `credential_status` | Report configured/missing/unavailable bindings without exposing values |
+| `credential_rotate` | Atomically rotate a connector password or token `[WRITES]` |
+| `google_oauth_configure` | Set the client id and capture the Google client secret locally `[WRITES]` |
+| `google_oauth_remove` | Remove Google OAuth config and its local secret `[DESTRUCTIVE]` |
+| `totp_configure` | Capture/rotate a validated TOTP seed locally `[WRITES]` |
+| `totp_remove` | Remove a TOTP binding and local secret `[DESTRUCTIVE]` |
 
 Roles can define an enforceable `policy` with `enabled`, `readOnly`, and
 `allowedConnectorKinds`. Policy checks happen centrally in the connector
@@ -99,10 +107,10 @@ policies; stdio transport does not authenticate distinct human callers and is
 therefore not a substitute for multi-user RBAC.
 
 > **Configuration validation:** startup now fails closed on unknown keys,
-> malformed URLs/ports, invalid IDs, duplicate role IDs, and duplicate connector
-> IDs within a role. Existing minimal configs still receive defaults for
-> language and OAuth settings. Back up `~/.eule/config.yaml` before upgrading
-> and fix any path-specific validation errors reported at startup.
+> malformed or insecure URLs/ports, invalid IDs, unsupported connector/domain
+> combinations, missing required fields, duplicate role IDs, and duplicate
+> connector IDs within a role. `connector_capabilities` exposes the same SSOT
+> catalog used by validation.
 
 ### 📧 Mail (8)
 
@@ -232,7 +240,32 @@ token is required, a native window carrying the Eule logo opens so it is clear
 which application is requesting the credential. The secret is stored in macOS
 Keychain, Windows Credential Manager, or Linux Secret Service; `config.yaml`
 contains only an opaque `credentialRef`. Existing inline YAML secrets remain
-supported for migration, but new setups should use the wizard.
+supported for migration, but new setups should use MCP configuration tools or
+the wizard.
+
+#### Configure through the AI assistant
+
+For a local desktop MCP client, no YAML setup is required. Ask the assistant to
+configure Eule; it can perform this sequence itself:
+
+1. Read `connector_capabilities` and `config_get`.
+2. Create a work context with `role_upsert`.
+3. Call `connector_configure` for each account/domain binding.
+4. If prompted, enter the requested secret in the native Eule window.
+5. Use `google_oauth_configure` or `totp_configure` when applicable, then
+   `auth_login` for OAuth providers.
+6. Verify local secret bindings with `credential_status` and OAuth tokens with
+   `auth_accounts`.
+
+Secret capture is a deliberate local-consent boundary: it requires an active
+desktop session and cannot be completed silently by the model. Configuration
+writes are atomic; rotations use revisioned references, commit the new binding
+before deleting the old credential, compensate failed writes, and reject a
+configuration changed while the prompt was open.
+
+`credential_status: unavailable` means the native helper or the platform
+credential service could not be reached. On Linux, ensure a Secret Service
+provider is installed, running, and unlocked; then retry the configure action.
 
 > The old `setup` subcommand is a deprecated alias for `login` — prefer `login`.
 
@@ -254,7 +287,7 @@ supported for migration, but new setups should use the wizard.
   The only path that works for clients like "Apple Internet Accounts" when
   device code is CA-blocked. The helper writes the token itself — it never
   returns through the MCP/LLM. If the account has a TOTP secret configured
-  (`autoAuth[].totpSecret`), the MFA code is auto-filled (the password is still
+  (`autoAuth[].totpSecretRef`), the MFA code is auto-filled (the password is still
   typed by you); pass `--no-totp` to disable.
 - **Flags:** `--account <email>`, `--client-id <id>`, `--api-version v1|v2`,
   `--tier graph|ews|imap`, `--redirect-uri <uri>`.
@@ -284,8 +317,9 @@ If the tenant permits device code, `login --device …` also works. (A macOS-onl
 The `clientId` and `apiVersion` are stored per token so refresh reuses the
 exact app + endpoint that issued it (a mixed v1+v2 store is supported).
 
-The wizard is the recommended configuration path. For unattended or advanced
-deployments, roles can still be configured directly in `~/.eule/config.yaml`:
+The MCP tools or local wizard are the recommended configuration paths. For
+unattended or advanced deployments, structural settings can still be managed
+directly in `~/.eule/config.yaml`:
 
 ```yaml
 language: de
@@ -318,7 +352,7 @@ roles:
 ```yaml
 google:
   clientId: "123456.apps.googleusercontent.com"
-  clientSecret: "GOCSPX-..."
+  clientSecretRef: "oauth/google/client-secret.a1b2c3d4"
 
 roles:
   - id: personal
@@ -335,7 +369,7 @@ roles:
           host: "imap.mail.me.com"
           smtpHost: "smtp.mail.me.com"
           auth: password
-          credentialRef: "connector/personal/mail/icloud"
+          credentialRef: "connector/personal/mail/icloud.a1b2c3d4"
       calendar:
         - id: gcal
           type: google
@@ -354,8 +388,12 @@ roles:
           type: paperless
           account: "paperless.local"
           url: "https://paperless.example.com"
-          credentialRef: "connector/personal/documents/paperless"
+          credentialRef: "connector/personal/documents/paperless.a1b2c3d4"
 ```
+
+Opaque references are generated and maintained by Eule. Do not invent or copy
+them between machines; use `connector_configure`, `credential_rotate`, and
+`google_oauth_configure` so the referenced OS credential exists.
 
 ### Register with your AI assistant
 
@@ -389,12 +427,13 @@ via the credential window (it never passes through the model or argv):
 node dist/cli/index.js secret totp --account you@example.com
 ```
 
-This writes an `autoAuth` entry to `~/.eule/config.yaml`:
+The helper validates the base32 seed and stores it directly in the OS credential
+store. YAML contains only its generated reference:
 
 ```yaml
 autoAuth:
   - account: "you@example.com"
-    totpSecret: "YOUR_BASE32_TOTP_SECRET"
+    totpSecretRef: "totp/0123456789abcdef.a1b2c3d4"
 ```
 
 Pass `--no-totp` to `login --capture` to skip autofill for a given login.

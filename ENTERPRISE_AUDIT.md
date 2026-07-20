@@ -45,6 +45,13 @@ transport cannot enforce.
   atomic owner-only persistence, and cancellable probes/token exchanges.
 - Server bootstrap contains composition and lifecycle only; every MCP tool uses
   the current registration API through a domain adapter.
+- The MCP configuration control plane is self-describing and can create/update
+  every supported connector without accepting secrets as tool input.
+- A single credential broker mediates connector passwords/tokens, Google client
+  secrets, and TOTP seeds through the branded native helper and OS store.
+- Revisioned capture/commit/cleanup transactions, stale-write detection,
+  per-resource locks, serialized prompts, and cancellation prevent unsafe
+  partial configuration or concurrent credential replacement.
 
 ## Existing strengths
 
@@ -71,11 +78,11 @@ negative cases. Per-tenant encryption keys should be managed outside config.
 
 ### P0: secret management
 
-Connector passwords and API tokens now use opaque references backed by macOS
-Keychain, Windows Credential Manager, or Linux Secret Service when created with
-the local wizard. Remaining work is to migrate OAuth refresh tokens, Google
-client secrets, and optional TOTP seeds, and to add enterprise secret-manager
-adapters plus explicit rotation workflows.
+Connector passwords/API tokens, Google client secrets, and TOTP seeds use opaque
+references backed by macOS Keychain, Windows Credential Manager, or Linux Secret
+Service when created through MCP or the CLI. Remaining work for a hosted,
+multi-tenant deployment is to add enterprise secret-manager adapters and move
+OAuth refresh tokens behind that tenant-scoped boundary.
 
 ### P1: complete the auditable command architecture
 

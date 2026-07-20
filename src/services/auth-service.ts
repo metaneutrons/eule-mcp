@@ -5,6 +5,7 @@ import { authenticateAccount, getAccessToken } from "../providers/m365/index.js"
 import { authenticateGoogle } from "../providers/google/index.js";
 import { fetchWithExecutionContext as fetch } from "../utils/execution-context.js";
 import { logger } from "../utils/logger.js";
+import { ConfiguredCredentialResolver } from "../helper/configured-credential-resolver.js";
 
 export interface AuthAccountSummary {
   readonly account: string;
@@ -19,6 +20,9 @@ export class AuthService {
   constructor(
     private readonly config: ConfigManager,
     private readonly tokens: TokenRepository,
+    private readonly secrets: ConfiguredCredentialResolver = new ConfiguredCredentialResolver(
+      config,
+    ),
   ) {}
 
   inventory(): AuthAccountSummary[] {
@@ -60,11 +64,14 @@ export class AuthService {
 
   async login(tier: ApiTier, accountHint?: string): Promise<AccountToken> {
     const account = accountHint?.trim().toLowerCase();
-    const lockKey = `${tier}:${account ?? "interactive"}`;
+    // Google uses one fixed localhost redirect port registered with the OAuth
+    // client, so interactive Google logins must be process-wide exclusive.
+    const lockKey =
+      tier === "google" ? "google:interactive" : `${tier}:${account ?? "interactive"}`;
     return this.exclusive(lockKey, async () => {
       try {
         if (tier === "google") {
-          const google = this.config.get().google;
+          const google = this.secrets.googleOAuth();
           if (!google) throw new Error("Google OAuth is not configured");
           return await authenticateGoogle(google, account);
         }

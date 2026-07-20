@@ -11,30 +11,34 @@ export function registerAuthTools(server: McpServer, auth: AuthService): void {
       inputSchema: {},
       annotations: { readOnlyHint: true },
     },
-    async () =>
-      executeTool("auth_status", () => {
-        const status = auth.status();
-        const roles = status.roles.map(
-          (r) =>
-            `  ${r.id}: ${r.name} (${String(r.weeklyHours)}h/week, ${String(r.mail)} mail, ${String(r.calendar)} cal)`,
-        );
-        const accounts = status.accounts.map(
-          (a) =>
-            `  ${a.account}: ${a.provider}/${a.tier}, ${a.health}, expires ${new Date(a.expiresAt).toISOString()}`,
-        );
-        return textResult(
-          [
-            `Language: ${status.language}`,
-            `Roles (${String(status.roles.length)}):`,
-            ...roles,
-            "",
-            `Authenticated accounts (${String(accounts.length)}):`,
-            ...(accounts.length ? accounts : ["  none — run 'eule-mcp setup' to add accounts"]),
-            "",
-            `Data: ${status.dataPath}`,
-          ].join("\n"),
-        );
-      }),
+    async (_input, extra) =>
+      executeTool(
+        "auth_status",
+        () => {
+          const status = auth.status();
+          const roles = status.roles.map(
+            (r) =>
+              `  ${r.id}: ${r.name} (${String(r.weeklyHours)}h/week, ${String(r.mail)} mail, ${String(r.calendar)} cal)`,
+          );
+          const accounts = status.accounts.map(
+            (a) =>
+              `  ${a.account}: ${a.provider}/${a.tier}, ${a.health}, expires ${new Date(a.expiresAt).toISOString()}`,
+          );
+          return textResult(
+            [
+              `Language: ${status.language}`,
+              `Roles (${String(status.roles.length)}):`,
+              ...roles,
+              "",
+              `Authenticated accounts (${String(accounts.length)}):`,
+              ...(accounts.length ? accounts : ["  none — run 'eule-mcp setup' to add accounts"]),
+              "",
+              `Data: ${status.dataPath}`,
+            ].join("\n"),
+          );
+        },
+        { signal: extra.signal },
+      ),
   );
   server.registerTool(
     "auth_accounts",
@@ -43,17 +47,20 @@ export function registerAuthTools(server: McpServer, auth: AuthService): void {
       inputSchema: {},
       annotations: { readOnlyHint: true },
     },
-    async () =>
-      executeTool("auth_accounts", () =>
-        textResult(
-          auth
-            .inventory()
-            .map(
-              (a) =>
-                `${a.account} [${a.provider}/${a.tier}] ${a.health}\n  Expires: ${new Date(a.expiresAt).toISOString()}`,
-            )
-            .join("\n\n") || "No authenticated accounts.",
-        ),
+    async (_input, extra) =>
+      executeTool(
+        "auth_accounts",
+        () =>
+          textResult(
+            auth
+              .inventory()
+              .map(
+                (a) =>
+                  `${a.account} [${a.provider}/${a.tier}] ${a.health}\n  Expires: ${new Date(a.expiresAt).toISOString()}`,
+              )
+              .join("\n\n") || "No authenticated accounts.",
+          ),
+        { signal: extra.signal },
       ),
   );
   server.registerTool(
@@ -71,7 +78,7 @@ export function registerAuthTools(server: McpServer, auth: AuthService): void {
         openWorldHint: true,
       },
     },
-    async ({ account, tier }) =>
+    async ({ account, tier }, extra) =>
       executeTool(
         "auth_login",
         async () => {
@@ -80,7 +87,7 @@ export function registerAuthTools(server: McpServer, auth: AuthService): void {
             `✅ Authenticated: ${token.account}\nTier: ${token.tier}\nExpires: ${new Date(token.expiresAt).toISOString()}`,
           );
         },
-        { timeoutMs: 10 * 60 * 1000 },
+        { timeoutMs: 10 * 60 * 1000, signal: extra.signal },
       ),
   );
   server.registerTool(
@@ -90,13 +97,17 @@ export function registerAuthTools(server: McpServer, auth: AuthService): void {
       inputSchema: { account: z.email() },
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
-    async ({ account }) =>
-      executeTool("auth_probe", async () => {
-        const result = await auth.probe(account);
-        return textResult(
-          `Account: ${account.toLowerCase()}\nCurrent tier: ${result.tier}\nProbe result: ${result.result}`,
-        );
-      }),
+    async ({ account }, extra) =>
+      executeTool(
+        "auth_probe",
+        async () => {
+          const result = await auth.probe(account);
+          return textResult(
+            `Account: ${account.toLowerCase()}\nCurrent tier: ${result.tier}\nProbe result: ${result.result}`,
+          );
+        },
+        { signal: extra.signal },
+      ),
   );
   server.registerTool(
     "auth_logout",
@@ -105,13 +116,16 @@ export function registerAuthTools(server: McpServer, auth: AuthService): void {
       inputSchema: { account: z.email() },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
     },
-    async ({ account }) =>
-      executeTool("auth_logout", () =>
-        textResult(
-          auth.logout(account)
-            ? `✅ Removed local tokens for ${account.toLowerCase()}`
-            : `No stored tokens for ${account.toLowerCase()}`,
-        ),
+    async ({ account }, extra) =>
+      executeTool(
+        "auth_logout",
+        () =>
+          textResult(
+            auth.logout(account)
+              ? `✅ Removed local tokens for ${account.toLowerCase()}`
+              : `No stored tokens for ${account.toLowerCase()}`,
+          ),
+        { signal: extra.signal },
       ),
   );
 }

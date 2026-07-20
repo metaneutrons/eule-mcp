@@ -5,7 +5,7 @@
 //! to the OS credential store. It never appears in argv, stdout, logs, or MCP.
 
 use crate::util;
-use clap::Args as ClapArgs;
+use clap::{Args as ClapArgs, ValueEnum};
 use std::path::PathBuf;
 use tao::{
     event::{Event, WindowEvent},
@@ -15,6 +15,12 @@ use tao::{
 use wry::WebViewBuilder;
 
 const CANCEL: &str = "__EULE_CANCEL__";
+
+#[derive(Clone, Copy, ValueEnum)]
+enum SecretFormat {
+    Opaque,
+    Totp,
+}
 
 #[derive(ClapArgs)]
 pub struct Args {
@@ -30,6 +36,9 @@ pub struct Args {
     /// Abort after N seconds if nothing is entered.
     #[arg(long, default_value_t = 180)]
     timeout: u64,
+    /// Validate the secret locally before storing it.
+    #[arg(long, value_enum, default_value_t = SecretFormat::Opaque)]
+    format: SecretFormat,
 }
 
 fn page(label: &str) -> String {
@@ -83,6 +92,7 @@ pub fn run(args: Args) -> Result<(), String> {
 
     let out = args.out.clone();
     let credential = args.credential.clone();
+    let format = args.format;
     let _webview = WebViewBuilder::new()
         .with_html(page(&args.label))
         .with_ipc_handler(move |req| {
@@ -93,6 +103,10 @@ pub fn run(args: Args) -> Result<(), String> {
             }
             if value.is_empty() {
                 eprintln!("error: credential cannot be empty");
+                std::process::exit(1);
+            }
+            if !validate_secret(&value, format) {
+                eprintln!("error: TOTP seed must be base32 (A-Z, 2-7; at least 16 symbols)");
                 std::process::exit(1);
             }
             let result = if let Some(reference) = credential.as_deref() {
@@ -129,9 +143,16 @@ pub fn run(args: Args) -> Result<(), String> {
     });
 }
 
+fn validate_secret(value: &str, format: SecretFormat) -> bool {
+    match format {
+        SecretFormat::Opaque => true,
+        SecretFormat::Totp => util::decode_totp_seed(value).is_some(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::page;
+    use super::{SecretFormat, page, validate_secret};
 
     #[test]
     fn identifies_eule_without_exposing_the_secret() {
@@ -139,5 +160,16 @@ mod tests {
         assert!(html.contains("Eule is requesting a credential"));
         assert!(html.contains("<svg"));
         assert!(html.contains("type=\"password\""));
+    }
+
+    #[test]
+    fn validates_totp_without_returning_it_to_node() {
+        assert!(validate_secret("JBSW Y3DP-EHPK3PXP", SecretFormat::Totp));
+        assert!(validate_secret(
+            "JBSWY3DPEHPK3PXPMFRA====",
+            SecretFormat::Totp
+        ));
+        assert!(!validate_secret("not-a-totp-secret", SecretFormat::Totp));
+        assert!(validate_secret("any value", SecretFormat::Opaque));
     }
 }

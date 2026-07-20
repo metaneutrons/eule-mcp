@@ -31,19 +31,18 @@ import { GoogleContactConnector } from "../providers/google/google-contacts.js";
 import { GoogleDriveConnector } from "../providers/google/google-drive.js";
 import { PaperlessConnector } from "../providers/paperless/index.js";
 import { RolePolicyService, type AccessMode } from "../config/index.js";
-import { readCredential } from "../helper/credential-store.js";
+import { ConfiguredCredentialResolver } from "../helper/configured-credential-resolver.js";
 
 export class ConnectorRegistry {
   private readonly policy: RolePolicyService;
 
-  constructor(private readonly config: ConfigManager) {
+  constructor(
+    private readonly config: ConfigManager,
+    private readonly secrets: ConfiguredCredentialResolver = new ConfiguredCredentialResolver(
+      config,
+    ),
+  ) {
     this.policy = new RolePolicyService(() => this.config.get());
-  }
-
-  private secret(connector: ConnectorConfig): string | undefined {
-    return connector.credentialRef
-      ? readCredential(connector.credentialRef, this.config.euleDirPath)
-      : (connector.password ?? connector.token);
   }
 
   /** Get all mail connectors, optionally filtered by role. */
@@ -69,14 +68,14 @@ export class ConnectorRegistry {
               port: mc.port,
               smtpPort: mc.smtpPort,
               auth: mc.auth ?? "password",
-              password: this.secret(mc),
+              password: this.secrets.connector(mc),
             }),
           );
           continue;
         }
 
         if (mc.type === "google") {
-          const gcfg = cfg.google;
+          const gcfg = this.secrets.googleOAuth();
           if (!gcfg) continue;
           connectors.push(
             new GoogleMailConnector(mc.account, () => getGoogleAccessToken(mc.account, gcfg)),
@@ -162,12 +161,12 @@ export class ConnectorRegistry {
         port: mc.port,
         smtpPort: mc.smtpPort,
         auth: mc.auth ?? "password",
-        password: this.secret(mc),
+        password: this.secrets.connector(mc),
       });
     }
 
     if (mc.type === "google") {
-      const gcfg = cfg.google;
+      const gcfg = this.secrets.googleOAuth();
       if (!gcfg) return undefined;
       const c = new GoogleMailConnector(mc.account, () => getGoogleAccessToken(mc.account, gcfg));
       c.signature = r.signature;
@@ -212,7 +211,7 @@ export class ConnectorRegistry {
     for (const r of roles) {
       for (const cc of r.connectors.calendar ?? []) {
         if (cc.type === "caldav") {
-          const password = this.secret(cc);
+          const password = this.secrets.connector(cc);
           if (cc.url && password) {
             connectors.push(
               new CalDavCalendarConnector(cc.account, {
@@ -231,7 +230,7 @@ export class ConnectorRegistry {
         }
 
         if (cc.type === "google") {
-          const gcfg = cfg.google;
+          const gcfg = this.secrets.googleOAuth();
           if (gcfg)
             connectors.push(
               new GoogleCalendarConnector(cc.account, () => getGoogleAccessToken(cc.account, gcfg)),
@@ -273,7 +272,7 @@ export class ConnectorRegistry {
     for (const r of roles) {
       for (const cc of r.connectors.contacts ?? []) {
         if (cc.type === "carddav") {
-          const password = this.secret(cc);
+          const password = this.secrets.connector(cc);
           if (cc.url && password) {
             connectors.push(
               new CardDavContactConnector(cc.account, {
@@ -289,7 +288,7 @@ export class ConnectorRegistry {
         if (cc.type !== "m365" && cc.type !== "google") continue;
 
         if (cc.type === "google") {
-          const gcfg = cfg.google;
+          const gcfg = this.secrets.googleOAuth();
           if (gcfg)
             connectors.push(
               new GoogleContactConnector(cc.account, () => getGoogleAccessToken(cc.account, gcfg)),
@@ -361,7 +360,7 @@ export class ConnectorRegistry {
     for (const r of roles) {
       for (const fc of r.connectors.files ?? []) {
         if (fc.type === "google") {
-          const gcfg = cfg.google;
+          const gcfg = this.secrets.googleOAuth();
           if (gcfg)
             connectors.push(
               new GoogleDriveConnector(fc.account, () => getGoogleAccessToken(fc.account, gcfg)),
@@ -395,7 +394,7 @@ export class ConnectorRegistry {
     const roles = this.policy.select(role, "documents", mode);
     for (const r of roles) {
       for (const dc of r.connectors.documents ?? []) {
-        const token = this.secret(dc);
+        const token = this.secrets.connector(dc);
         if (dc.type === "paperless" && dc.url && token) {
           connectors.push(new PaperlessConnector(dc.account || dc.id, dc.url, token));
         }

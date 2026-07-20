@@ -1,8 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { CONNECTOR_KINDS, CONNECTOR_TYPES } from "../config/index.js";
+import { CONNECTOR_KINDS } from "../config/index.js";
 import type { ConfigService } from "../services/config-service.js";
-import type { ConnectorConfig } from "../types/index.js";
 import { executeTool, textResult } from "./tool-runtime.js";
 
 export function registerConfigTools(server: McpServer, config: ConfigService): void {
@@ -51,10 +50,11 @@ export function registerConfigTools(server: McpServer, config: ConfigService): v
         const lines = [
           `language: ${current.language}`,
           `oauth: clientId=${current.oauth.clientId} tenant=${current.oauth.tenant} apiVersion=${current.oauth.apiVersion ?? "v2"}`,
-          `google: ${current.google ? "configured (clientSecret set)" : "—"}`,
+          `google: ${current.google ? `configured (clientSecret=${current.google.clientSecret || current.google.clientSecretRef ? "set" : "—"})` : "—"}`,
           `autoAuth (${String(current.autoAuth?.length ?? 0)}):`,
           ...(current.autoAuth ?? []).map(
-            (entry) => `  ${entry.account}: totpSecret=${entry.totpSecret ? "set" : "—"}`,
+            (entry) =>
+              `  ${entry.account}: totpSecret=${entry.totpSecret || entry.totpSecretRef ? "set" : "—"}`,
           ),
           `roles (${String(current.roles.length)}):`,
         ];
@@ -127,50 +127,6 @@ export function registerConfigTools(server: McpServer, config: ConfigService): v
       executeTool("role_remove", () => {
         config.removeRole(id);
         return textResult(`✅ Removed role "${id}".`);
-      }),
-  );
-
-  server.registerTool(
-    "account_add",
-    {
-      description:
-        "Add a structural connector binding to a role; secrets must be set locally. [WRITES config.yaml]",
-      inputSchema: {
-        role: z.string(),
-        kind: z.enum(CONNECTOR_KINDS),
-        type: z.enum(CONNECTOR_TYPES),
-        account: z.string(),
-        id: z.string().optional().describe("Connector id (default derived from type+account)"),
-        mailbox: z.string().optional().describe("Shared/delegate mailbox to target"),
-        host: z.string().optional(),
-        port: z.number().optional(),
-        smtpHost: z.string().optional(),
-        smtpPort: z.number().optional(),
-        url: z.string().optional().describe("CalDAV/CardDAV/iCal/Paperless base URL"),
-      },
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
-    },
-    async (input) =>
-      executeTool("account_add", () => {
-        const id = input.id ?? `${input.type}-${input.account.replace(/[^a-zA-Z0-9]+/g, "-")}`;
-        const connector: ConnectorConfig = {
-          id,
-          type: input.type,
-          account: input.account,
-          ...(input.mailbox ? { mailbox: input.mailbox } : {}),
-          ...(input.host ? { host: input.host } : {}),
-          ...(input.port !== undefined ? { port: input.port } : {}),
-          ...(input.smtpHost ? { smtpHost: input.smtpHost } : {}),
-          ...(input.smtpPort !== undefined ? { smtpPort: input.smtpPort } : {}),
-          ...(input.url ? { url: input.url } : {}),
-        };
-        config.addAccount(input.role, input.kind, connector);
-        const note = ["imap", "caldav", "carddav", "paperless"].includes(input.type)
-          ? " ⚠ Needs a secret configured through the local CLI."
-          : "";
-        return textResult(
-          `✅ Added ${input.kind} connector "${id}" to role "${input.role}".${note}`,
-        );
       }),
   );
 
