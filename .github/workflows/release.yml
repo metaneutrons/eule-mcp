@@ -147,9 +147,13 @@ jobs:
           fi
 
       - name: Attach to release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ inputs.tag || github.event.inputs.tag || github.ref_name }}
-          files: |
-            helper/${{ matrix.asset }}
-            helper/${{ matrix.asset }}.sha256
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag || github.event.inputs.tag || github.ref_name }}
+        run: |
+          gh release upload "$RELEASE_TAG" \
+            "helper/${{ matrix.asset }}" \
+            "helper/${{ matrix.asset }}.sha256" \
+            --clobber \
+            --repo "$GITHUB_REPOSITORY"
