@@ -62,6 +62,12 @@ needs a value, Node asks the helper to write it to an owner-only temporary file,
 reads it, deletes the file immediately, and caches it only for the server
 process lifetime. Legacy inline secrets remain a migration fallback.
 
+Helper resolution is centralized: an absolute operator-supplied
+`EULE_HELPER_PATH` or a source checkout's Cargo build is used before the
+version-matched, checksum-verified release download. This keeps bootstrap and
+pre-release development functional without weakening the integrity policy for
+installed releases.
+
 `ConfiguredCredentialResolver` is the single read boundary used by auth,
 connector routing, and CLI login, so keychain and legacy-inline resolution
 cannot drift between consumers.

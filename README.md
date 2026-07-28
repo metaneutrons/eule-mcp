@@ -293,10 +293,26 @@ provider is installed, running, and unlocked; then retry the configure action.
   `--tier graph|ews|imap`, `--redirect-uri <uri>`.
 
 The `eule-helper` binary (Rust + `wry` = WKWebView/WebView2/WebKitGTK) is
-downloaded lazily on first use from this repo's GitHub release matching the
-installed version, checksum-verified, and cached `0700` in `~/.eule/bin/`.
-Prebuilt for macOS (universal), Linux (x64/arm64) and Windows (x64/arm64) by
-`.github/workflows/release.yml`. See `helper/` for the source.
+resolved without making local development depend on an already published
+release. Eule uses the first available source in this order:
+
+1. An absolute, explicitly trusted `EULE_HELPER_PATH`.
+2. `helper/target/release/eule-helper` (then `debug`) in a source checkout.
+3. The GitHub release matching the installed Eule version, checksum-verified
+   and cached `0700` in `~/.eule/bin/`.
+
+For example, before the first release exists:
+
+```bash
+cargo build --release --manifest-path helper/Cargo.toml
+# Automatic in this checkout, or explicit for another installation:
+EULE_HELPER_PATH="$PWD/helper/target/release/eule-helper" node dist/cli/index.js setup
+```
+
+`EULE_HELPER_PATH` must be absolute and executable. It is an explicit local
+trust override and is not verified against a GitHub checksum. Prebuilt release
+assets for macOS (universal), Linux (x64/arm64), and Windows (x64/arm64) are
+created by `.github/workflows/release.yml`. See `helper/` for the source.
 
 #### Locked-down tenants (only a legacy public client is consentable)
 

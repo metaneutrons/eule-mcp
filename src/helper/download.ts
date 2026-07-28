@@ -1,19 +1,41 @@
 /**
  * Locate (and, on first use, download) the platform-native `eule-helper` binary.
  *
- * The helper is a small Rust GUI tool (webview OAuth capture + secret prompt)
- * released per platform×arch as a GitHub release asset. Rather than bundling it
- * in the npm package (which would need per-platform packages) or a postinstall
- * hook (which breaks offline `npm install`), we fetch the matching asset lazily
- * on first use, verify its .sha256, and cache it 0700 under ~/.eule/bin.
+ * The helper is a small Rust GUI tool (webview OAuth capture + secret prompt).
+ * Source checkouts and explicitly configured development builds are preferred;
+ * installed packages lazily fetch the matching, checksum-verified release asset.
  */
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  accessSync,
+  chmodSync,
+  constants,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { EULE_VERSION } from "../version.js";
 
 const REPO = "metaneutrons/eule-mcp";
+
+function findPackageRoot(start: string): string | undefined {
+  let current = start;
+  for (;;) {
+    if (existsSync(join(current, "package.json"))) return current;
+    const parent = dirname(current);
+    if (parent === current) return undefined;
+    current = parent;
+  }
+}
+
+// Works both from src/helper/download.ts and from tsup's dist/chunk-*.js output.
+const PACKAGE_ROOT = findPackageRoot(dirname(fileURLToPath(import.meta.url)));
 
 /** GitHub release asset name for the current platform + architecture. */
 export function assetName(
@@ -32,10 +54,52 @@ export function assetName(
   throw new Error(`No eule-helper build for ${platform}/${arch}.`);
 }
 
-/** Cached binary location (~/.eule/bin/eule-helper[.exe]). */
-export function helperPath(): string {
-  const name = process.platform === "win32" ? "eule-helper.exe" : "eule-helper";
+function binaryName(platform: NodeJS.Platform): string {
+  return platform === "win32" ? "eule-helper.exe" : "eule-helper";
+}
+
+function assertRunnable(path: string, platform: NodeJS.Platform, source: string): string {
+  if (!isAbsolute(path)) throw new Error(`${source} must be an absolute path: ${path}`);
+  const canonical = realpathSync(path);
+  if (!statSync(canonical).isFile()) throw new Error(`${source} is not a file: ${canonical}`);
+  accessSync(canonical, platform === "win32" ? constants.F_OK : constants.X_OK);
+  return canonical;
+}
+
+export interface LocalHelperOptions {
+  /** `null` disables the environment override, which is useful for deterministic tests. */
+  readonly override?: string | null;
+  readonly packageRoot?: string;
+  readonly platform?: NodeJS.Platform;
+}
+
+/** Resolve an explicitly trusted helper or a Cargo build from this source checkout. */
+export function localHelperPath(options: LocalHelperOptions = {}): string | undefined {
+  const platform = options.platform ?? process.platform;
+  const override =
+    options.override === undefined ? process.env.EULE_HELPER_PATH : (options.override ?? undefined);
+  if (override) return assertRunnable(override, platform, "EULE_HELPER_PATH");
+
+  const root = options.packageRoot ?? PACKAGE_ROOT;
+  if (!root) return undefined;
+  const name = binaryName(platform);
+  for (const profile of ["release", "debug"] as const) {
+    const candidate = join(root, "helper", "target", profile, name);
+    if (existsSync(candidate))
+      return assertRunnable(candidate, platform, `Local ${profile} helper`);
+  }
+  return undefined;
+}
+
+/** Cached release-binary location (~/.eule/bin/eule-helper[.exe]). */
+export function cachedHelperPath(): string {
+  const name = binaryName(process.platform);
   return join(homedir(), ".eule", "bin", name);
+}
+
+/** Best currently available helper path for synchronous credential-store operations. */
+export function helperPath(): string {
+  return localHelperPath() ?? cachedHelperPath();
 }
 
 function sha256(buf: Buffer): string {
@@ -54,13 +118,24 @@ async function fetchBuffer(url: string): Promise<Buffer> {
  * version (→ tag `v<version>`), overridable for tests.
  */
 export async function ensureHelper(version = EULE_VERSION): Promise<string> {
-  const dest = helperPath();
+  const local = localHelperPath();
+  if (local) return local;
+
+  const dest = cachedHelperPath();
   const asset = assetName();
   const base = `https://github.com/${REPO}/releases/download/v${version}/${asset}`;
 
   // Fetch the expected checksum first (small); if the cached binary already
   // matches it, skip the (large) binary download entirely.
-  const shaText = (await fetchBuffer(`${base}.sha256`)).toString("utf-8").trim();
+  let shaText: string;
+  try {
+    shaText = (await fetchBuffer(`${base}.sha256`)).toString("utf-8").trim();
+  } catch (error) {
+    throw new Error(
+      `No verified eule-helper is available for v${version}. Build it locally with "cargo build --release --manifest-path helper/Cargo.toml", set EULE_HELPER_PATH to an absolute trusted binary, or publish the matching GitHub release.`,
+      { cause: error },
+    );
+  }
   const expected = shaText.split(/\s+/)[0]?.toLowerCase();
   if (!expected || !/^[0-9a-f]{64}$/.test(expected)) {
     throw new Error(`Malformed checksum for ${asset}: ${shaText}`);

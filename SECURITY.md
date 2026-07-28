@@ -57,10 +57,13 @@ within a few days.
   principal.
 - **Auditable execution.** Tool failures include correlation IDs; structured
   lifecycle logs exclude arguments, bodies, tokens, and provider payloads.
-- **Helper integrity.** `eule-helper` is downloaded from this repository's
-  GitHub release and verified against its published SHA-256 before being cached
-  `0700` and executed. The macOS build is a Developer-ID-signed, notarized
-  universal binary (hardened runtime + secure timestamp).
+- **Helper integrity.** Installed releases download `eule-helper` from this
+  repository's matching GitHub release, verify its published SHA-256, and cache
+  it `0700` before execution. Source checkouts may use their own Cargo build;
+  operators may also set an absolute `EULE_HELPER_PATH`. Those two development
+  paths are local trust decisions and deliberately bypass release checksums.
+  Relative overrides are rejected. The released macOS build is a Developer-ID-
+  signed, notarized universal binary (hardened runtime + secure timestamp).
 - **MFA autofill is opt-in and secret-in-process.** `login --capture` fills a
   TOTP code only if you configure `autoAuth[].totpSecretRef`; the seed is read
   from the OS credential store and passed to the helper via an environment
