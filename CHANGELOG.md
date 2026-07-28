@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.2.1](https://github.com/metaneutrons/eule-mcp/compare/v0.2.0...v0.2.1) (2026-07-28)
+
+
+### Bug Fixes
+
+* harden macOS release signing ([#31](https://github.com/metaneutrons/eule-mcp/issues/31)) ([d0bfc09](https://github.com/metaneutrons/eule-mcp/commit/d0bfc095782db1ed1d25b25a49d174d774cf5bf0))
+* pass release signing secrets explicitly ([#32](https://github.com/metaneutrons/eule-mcp/issues/32)) ([2111167](https://github.com/metaneutrons/eule-mcp/commit/2111167eacfb0f8a698f8a4cb1bf2af7a51dbd75))
+* remove deprecated release upload action ([#29](https://github.com/metaneutrons/eule-mcp/issues/29)) ([355e939](https://github.com/metaneutrons/eule-mcp/commit/355e9394ca7842180dbca3454e71bef85901412c))
+
 ## [0.2.0](https://github.com/metaneutrons/eule-mcp/compare/v0.1.0...v0.2.0) (2026-07-28)
 
 
