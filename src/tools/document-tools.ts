@@ -33,7 +33,7 @@ export function registerDocumentTools(server: McpServer, docs: DocumentService):
           [
             ...r.values.map(formatDoc),
             ...r.failures.map((f) => `⚠️ [${f.account}] ${f.message}`),
-          ].join("\n") || "No documents found.",
+          ].join("\n") || "No documents matched the search in the configured connector(s).",
         );
       }),
   );
@@ -55,7 +55,7 @@ export function registerDocumentTools(server: McpServer, docs: DocumentService):
           [
             ...r.values.map(formatDoc),
             ...r.failures.map((f) => `⚠️ [${f.account}] ${f.message}`),
-          ].join("\n") || "No documents.",
+          ].join("\n") || "No documents found in the configured connector(s).",
         );
       }),
   );
