@@ -12,6 +12,17 @@ on:
         description: "Existing release tag to attach binaries to"
         required: true
         type: string
+    secrets:
+      MACOS_CERT_P12:
+        required: false
+      MACOS_CERT_PASSWORD:
+        required: false
+      APPLE_API_KEY:
+        required: false
+      APPLE_API_ISSUER:
+        required: false
+      APPLE_API_KEY_CONTENT:
+        required: false
   workflow_dispatch:
     inputs:
       tag:
