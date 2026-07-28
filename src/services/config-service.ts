@@ -1,12 +1,6 @@
 import { CONNECTOR_KINDS } from "../config/schema.js";
 import type { ConfigManager } from "../config/config-manager.js";
-import type {
-  AppConfig,
-  ConnectorConfig,
-  ConnectorKind,
-  OAuthConfig,
-  RoleConfig,
-} from "../types/index.js";
+import type { AppConfig, ConnectorKind, OAuthConfig, RoleConfig } from "../types/index.js";
 import { deleteCredential } from "../helper/credential-store.js";
 import { logger } from "../utils/logger.js";
 
@@ -107,10 +101,6 @@ export class ConfigService {
         types: [...entry.types].sort(),
         bindings: entry.bindings.sort(),
       }));
-  }
-
-  addAccount(role: string, kind: ConnectorKind, connector: ConnectorConfig): void {
-    this.config.addConnector(role, kind, connector);
   }
 
   removeAccount(role: string, kind: ConnectorKind, id: string): void {

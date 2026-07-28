@@ -23,15 +23,17 @@
 - Bounded provider concurrency with explicit partial-failure reporting.
 - Idempotency protection for mail sends and draft submission.
 - Sanitized authentication failures and secret-free token inventory.
+- LLM-configurable, helper-mediated configuration with no secret-bearing MCP
+  fields, revisioned credential rotation, stale-write detection, and rollback.
 
 ## Known residual risks
 
 - Stdio has one operating-system principal and cannot provide multi-human or
   multi-tenant RBAC. An authenticated HTTP/OIDC transport is still required.
-- New connector passwords and API tokens are stored in the native OS credential
-  store through the branded local helper. Legacy inline YAML secrets remain
-  readable for migration; OAuth refresh tokens, Google client secrets, and
-  optional TOTP seeds are not yet migrated to the keychain.
+- Connector passwords/API tokens, Google client secrets, and optional TOTP
+  seeds are stored in the native OS credential store through the branded local
+  helper. Legacy inline YAML secrets remain readable for migration. OAuth access
+  and refresh tokens remain in the owner-only token file.
 - IMAP library operations cannot currently be force-cancelled by the shared
   execution signal; the tool deadline stops waiting but the socket may finish
   later.

@@ -18,6 +18,8 @@ enum Command {
     Get { reference: String, out: PathBuf },
     /// Delete a credential from the OS store.
     Delete { reference: String },
+    /// Report whether a credential exists without exposing its value.
+    Status { reference: String },
 }
 
 pub fn set(reference: &str, secret: &str) -> Result<(), String> {
@@ -45,21 +47,56 @@ pub fn run(args: Args) -> Result<(), String> {
                 .delete_credential()
                 .map_err(|e| format!("deleting credential {reference}: {e}"))
         }
+        Command::Status { reference } => {
+            validate_reference(&reference)?;
+            match keyring::Entry::new(SERVICE, &reference)
+                .map_err(|e| format!("opening OS credential store: {e}"))?
+                .get_password()
+            {
+                Ok(_) => {
+                    println!("configured");
+                    Ok(())
+                }
+                Err(keyring::Error::NoEntry) => {
+                    println!("missing");
+                    Ok(())
+                }
+                Err(e) => Err(format!("checking credential {reference}: {e}")),
+            }
+        }
     }
 }
 
 fn validate_reference(reference: &str) -> Result<(), String> {
     let segments: Vec<_> = reference.split('/').collect();
+    let shape_is_valid = match segments.as_slice() {
+        ["connector", _, kind, _] => matches!(
+            *kind,
+            "mail" | "calendar" | "contacts" | "messenger" | "files" | "documents"
+        ),
+        ["oauth", "google", secret] => {
+            *secret == "client-secret"
+                || secret
+                    .strip_prefix("client-secret.")
+                    .is_some_and(|revision| {
+                        !revision.is_empty()
+                            && revision
+                                .chars()
+                                .all(|character| character.is_ascii_alphanumeric())
+                    })
+        }
+        ["totp", _] => true,
+        _ => false,
+    };
     if reference.len() <= 512
-        && segments.len() == 4
-        && segments[0] == "connector"
+        && shape_is_valid
         && segments[1..].iter().all(|segment| {
             !segment.is_empty()
                 && *segment != "."
                 && *segment != ".."
                 && segment
                     .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || "@._-".contains(c))
+                    .all(|c| c.is_ascii_alphanumeric() || "@+._-".contains(c))
         })
     {
         Ok(())
@@ -76,6 +113,9 @@ mod tests {
     fn accepts_scoped_connector_references_only() {
         assert!(validate_reference("connector/personal/mail/icloud").is_ok());
         assert!(validate_reference("connector/work/mail/user@example.com").is_ok());
+        assert!(validate_reference("oauth/google/client-secret.a1b2").is_ok());
+        assert!(validate_reference("oauth/google/client-secretevil").is_err());
+        assert!(validate_reference("totp/a1b2").is_ok());
         assert!(validate_reference("other-app/secret").is_err());
         assert!(validate_reference("connector/../../escape").is_err());
     }

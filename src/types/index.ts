@@ -2,6 +2,7 @@ export type {
   AppConfig,
   OAuthConfig,
   GoogleOAuthConfig,
+  ResolvedGoogleOAuthConfig,
   AutoAuthConfig,
   RoleConfig,
   RoleConnectors,

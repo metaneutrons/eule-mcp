@@ -1,5 +1,11 @@
 import { z } from "zod";
-import type { AppConfig } from "../types/index.js";
+import type { AppConfig, ConnectorConfig } from "../types/index.js";
+import {
+  CONNECTOR_CREDENTIAL_REF_PATTERN,
+  GOOGLE_CREDENTIAL_REF_PATTERN,
+  TOTP_CREDENTIAL_REF_PATTERN,
+} from "./credential-references.js";
+import { assertConnectorCapability } from "./connector-capabilities.js";
 
 export const CONNECTOR_KINDS = [
   "mail",
@@ -21,12 +27,9 @@ export const CONNECTOR_TYPES = [
   "paperless",
 ] as const;
 
-const id = z
-  .string()
-  .trim()
-  .min(1)
-  .max(128)
-  .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/);
+export const CONFIG_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+const id = z.string().trim().min(1).max(128).regex(CONFIG_ID_PATTERN);
 const account = z.string().trim().min(1).max(320);
 
 export const connectorSchema = z
@@ -41,12 +44,7 @@ export const connectorSchema = z
     smtpPort: z.number().int().min(1).max(65535).optional(),
     auth: z.enum(["oauth", "password"]).optional(),
     password: z.string().optional(),
-    credentialRef: z
-      .string()
-      .regex(
-        /^connector\/[A-Za-z0-9@][A-Za-z0-9@._-]*\/(?:mail|calendar|contacts|messenger|files|documents)\/[A-Za-z0-9@][A-Za-z0-9@._-]*$/,
-      )
-      .optional(),
+    credentialRef: z.string().regex(CONNECTOR_CREDENTIAL_REF_PATTERN).optional(),
     url: z.url().optional(),
     token: z.string().optional(),
     signalCliUrl: z.url().optional(),
@@ -102,16 +100,55 @@ export const appConfigSchema = z
         tenant: "common",
       }),
     google: z
-      .object({ clientId: z.string().min(1), clientSecret: z.string().min(1) })
+      .object({
+        clientId: z.string().min(1),
+        clientSecret: z.string().min(1).optional(),
+        clientSecretRef: z.string().regex(GOOGLE_CREDENTIAL_REF_PATTERN).optional(),
+      })
       .strict()
+      .superRefine((google, ctx) => {
+        if (Boolean(google.clientSecret) === Boolean(google.clientSecretRef))
+          ctx.addIssue({
+            code: "custom",
+            path: ["clientSecretRef"],
+            message: "configure exactly one of clientSecret or clientSecretRef",
+          });
+      })
       .optional(),
     autoAuth: z
-      .array(z.object({ account, totpSecret: z.string().min(1).optional() }).strict())
+      .array(
+        z
+          .object({
+            account,
+            totpSecret: z.string().min(1).optional(),
+            totpSecretRef: z.string().regex(TOTP_CREDENTIAL_REF_PATTERN).optional(),
+          })
+          .strict()
+          .superRefine((entry, ctx) => {
+            if (Boolean(entry.totpSecret) === Boolean(entry.totpSecretRef))
+              ctx.addIssue({
+                code: "custom",
+                path: ["totpSecretRef"],
+                message: "configure exactly one of totpSecret or totpSecretRef",
+              });
+          }),
+      )
       .optional(),
     roles: z.array(roleSchema).default([]),
   })
   .strict()
   .superRefine((config, ctx) => {
+    const autoAuthAccounts = new Set<string>();
+    for (const [entryIndex, entry] of (config.autoAuth ?? []).entries()) {
+      const normalized = entry.account.toLowerCase();
+      if (autoAuthAccounts.has(normalized))
+        ctx.addIssue({
+          code: "custom",
+          path: ["autoAuth", entryIndex, "account"],
+          message: "duplicate TOTP account",
+        });
+      autoAuthAccounts.add(normalized);
+    }
     const roleIds = new Set<string>();
     for (const [roleIndex, role] of config.roles.entries()) {
       if (roleIds.has(role.id))
@@ -131,6 +168,15 @@ export const appConfigSchema = z
               message: "connector id must be unique within a role",
             });
           connectorIds.add(connector.id);
+          try {
+            assertConnectorCapability(kind, connector);
+          } catch (error) {
+            ctx.addIssue({
+              code: "custom",
+              path: ["roles", roleIndex, "connectors", kind, connectorIndex],
+              message: error instanceof Error ? error.message : String(error),
+            });
+          }
         }
       }
     }
@@ -139,5 +185,11 @@ export const appConfigSchema = z
 export function parseAppConfig(raw: unknown): AppConfig {
   const result = appConfigSchema.safeParse(raw);
   if (!result.success) throw new Error(`Invalid config:\n${z.prettifyError(result.error)}`);
+  return result.data;
+}
+
+export function parseConnectorConfig(raw: unknown): ConnectorConfig {
+  const result = connectorSchema.safeParse(raw);
+  if (!result.success) throw new Error(`Invalid connector:\n${z.prettifyError(result.error)}`);
   return result.data;
 }

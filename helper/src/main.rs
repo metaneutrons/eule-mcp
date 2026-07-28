@@ -37,7 +37,7 @@ enum Command {
     OauthCapture(capture::Args),
     /// Prompt for a secret in a local window; writes the raw value to --out (0600).
     SecretPrompt(prompt::Args),
-    /// Read or delete an Eule secret in the operating-system credential store.
+    /// Read, check, or delete an Eule secret in the operating-system credential store.
     Credential(credential::Args),
 }
 

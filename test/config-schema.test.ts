@@ -66,6 +66,8 @@ describe("configuration SSOT schema", () => {
       id: "icloud",
       type: "imap",
       account: "user@example.com",
+      host: "imap.example.com",
+      smtpHost: "smtp.example.com",
       credentialRef: "connector/personal/mail/icloud",
     };
     expect(
@@ -127,6 +129,110 @@ describe("configuration SSOT schema", () => {
         ],
       }),
     ).toThrow(/cannot be combined/);
+  });
+
+  it("enforces the connector capability catalog and secure transport", () => {
+    const role = {
+      id: "personal",
+      name: "Personal",
+      weeklyHours: 0,
+      connectors: {
+        calendar: [{ id: "dav", type: "caldav", account: "user@example.com" }],
+      },
+    };
+    expect(() => parseAppConfig({ ...base, roles: [role] })).toThrow(/requires "url"/);
+    expect(() =>
+      parseAppConfig({
+        ...base,
+        roles: [
+          {
+            ...role,
+            connectors: {
+              calendar: [
+                {
+                  id: "dav",
+                  type: "caldav",
+                  account: "user@example.com",
+                  url: "http://dav.example.com",
+                },
+              ],
+            },
+          },
+        ],
+      }),
+    ).toThrow(/must use https/);
+    expect(() =>
+      parseAppConfig({
+        ...base,
+        roles: [
+          {
+            ...role,
+            connectors: {
+              calendar: [
+                {
+                  id: "wrong-domain",
+                  type: "imap",
+                  account: "user@example.com",
+                  host: "imap.example.com",
+                  smtpHost: "smtp.example.com",
+                },
+              ],
+            },
+          },
+        ],
+      }),
+    ).toThrow(/does not support domain/);
+    expect(() =>
+      parseAppConfig({
+        ...base,
+        roles: [
+          {
+            id: "work",
+            name: "Work",
+            weeklyHours: 40,
+            connectors: {
+              mail: [{ id: "m365", type: "m365", account: "user@example.com", password: "unused" }],
+            },
+          },
+        ],
+      }),
+    ).toThrow(/does not use a local credential/);
+  });
+
+  it("accepts keychain references for Google and TOTP but not dual storage", () => {
+    const configured = {
+      ...base,
+      google: {
+        clientId: "google-client",
+        clientSecretRef: "oauth/google/client-secret.a1b2",
+      },
+      autoAuth: [{ account: "user@example.com", totpSecretRef: "totp/a1b2.c3d4" }],
+    };
+    expect(parseAppConfig(configured).google?.clientSecretRef).toContain("client-secret");
+    expect(() =>
+      parseAppConfig({
+        ...configured,
+        google: { ...configured.google, clientSecret: "legacy" },
+      }),
+    ).toThrow(/exactly one/);
+    expect(() =>
+      parseAppConfig({
+        ...configured,
+        autoAuth: [{ ...configured.autoAuth[0], totpSecret: "JBSWY3DPEHPK3PXP" }],
+      }),
+    ).toThrow(/exactly one/);
+  });
+
+  it("rejects duplicate TOTP accounts case-insensitively", () => {
+    expect(() =>
+      parseAppConfig({
+        ...base,
+        autoAuth: [
+          { account: "User@Example.com", totpSecretRef: "totp/a1b2.c3d4" },
+          { account: "user@example.com", totpSecretRef: "totp/e5f6.a7b8" },
+        ],
+      }),
+    ).toThrow(/duplicate TOTP account/);
   });
 });
 

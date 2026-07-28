@@ -169,11 +169,7 @@ fn now_ms() -> i64 {
 /// 6-digit TOTP (RFC 6238, SHA-1, 30 s window) from a base32 secret at a given
 /// unix time. Returns None if the secret isn't valid base32.
 fn totp_at(secret_b32: &str, unix_secs: u64) -> Option<String> {
-    let norm = secret_b32.trim().replace([' ', '-'], "").to_uppercase();
-    let key = base32::decode(base32::Alphabet::Rfc4648 { padding: false }, &norm)?;
-    if key.is_empty() {
-        return None;
-    }
+    let key = util::decode_totp_seed(secret_b32)?;
     Some(totp_lite::totp_custom::<totp_lite::Sha1>(
         30, 6, &key, unix_secs,
     ))

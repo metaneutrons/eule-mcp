@@ -37,6 +37,8 @@ domain interfaces/managers, not MCP types.
 ## Current extraction status
 
 - `config-tools.ts` -> `ConfigService` -> `ConfigManager`
+- `configuration-control-tools.ts` -> `ConfigurationControlService` ->
+  `ConfigManager`/`CredentialBroker`
 - `task-tools.ts` -> `TaskService` -> `TaskManager`
 - `contact-tools.ts` -> `ContactService` -> remote connectors/local manager
 - `file-tools.ts` -> `FileService` -> file connectors/sandboxed filesystem
@@ -52,11 +54,40 @@ lifecycle only.
 ## Credential boundary
 
 The native Rust helper is the credential-entry boundary. Its branded local
-window stores connector passwords and API tokens in the operating-system
-credential store. Configuration contains only scoped `credentialRef` values;
-Node retrieves a secret through an owner-only temporary file, deletes that file
-immediately, and caches the value only for the server process lifetime. Legacy
-inline connector secrets remain a migration fallback.
+window stores connector passwords/API tokens, Google client secrets, and TOTP
+seeds in the operating-system credential store. Secret-bearing fields do not
+exist in MCP schemas. Configuration contains only scoped, revisioned references;
+the helper's stdout is isolated from the stdio MCP transport. When a provider
+needs a value, Node asks the helper to write it to an owner-only temporary file,
+reads it, deletes the file immediately, and caches it only for the server
+process lifetime. Legacy inline secrets remain a migration fallback.
+
+Helper resolution is centralized: an absolute operator-supplied
+`EULE_HELPER_PATH` or a source checkout's Cargo build is used before the
+version-matched, checksum-verified release download. This keeps bootstrap and
+pre-release development functional without weakening the integrity policy for
+installed releases.
+
+`ConfiguredCredentialResolver` is the single read boundary used by auth,
+connector routing, and CLI login, so keychain and legacy-inline resolution
+cannot drift between consumers.
+
+`CONNECTOR_CAPABILITIES` is the single source of truth for supported
+connector/domain combinations, required/optional fields, local credential mode,
+and the next authentication step. Both schema validation and the read-only
+`connector_capabilities` discovery tool use it.
+
+Configuration control operations are compensating transactions:
+
+1. Validate all non-secret metadata before opening a prompt.
+2. Capture under a newly revisioned credential reference.
+3. Reject the commit if configuration changed while the prompt was open.
+4. Atomically persist the new reference.
+5. Delete the previous credential only after commit; delete the new credential
+   if commit fails.
+
+Per-resource locks serialize conflicting control operations, while the broker
+serializes native secret windows. Client cancellation terminates the helper.
 
 ## Failure behavior
 

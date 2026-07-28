@@ -28,8 +28,10 @@ export interface ConnectorConfig {
  *  typed by the user in the webview; only the TOTP secret is stored here. */
 export interface AutoAuthConfig {
   readonly account: string;
-  /** base32 TOTP secret for MFA autofill. */
+  /** Legacy inline base32 TOTP seed for MFA autofill. */
   readonly totpSecret?: string;
+  /** Preferred OS credential-store reference for the TOTP seed. */
+  readonly totpSecretRef?: string;
 }
 
 /** Connectors grouped by domain. */
@@ -78,6 +80,14 @@ export interface OAuthConfig {
 }
 
 export interface GoogleOAuthConfig {
+  readonly clientId: string;
+  /** Legacy inline client secret. */
+  readonly clientSecret?: string;
+  /** Preferred OS credential-store reference for the client secret. */
+  readonly clientSecretRef?: string;
+}
+
+export interface ResolvedGoogleOAuthConfig {
   readonly clientId: string;
   readonly clientSecret: string;
 }

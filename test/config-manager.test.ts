@@ -59,7 +59,7 @@ describe("ConfigManager mutations (backing the MCP config tools)", () => {
     expect(() => cm.removeConnector("work", "mail", "hs-mail")).toThrow(/not found/);
   });
 
-  it("upsertAutoAuth stores and updates a single totpSecret entry", () => {
+  it("upsertAutoAuth updates one entry and migrates inline TOTP to a reference", () => {
     const cm = new ConfigManager();
     cm.upsertAutoAuth("me@x.de", { totpSecret: "GEZDGNBVGY3TQOJQ" });
     // parseAutoAuth must keep an entry that has a totpSecret.
@@ -70,6 +70,26 @@ describe("ConfigManager mutations (backing the MCP config tools)", () => {
     entry = new ConfigManager().get().autoAuth?.find((a) => a.account === "me@x.de");
     expect(entry?.totpSecret).toBe("MFRGGZDFMZTWQ2LK"); // updated in place
     expect(new ConfigManager().get().autoAuth).toHaveLength(1); // still one entry
+
+    cm.upsertAutoAuth("me@x.de", { totpSecretRef: "totp/a1b2.c3d4" });
+    entry = new ConfigManager().get().autoAuth?.find((a) => a.account === "me@x.de");
+    expect(entry?.totpSecret).toBeUndefined();
+    expect(entry?.totpSecretRef).toBe("totp/a1b2.c3d4");
+  });
+
+  it("rejects an interactive commit based on a stale disk revision", () => {
+    const first = new ConfigManager();
+    const expectedRevision = first.revision;
+    const second = new ConfigManager();
+    second.setOAuth({ tenant: "organizations" });
+
+    expect(() =>
+      first.setGoogleOAuth(
+        { clientId: "google-client", clientSecretRef: "oauth/google/client-secret.a1b2" },
+        expectedRevision,
+      ),
+    ).toThrow(/changed while the operation was in progress/);
+    expect(new ConfigManager().get().oauth.tenant).toBe("organizations");
   });
 
   it("removeRole drops the role", () => {
