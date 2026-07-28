@@ -99,18 +99,49 @@ jobs:
           APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY_CONTENT }}
         run: |
           set -euo pipefail
-          if [ -z "${MACOS_CERT_P12:-}" ]; then
+          signing_secrets=(
+            MACOS_CERT_P12
+            MACOS_CERT_PASSWORD
+            APPLE_API_KEY
+            APPLE_API_ISSUER
+            APPLE_API_KEY_CONTENT
+          )
+          configured=0
+          missing=()
+          for secret_name in "${signing_secrets[@]}"; do
+            if [ -n "${!secret_name:-}" ]; then
+              configured=$((configured + 1))
+            else
+              missing+=("$secret_name")
+            fi
+          done
+          if [ "$configured" -eq 0 ]; then
             echo "No signing secrets configured — shipping the ad-hoc-signed binary."
             exit 0
+          fi
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::macOS signing is partially configured; missing: ${missing[*]}"
+            exit 1
           fi
           # Developer ID cert → a temporary, self-contained keychain.
           KC="$RUNNER_TEMP/signing.keychain-db"
           KC_PW="$(openssl rand -hex 20)"
+          CERT_P12="$RUNNER_TEMP/cert.p12"
+          API_KEY_FILE="$RUNNER_TEMP/AuthKey.p8"
+          NOTARIZE_ARCHIVE="$RUNNER_TEMP/notarize.zip"
+          cleanup_signing() {
+            rm -f "$CERT_P12" "$API_KEY_FILE" "$NOTARIZE_ARCHIVE"
+            security delete-keychain "$KC" >/dev/null 2>&1 || true
+          }
+          trap cleanup_signing EXIT
           security create-keychain -p "$KC_PW" "$KC"
           security set-keychain-settings -lut 3600 "$KC"
           security unlock-keychain -p "$KC_PW" "$KC"
-          echo "$MACOS_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
-          security import "$RUNNER_TEMP/cert.p12" -k "$KC" -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
+          # The keychain must be in the user search list before partition ACLs
+          # can be assigned reliably on fresh hosted runners.
+          security list-keychains -d user -s "$KC"
+          printf '%s' "$MACOS_CERT_P12" | base64 --decode > "$CERT_P12"
+          security import "$CERT_P12" -k "$KC" -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KC_PW" "$KC" >/dev/null
           IDENTITY="$(security find-identity -v -p codesigning "$KC" | awk '/Developer ID Application/{print $2; exit}')"
           if [ -z "$IDENTITY" ]; then echo "No Developer ID Application identity in the cert"; exit 1; fi
@@ -120,11 +151,10 @@ jobs:
           # Notarize with the App Store Connect API key. A bare Mach-O cannot be
           # stapled, so the ticket is served online (Gatekeeper checks on first
           # launch of a quarantined copy; our lazy download writes no quarantine).
-          printf '%s' "$APPLE_API_KEY_CONTENT" > "$RUNNER_TEMP/AuthKey.p8"
-          ditto -c -k --keepParent "${{ matrix.asset }}" "$RUNNER_TEMP/notarize.zip"
-          xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" \
-            --key "$RUNNER_TEMP/AuthKey.p8" --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER" --wait
-          rm -f "$RUNNER_TEMP/cert.p12" "$RUNNER_TEMP/AuthKey.p8" "$RUNNER_TEMP/notarize.zip"
+          printf '%s' "$APPLE_API_KEY_CONTENT" > "$API_KEY_FILE"
+          ditto -c -k --keepParent "${{ matrix.asset }}" "$NOTARIZE_ARCHIVE"
+          xcrun notarytool submit "$NOTARIZE_ARCHIVE" \
+            --key "$API_KEY_FILE" --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER" --wait
 
       - name: Build (Linux / Windows)
         if: matrix.kind != 'mac'
