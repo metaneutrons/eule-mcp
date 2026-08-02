@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.2](https://github.com/metaneutrons/eule-mcp/compare/v0.2.1...v0.2.2) (2026-08-02)
+
+
+### Bug Fixes
+
+* allow safe cross-platform temp downloads ([#33](https://github.com/metaneutrons/eule-mcp/issues/33)) ([2b4649e](https://github.com/metaneutrons/eule-mcp/commit/2b4649ea5b964139a7381ef8f285d066b03478b6))
+
 ## [0.2.1](https://github.com/metaneutrons/eule-mcp/compare/v0.2.0...v0.2.1) (2026-07-28)
 
 
