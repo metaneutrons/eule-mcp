@@ -2,6 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { DocumentService } from "../services/document-service.js";
 import type { DocDocument } from "../types/index.js";
+import { SAVE_PATH_HINT } from "../utils/path-sandbox.js";
 import { executeTool, textResult } from "./tool-runtime.js";
 
 const formatDoc = (d: DocDocument) => {
@@ -100,7 +101,7 @@ export function registerDocumentTools(server: McpServer, docs: DocumentService):
       inputSchema: {
         id: z.number(),
         original: z.boolean().optional(),
-        path: z.string().optional(),
+        path: z.string().optional().describe(SAVE_PATH_HINT),
         role: z.string().optional(),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },

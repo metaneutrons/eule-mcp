@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { securePath, secureReadPath } from "../src/utils/path-sandbox.js";
+import { SAVE_PATH_HINT, securePath, secureReadPath } from "../src/utils/path-sandbox.js";
+import { mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 
 describe("securePath", () => {
   const home = homedir();
@@ -32,6 +33,32 @@ describe("securePath", () => {
     expect(result.dest).toBe(join(home, ".eule", "knowledge", "custom", filename));
   });
 
+  it("allows and canonicalizes the platform temporary directory", () => {
+    const canonicalTemp = realpathSync.native(tmpdir());
+    const result = securePath(join(tmpdir(), "eule-client", "scratchpad"), "report.pdf", "unused");
+
+    expect(result.dir).toBe(join(canonicalTemp, "eule-client", "scratchpad"));
+    expect(result.dest).toBe(join(canonicalTemp, "eule-client", "scratchpad", "report.pdf"));
+  });
+
+  it.runIf(process.platform !== "win32")("normalizes the POSIX /tmp alias", () => {
+    const canonicalTemp = realpathSync.native("/tmp");
+    const result = securePath("/tmp/claude/scratchpad", "report.pdf", "unused");
+    const canonicalResult = securePath(
+      join(canonicalTemp, "claude", "scratchpad"),
+      "report.pdf",
+      "unused",
+    );
+
+    expect(result.dir).toBe(join(canonicalTemp, "claude", "scratchpad"));
+    expect(canonicalResult.dir).toBe(result.dir);
+  });
+
+  it("documents POSIX and Windows temporary roots for MCP clients", () => {
+    expect(SAVE_PATH_HINT).toContain("/tmp on POSIX");
+    expect(SAVE_PATH_HINT).toContain("%TEMP% on Windows");
+  });
+
   it("sanitizes filename to prevent directory traversal via the filename parameter", () => {
     const maliciousFilename = "../../../unsafe.txt";
     const result = securePath(undefined, maliciousFilename, "attachments");
@@ -46,6 +73,33 @@ describe("securePath", () => {
 
   it("blocks system directories like /etc or /var", () => {
     expect(() => securePath("/etc", "hosts", "attachments")).toThrow(/Access denied/);
+  });
+
+  it("blocks symlink escapes through a permitted temporary directory", () => {
+    const allowed = mkdtempSync(join(tmpdir(), "eule-path-allowed-"));
+    const outside = mkdtempSync(join(home, ".eule-path-outside-"));
+    const escape = join(allowed, "escape");
+    try {
+      symlinkSync(outside, escape, process.platform === "win32" ? "junction" : "dir");
+      expect(() => securePath(escape, "payload.txt", "attachments")).toThrow(/Access denied/);
+    } finally {
+      rmSync(allowed, { recursive: true, force: true });
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks an existing destination symlink that escapes the sandbox", () => {
+    const allowed = mkdtempSync(join(tmpdir(), "eule-path-allowed-"));
+    const outside = mkdtempSync(join(home, ".eule-path-outside-"));
+    const outsideFile = join(outside, "protected.txt");
+    writeFileSync(outsideFile, "keep");
+    symlinkSync(outsideFile, join(allowed, "payload.txt"), "file");
+    try {
+      expect(() => securePath(allowed, "payload.txt", "attachments")).toThrow(/Access denied/);
+    } finally {
+      rmSync(allowed, { recursive: true, force: true });
+      rmSync(outside, { recursive: true, force: true });
+    }
   });
 
   it("throws on invalid filenames (empty, ., ..)", () => {
