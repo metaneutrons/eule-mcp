@@ -1,6 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { FileService } from "../services/file-service.js";
+import { SAVE_PATH_HINT } from "../utils/path-sandbox.js";
 import { executeTool, textResult } from "./tool-runtime.js";
 
 const render = (f: {
@@ -95,7 +96,11 @@ export function registerFileTools(server: McpServer, files: FileService): void {
     "file_download",
     {
       description: "Download a file to local disk",
-      inputSchema: { id: z.string(), account: z.string(), path: z.string().optional() },
+      inputSchema: {
+        id: z.string(),
+        account: z.string(),
+        path: z.string().optional().describe(SAVE_PATH_HINT),
+      },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
     },
     async ({ id, account, path }) =>

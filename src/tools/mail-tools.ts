@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { AttachmentService } from "../services/attachment-service.js";
 import type { MailService, MailSendInput } from "../services/mail-service.js";
 import { renderMail } from "../renderer/index.js";
+import { SAVE_PATH_HINT } from "../utils/path-sandbox.js";
 import { executeTool, textResult } from "./tool-runtime.js";
 
 const accountScope = { account: z.string().min(1), role: z.string().optional() };
@@ -193,7 +194,7 @@ export function registerMailTools(
         ...accountScope,
         name: z.string().min(1).max(255),
         mode: z.enum(["save", "text", "inline"]).optional(),
-        path: z.string().optional(),
+        path: z.string().optional().describe(SAVE_PATH_HINT),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
     },
