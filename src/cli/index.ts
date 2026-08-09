@@ -197,7 +197,8 @@ async function login(): Promise<void> {
     console.log(`\n✅ Success! ${token.account} (tier ${token.tier})`);
     console.log(`   Expires: ${new Date(token.expiresAt).toLocaleString()}`);
   } catch (err) {
-    console.error("\n❌ Login failed:", err instanceof Error ? err.message : String(err));
+    const reason = err instanceof Error && err.name ? err.name : "Error";
+    console.error(`\n❌ Login failed (${reason}).`);
     process.exit(1);
   }
 }
@@ -225,7 +226,8 @@ async function secretCmd(): Promise<void> {
     console.log(`\n✅ TOTP secret stored for ${account} in the OS credential store.`);
     console.log(`   Use it:  eule-mcp login --capture --account ${account} …`);
   } catch (err) {
-    console.error("\n❌ Failed:", err instanceof Error ? err.message : String(err));
+    const reason = err instanceof Error && err.name ? err.name : "Error";
+    console.error(`\n❌ Failed (${reason}).`);
     process.exit(1);
   }
 }
@@ -265,6 +267,7 @@ async function main(): Promise<void> {
 }
 
 main().catch((error: unknown) => {
-  console.error("Error:", error);
+  const reason = error instanceof Error && error.name ? error.name : "Error";
+  console.error(`Error: ${reason}`);
   process.exit(1);
 });
