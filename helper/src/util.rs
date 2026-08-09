@@ -5,6 +5,22 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use std::io;
 use std::path::Path;
 
+/// Normalize and decode an RFC 4648 base32 TOTP seed. This is the helper-wide
+/// validation SSOT used both at credential capture and code generation.
+pub fn decode_totp_seed(input: &str) -> Option<Vec<u8>> {
+    let normalized = input
+        .chars()
+        .filter(|character| !character.is_whitespace() && *character != '-')
+        .map(|character| character.to_ascii_uppercase())
+        .collect::<String>();
+    let unpadded = normalized.trim_end_matches('=');
+    if unpadded.len() < 16 {
+        return None;
+    }
+    base32::decode(base32::Alphabet::Rfc4648 { padding: false }, unpadded)
+        .filter(|decoded| !decoded.is_empty())
+}
+
 /// Random bytes → base64url (no padding), for PKCE verifier / state.
 pub fn random_b64url(bytes: usize) -> String {
     let mut buf = vec![0u8; bytes];

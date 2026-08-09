@@ -16,16 +16,35 @@ export interface OauthCaptureOpts {
   totpSecret?: string;
 }
 
-function run(subcommand: string, args: string[], extraEnv?: NodeJS.ProcessEnv): Promise<number> {
+function run(
+  subcommand: string,
+  args: string[],
+  extraEnv?: NodeJS.ProcessEnv,
+  signal?: AbortSignal,
+): Promise<number> {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new Error("Local helper request was cancelled"));
+      return;
+    }
     void ensureHelper()
       .then((bin) => {
+        if (signal?.aborted) {
+          reject(new Error("Local helper request was cancelled"));
+          return;
+        }
         const child = spawn(bin, [subcommand, ...args], {
-          stdio: "inherit",
+          // stdout is the MCP transport when invoked by the server; never inherit it.
+          stdio: ["ignore", "ignore", "inherit"],
           env: extraEnv ? { ...process.env, ...extraEnv } : process.env,
         });
+        const abort = (): void => {
+          child.kill();
+        };
+        signal?.addEventListener("abort", abort, { once: true });
         child.on("error", reject);
         child.on("close", (code) => {
+          signal?.removeEventListener("abort", abort);
           resolve(code ?? 1);
         });
       })
@@ -49,4 +68,16 @@ export async function oauthCapture(o: OauthCaptureOpts): Promise<number> {
 /** Prompt for a secret in a local window; the helper writes it 0600 to `out`. */
 export async function secretPrompt(label: string, out: string): Promise<number> {
   return run("secret-prompt", ["--label", label, "--out", out]);
+}
+
+/** Prompt locally and save directly to the native OS credential store. */
+export async function credentialPrompt(
+  label: string,
+  reference: string,
+  signal?: AbortSignal,
+  format?: "opaque" | "totp",
+): Promise<number> {
+  const args = ["--label", label, "--credential", reference];
+  if (format) args.push("--format", format);
+  return run("secret-prompt", args, undefined, signal);
 }

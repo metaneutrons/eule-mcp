@@ -70,6 +70,17 @@ export interface ImapConfig {
   password?: string;
 }
 
+interface ImapSummary {
+  uid: number;
+  envelope?: {
+    subject?: string;
+    date?: Date;
+    from?: { address?: string }[];
+    to?: { address?: string }[];
+  };
+  flags?: Set<string>;
+}
+
 export class ImapMailConnector implements MailConnector {
   readonly tier = "imap";
   signature?: string;
@@ -104,6 +115,19 @@ export class ImapMailConnector implements MailConnector {
     return token;
   }
 
+  private mapSummary(message: ImapSummary): MailMessage {
+    return {
+      id: String(message.uid),
+      account: this.account,
+      subject: message.envelope?.subject ?? "",
+      from: message.envelope?.from?.[0]?.address ?? "",
+      to: (message.envelope?.to ?? []).map((address) => address.address ?? ""),
+      receivedAt: message.envelope?.date?.toISOString() ?? "",
+      snippet: "",
+      isRead: message.flags?.has("\\Seen") ?? false,
+    };
+  }
+
   async listMessages(folder = "INBOX", limit = 10): Promise<MailMessage[]> {
     const client = await this.connect();
     try {
@@ -118,26 +142,7 @@ export class ImapMailConnector implements MailConnector {
           envelope: true,
           flags: true,
         })) {
-          const msg = raw as {
-            uid: number;
-            envelope?: {
-              subject?: string;
-              date?: Date;
-              from?: { address?: string }[];
-              to?: { address?: string }[];
-            };
-            flags?: Set<string>;
-          };
-          messages.push({
-            id: String(msg.uid),
-            account: this.account,
-            subject: msg.envelope?.subject ?? "",
-            from: msg.envelope?.from?.[0]?.address ?? "",
-            to: (msg.envelope?.to ?? []).map((a) => a.address ?? ""),
-            receivedAt: msg.envelope?.date?.toISOString() ?? "",
-            snippet: "",
-            isRead: msg.flags?.has("\\Seen") ?? false,
-          });
+          messages.push(this.mapSummary(raw));
         }
         return messages.reverse();
       } finally {
@@ -229,37 +234,27 @@ export class ImapMailConnector implements MailConnector {
     try {
       const lock = await client.getMailboxLock(folder);
       try {
-        const results: MailMessage[] = [];
+        // SEARCH returns ascending UIDs. Fetching the search expression directly
+        // and stopping at `limit` therefore returned the oldest matches and could
+        // hide current-year mail behind a full page of historical results.
+        const matches = await client.search({ text: query }, { uid: true });
+        if (!matches || matches.length === 0) return [];
+
+        const latestUids = [...matches].sort((a, b) => a - b).slice(-limit);
+        const byUid = new Map<number, MailMessage>();
         for await (const raw of client.fetch(
-          { text: query },
-          {
-            envelope: true,
-            flags: true,
-          },
+          latestUids,
+          { envelope: true, flags: true },
+          { uid: true },
         )) {
-          const msg = raw as {
-            uid: number;
-            envelope?: {
-              subject?: string;
-              date?: Date;
-              from?: { address?: string }[];
-              to?: { address?: string }[];
-            };
-            flags?: Set<string>;
-          };
-          results.push({
-            id: String(msg.uid),
-            account: this.account,
-            subject: msg.envelope?.subject ?? "",
-            from: msg.envelope?.from?.[0]?.address ?? "",
-            to: (msg.envelope?.to ?? []).map((a) => a.address ?? ""),
-            receivedAt: msg.envelope?.date?.toISOString() ?? "",
-            snippet: "",
-            isRead: msg.flags?.has("\\Seen") ?? false,
-          });
-          if (results.length >= limit) break;
+          const message = raw as ImapSummary;
+          byUid.set(message.uid, this.mapSummary(message));
         }
-        return results;
+
+        return [...latestUids]
+          .reverse()
+          .map((uid) => byUid.get(uid))
+          .filter((message): message is MailMessage => message !== undefined);
       } finally {
         lock.release();
       }

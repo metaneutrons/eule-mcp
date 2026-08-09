@@ -13,6 +13,8 @@ export interface ConnectorConfig {
   readonly smtpPort?: number;
   readonly auth?: "oauth" | "password";
   readonly password?: string;
+  /** Opaque key in the OS credential store. Preferred over inline secrets. */
+  readonly credentialRef?: string;
   // CalDAV/CardDAV/iCal fields.
   readonly url?: string;
   // Paperless-NGX fields (type: "paperless").
@@ -26,8 +28,10 @@ export interface ConnectorConfig {
  *  typed by the user in the webview; only the TOTP secret is stored here. */
 export interface AutoAuthConfig {
   readonly account: string;
-  /** base32 TOTP secret for MFA autofill. */
+  /** Legacy inline base32 TOTP seed for MFA autofill. */
   readonly totpSecret?: string;
+  /** Preferred OS credential-store reference for the TOTP seed. */
+  readonly totpSecretRef?: string;
 }
 
 /** Connectors grouped by domain. */
@@ -51,6 +55,17 @@ export interface RoleConfig {
   readonly signature?: string;
   /** Display name for outgoing emails, e.g. "Dr. Fabian Schmieder". */
   readonly displayName?: string;
+  /** Enforceable policy for this work context. Omitted means enabled, read/write,
+   *  with every connector domain allowed (backwards compatible). */
+  readonly policy?: RolePolicy;
+}
+
+export type ConnectorKind = keyof RoleConnectors;
+
+export interface RolePolicy {
+  readonly enabled?: boolean;
+  readonly readOnly?: boolean;
+  readonly allowedConnectorKinds?: readonly ConnectorKind[];
 }
 
 /** OAuth configuration with sensible defaults. */
@@ -65,6 +80,14 @@ export interface OAuthConfig {
 }
 
 export interface GoogleOAuthConfig {
+  readonly clientId: string;
+  /** Legacy inline client secret. */
+  readonly clientSecret?: string;
+  /** Preferred OS credential-store reference for the client secret. */
+  readonly clientSecretRef?: string;
+}
+
+export interface ResolvedGoogleOAuthConfig {
   readonly clientId: string;
   readonly clientSecret: string;
 }

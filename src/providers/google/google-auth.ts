@@ -2,8 +2,12 @@ import { logger } from "../../utils/logger.js";
 import { createServer } from "node:http";
 import { randomBytes, createHash } from "node:crypto";
 import open from "open";
-import type { GoogleOAuthConfig, AccountToken } from "../../types/index.js";
+import type { ResolvedGoogleOAuthConfig, AccountToken } from "../../types/index.js";
 import { loadTokens, saveTokens, parseTokenResponse } from "../m365/auth/oauth.js";
+import {
+  currentExecutionSignal,
+  fetchWithExecutionContext as fetch,
+} from "../../utils/execution-context.js";
 
 const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -26,7 +30,7 @@ function generatePkce(): { verifier: string; challenge: string } {
 }
 
 export async function authenticateGoogle(
-  cfg: GoogleOAuthConfig,
+  cfg: ResolvedGoogleOAuthConfig,
   accountHint?: string,
 ): Promise<AccountToken> {
   const { verifier, challenge } = generatePkce();
@@ -48,6 +52,10 @@ export async function authenticateGoogle(
   const authUrl = `${AUTH_URL}?${params.toString()}`;
 
   return new Promise<AccountToken>((resolve, reject) => {
+    const signal = currentExecutionSignal();
+    const finish = (): void => {
+      signal?.removeEventListener("abort", abort);
+    };
     const server = createServer((req, res) => {
       const url = new URL(req.url ?? "/", REDIRECT_URI);
       const code = url.searchParams.get("code");
@@ -68,14 +76,29 @@ export async function authenticateGoogle(
           const store = loadTokens();
           store.accounts[token.account] = token;
           saveTokens(store);
+          finish();
           resolve(token);
         })
-        .catch(reject);
+        .catch((error: unknown) => {
+          finish();
+          reject(error instanceof Error ? error : new Error(String(error)));
+        });
     });
+
+    const abort = (): void => {
+      server.close();
+      reject(new Error("Google authentication cancelled"));
+    };
+    if (signal?.aborted) {
+      abort();
+      return;
+    }
+    signal?.addEventListener("abort", abort, { once: true });
 
     // A listen failure on the fixed port (EADDRINUSE) would otherwise be an
     // unhandled 'error' event and crash the process.
     server.on("error", (err) => {
+      finish();
       reject(err instanceof Error ? err : new Error(String(err)));
     });
 
@@ -89,7 +112,7 @@ export async function authenticateGoogle(
 async function exchangeCode(
   code: string,
   verifier: string,
-  cfg: GoogleOAuthConfig,
+  cfg: ResolvedGoogleOAuthConfig,
 ): Promise<AccountToken> {
   const res = await fetch(TOKEN_URL, {
     method: "POST",
@@ -133,7 +156,7 @@ function extractEmail(idToken?: string): string | null {
 
 export async function refreshGoogleToken(
   account: string,
-  cfg: GoogleOAuthConfig,
+  cfg: ResolvedGoogleOAuthConfig,
 ): Promise<AccountToken | null> {
   const store = loadTokens();
   const token = store.accounts[account];
@@ -153,20 +176,25 @@ export async function refreshGoogleToken(
   if (!res.ok) return null;
   const data = parseTokenResponse(await res.json());
 
+  // Re-read immediately before the synchronous merge/write so concurrent
+  // refreshes for different Google accounts cannot overwrite each other with
+  // the stale snapshot captured before network I/O.
+  const latest = loadTokens();
+  const prior = latest.accounts[account] ?? token;
   const updated: AccountToken = {
-    ...token,
+    ...prior,
     accessToken: data.access_token,
-    refreshToken: data.refresh_token ?? token.refreshToken,
+    refreshToken: data.refresh_token ?? prior.refreshToken,
     expiresAt: Date.now() + data.expires_in * 1000,
   };
-  store.accounts[account] = updated;
-  saveTokens(store);
+  latest.accounts[account] = updated;
+  saveTokens(latest);
   return updated;
 }
 
 export async function getGoogleAccessToken(
   account: string,
-  cfg: GoogleOAuthConfig,
+  cfg: ResolvedGoogleOAuthConfig,
 ): Promise<string | null> {
   const store = loadTokens();
   const token = store.accounts[account];

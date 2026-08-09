@@ -1,4 +1,5 @@
 import type { MessengerConnector, Conversation, ChatMessage } from "../../types/index.js";
+import { currentExecutionSignal } from "../../utils/execution-context.js";
 
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
 
@@ -33,7 +34,7 @@ export class GraphTeamsConnector implements MessengerConnector {
   async listConversations(limit = 20): Promise<Conversation[]> {
     const h = await this.headers();
     const url = `${GRAPH_BASE}/me/chats?$top=${String(limit)}&$orderby=lastUpdatedDateTime desc&$expand=members`;
-    const res = await fetch(url, { headers: h });
+    const res = await fetch(url, { headers: h, signal: currentExecutionSignal() });
     if (!res.ok) throw new Error(`Teams chats: ${String(res.status)} ${await res.text()}`);
     const data = (await res.json()) as { value: TeamsChat[] };
     return data.value.map((c) => ({
@@ -49,7 +50,7 @@ export class GraphTeamsConnector implements MessengerConnector {
   async getMessages(conversationId: string, limit = 20): Promise<ChatMessage[]> {
     const h = await this.headers();
     const url = `${GRAPH_BASE}/me/chats/${conversationId}/messages?$top=${String(limit)}`;
-    const res = await fetch(url, { headers: h });
+    const res = await fetch(url, { headers: h, signal: currentExecutionSignal() });
     if (!res.ok) throw new Error(`Teams messages: ${String(res.status)} ${await res.text()}`);
     const data = (await res.json()) as { value: TeamsMessage[] };
     return data.value.map((m) => ({
@@ -69,6 +70,7 @@ export class GraphTeamsConnector implements MessengerConnector {
       method: "POST",
       headers: { ...h, "Content-Type": "application/json" },
       body: JSON.stringify({ body: { content: body } }),
+      signal: currentExecutionSignal(),
     });
     if (!res.ok) throw new Error(`Teams send: ${String(res.status)} ${await res.text()}`);
   }

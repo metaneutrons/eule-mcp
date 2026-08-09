@@ -1,13 +1,13 @@
 import { logger } from "../../../utils/logger.js";
 import { createServer } from "node:http";
 import { randomBytes, createHash } from "node:crypto";
-import { readFileSync, writeFileSync, existsSync, chmodSync } from "node:fs";
-import { join } from "node:path";
-import { homedir } from "node:os";
 import open from "open";
 import type { ApiTier, OAuthConfig, TokenStore, AccountToken } from "../../../types/index.js";
-
-const TOKENS_PATH = join(homedir(), ".eule", "tokens.json");
+import { tokenRepository } from "../../../auth/token-repository.js";
+import {
+  currentExecutionSignal,
+  fetchWithExecutionContext as fetch,
+} from "../../../utils/execution-context.js";
 
 /** Default OAuth config — Thunderbird's registered app ID. */
 const DEFAULT_OAUTH: OAuthConfig = {
@@ -94,29 +94,12 @@ function generatePkce(): { verifier: string; challenge: string } {
 
 /** Load token store from disk. Never throws — a corrupt store starts empty. */
 export function loadTokens(): TokenStore {
-  if (!existsSync(TOKENS_PATH)) return { accounts: {} };
-  try {
-    const parsed: unknown = JSON.parse(readFileSync(TOKENS_PATH, "utf-8"));
-    if (typeof parsed === "object" && parsed !== null && "accounts" in parsed) {
-      const accounts = (parsed as Record<string, unknown>).accounts;
-      if (typeof accounts === "object" && accounts !== null) {
-        return parsed as TokenStore;
-      }
-    }
-    logger.error(`Token store at ${TOKENS_PATH} has an unexpected shape; ignoring it.`);
-  } catch (err) {
-    logger.error(
-      `Failed to parse token store at ${TOKENS_PATH} (starting empty): ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
-  return { accounts: {} };
+  return tokenRepository.load();
 }
 
 /** Save token store to disk with owner-only (0600) permissions. */
 export function saveTokens(store: TokenStore): void {
-  writeFileSync(TOKENS_PATH, JSON.stringify(store, null, 2), { mode: 0o600 });
-  // `mode` is honored only on create; enforce on rewrite too.
-  chmodSync(TOKENS_PATH, 0o600);
+  tokenRepository.save(store);
 }
 
 /** Validates an OAuth token-endpoint response, rejecting malformed payloads. */
@@ -306,6 +289,7 @@ export async function authenticateAccount(
   const authUrl = `${authEndpoint(oauth)}?${params.toString()}`;
 
   return new Promise<AccountToken>((resolve, reject) => {
+    const signal = currentExecutionSignal();
     // Start a local server that serves a page to capture the redirect URL.
     const server = createServer((req, res) => {
       const url = new URL(req.url ?? "/", "http://localhost");
@@ -363,6 +347,7 @@ export async function authenticateAccount(
                 `<h1>✅ Authenticated!</h1><p>Account: ${result.account}</p><p>Tier: ${tier}</p><p>You can close this window.</p>`,
               );
               server.close();
+              finish();
               resolve(result);
             } catch (err) {
               res.writeHead(200, { "Content-Type": "text/html" });
@@ -370,6 +355,7 @@ export async function authenticateAccount(
                 `<h1>❌ Error</h1><pre>${err instanceof Error ? err.message : String(err)}</pre>`,
               );
               server.close();
+              finish();
               reject(err instanceof Error ? err : new Error(String(err)));
             }
           })();
@@ -396,11 +382,36 @@ button{padding:10px 20px;font-size:16px;cursor:pointer;background:#0078d4;color:
 </body></html>`);
     });
 
+    const abort = (): void => {
+      server.close();
+      finish();
+      reject(new Error("Authentication cancelled"));
+    };
+    const finish = (): void => {
+      clearTimeout(timeout);
+      signal?.removeEventListener("abort", abort);
+    };
+    const timeout = setTimeout(
+      () => {
+        server.close();
+        finish();
+        reject(new Error("Authentication timed out (5 minutes)"));
+      },
+      5 * 60 * 1000,
+    );
+
     // Without this, a listen failure (e.g. EADDRINUSE) is emitted as an
     // unhandled 'error' event and crashes the whole process.
     server.on("error", (err) => {
+      finish();
       reject(err instanceof Error ? err : new Error(String(err)));
     });
+
+    if (signal?.aborted) {
+      abort();
+      return;
+    }
+    signal?.addEventListener("abort", abort, { once: true });
 
     server.listen(0, "127.0.0.1", () => {
       const addr = server.address();
@@ -413,17 +424,9 @@ button{padding:10px 20px;font-size:16px;cursor:pointer;background:#0078d4;color:
 
       // Also open the capture page.
       setTimeout(() => {
-        void open(`http://localhost:${String(port)}`);
+        if (!signal?.aborted) void open(`http://localhost:${String(port)}`);
       }, 1000);
     });
-
-    setTimeout(
-      () => {
-        server.close();
-        reject(new Error("Authentication timed out (5 minutes)"));
-      },
-      5 * 60 * 1000,
-    );
   });
 }
 

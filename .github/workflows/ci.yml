@@ -25,6 +25,7 @@ jobs:
           node-version: 22.x
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm run version:check
       - run: pnpm run format:check
       - run: pnpm run lint
       - run: pnpm run typecheck
@@ -62,6 +63,8 @@ jobs:
       - run: cargo fmt --check
         working-directory: helper
       - run: cargo clippy --all-targets -- -D warnings
+        working-directory: helper
+      - run: cargo test --locked
         working-directory: helper
       - run: cargo build --release
         working-directory: helper

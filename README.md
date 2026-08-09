@@ -60,33 +60,57 @@ Eule is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) serve
 - **Role-based context** — map accounts and connectors to professional roles
 - **LLM-optimized output** — HTML emails rendered as clean Markdown with thread splitting
 
-## Tools (47)
+## Tools (58)
 
-### 🔐 Auth (3)
+### 🔐 Auth (5)
 
 | Tool | Description |
 |---|---|
 | `auth_status` | Show authentication status and configuration |
 | `auth_login` | Authenticate an account (M365 or Google) via browser OAuth |
 | `auth_probe` | Test which API tier works for an account |
+| `auth_accounts` | List token health without exposing credentials |
+| `auth_logout` | Remove locally stored tokens for an account |
 
-### 👤 Roles & config (7)
+### 👤 Roles, accounts & configuration (16)
 
-Structural config editing over MCP. **These never accept a secret** — passwords,
-client secrets, tokens and TOTP secrets are entered only in the local credential
-window via the CLI (`eule secret …`), so a prompt-injected tool call can't
-smuggle one in. Read (`config_get`, `role_list`) and write (`[WRITES]`) tools
-are kept clearly separate.
+Eule can be configured end-to-end by an LLM without the user editing YAML.
+**No MCP tool accepts a secret**: a write that needs a password, API token,
+Google client secret, or TOTP seed opens a branded local Eule window. The helper
+validates and writes the value directly to the OS credential store; MCP receives
+only success/failure and an opaque reference is committed to `config.yaml`.
 
 | Tool | Description |
 |---|---|
 | `role_list` | List all configured roles with connectors and weekly hours |
+| `account_list` | SSOT inventory of accounts and every role/connector binding |
 | `config_get` | Full config (roles, connectors, oauth, autoAuth) — secrets redacted |
 | `role_upsert` | Create/update a role's metadata `[WRITES]` |
 | `role_remove` | Remove a role and its connectors `[WRITES]` |
-| `account_add` | Add a connector (account) to a role — structural only `[WRITES]` |
+| `connector_capabilities` | Discover valid connector/domain combinations, fields, credential mode, and next step |
+| `connector_configure` | Create/update a connector; capture any required secret locally `[WRITES]` |
+| `account_add` | Deprecated compatibility alias for `connector_configure` `[WRITES]` |
 | `account_remove` | Remove a connector from a role `[WRITES]` |
 | `config_set_oauth` | Set the M365 client id / tenant / api-version `[WRITES]` |
+| `credential_status` | Report configured/missing/unavailable bindings without exposing values |
+| `credential_rotate` | Atomically rotate a connector password or token `[WRITES]` |
+| `google_oauth_configure` | Set the client id and capture the Google client secret locally `[WRITES]` |
+| `google_oauth_remove` | Remove Google OAuth config and its local secret `[DESTRUCTIVE]` |
+| `totp_configure` | Capture/rotate a validated TOTP seed locally `[WRITES]` |
+| `totp_remove` | Remove a TOTP binding and local secret `[DESTRUCTIVE]` |
+
+Roles can define an enforceable `policy` with `enabled`, `readOnly`, and
+`allowedConnectorKinds`. Policy checks happen centrally in the connector
+registry, including account-specific routing, so a disabled/read-only context
+cannot be bypassed by selecting an account directly. These are work-context
+policies; stdio transport does not authenticate distinct human callers and is
+therefore not a substitute for multi-user RBAC.
+
+> **Configuration validation:** startup now fails closed on unknown keys,
+> malformed or insecure URLs/ports, invalid IDs, unsupported connector/domain
+> combinations, missing required fields, duplicate role IDs, and duplicate
+> connector IDs within a role. `connector_capabilities` exposes the same SSOT
+> catalog used by validation.
 
 ### 📧 Mail (8)
 
@@ -107,6 +131,8 @@ are kept clearly separate.
 > pymupdf4llm/pandoc), or `inline` (return an image so the model can see it).
 > Attachments on **reply/forward** are supported on Graph, Gmail and IMAP; on the
 > EWS fallback tier, attach via a new message or draft instead.
+> `mail_send` and `mail_send_draft` accept an optional `idempotency_key` to
+> prevent duplicate submission within the running server process.
 
 ### 💬 Messenger (3)
 
@@ -116,7 +142,7 @@ are kept clearly separate.
 | `chat_read` | Read messages from a conversation |
 | `chat_send` | Send a message to a conversation |
 
-### 📁 Files (4)
+### 📁 Files (5)
 
 | Tool | Description |
 |---|---|
@@ -124,6 +150,7 @@ are kept clearly separate.
 | `file_read` | Read file content (text extraction) |
 | `file_list` | List recently modified files |
 | `file_upload` | Upload a file to OneDrive or Google Drive |
+| `file_download` | Download a file from OneDrive or Google Drive |
 
 ### 📅 Calendar (6)
 
@@ -201,9 +228,44 @@ pnpm run build
 ### Setup
 
 ```bash
+# Recommended: create a role and connector through the local wizard.
+node dist/cli/index.js configure
+
 # Authenticate your M365 account (pick a login method below)
 node dist/cli/index.js login --device --tier ews
 ```
+
+The wizard collects structural settings in the terminal. When a password or API
+token is required, a native window carrying the Eule logo opens so it is clear
+which application is requesting the credential. The secret is stored in macOS
+Keychain, Windows Credential Manager, or Linux Secret Service; `config.yaml`
+contains only an opaque `credentialRef`. Existing inline YAML secrets remain
+supported for migration, but new setups should use MCP configuration tools or
+the wizard.
+
+#### Configure through the AI assistant
+
+For a local desktop MCP client, no YAML setup is required. Ask the assistant to
+configure Eule; it can perform this sequence itself:
+
+1. Read `connector_capabilities` and `config_get`.
+2. Create a work context with `role_upsert`.
+3. Call `connector_configure` for each account/domain binding.
+4. If prompted, enter the requested secret in the native Eule window.
+5. Use `google_oauth_configure` or `totp_configure` when applicable, then
+   `auth_login` for OAuth providers.
+6. Verify local secret bindings with `credential_status` and OAuth tokens with
+   `auth_accounts`.
+
+Secret capture is a deliberate local-consent boundary: it requires an active
+desktop session and cannot be completed silently by the model. Configuration
+writes are atomic; rotations use revisioned references, commit the new binding
+before deleting the old credential, compensate failed writes, and reject a
+configuration changed while the prompt was open.
+
+`credential_status: unavailable` means the native helper or the platform
+credential service could not be reached. On Linux, ensure a Secret Service
+provider is installed, running, and unlocked; then retry the configure action.
 
 > The old `setup` subcommand is a deprecated alias for `login` — prefer `login`.
 
@@ -225,16 +287,32 @@ node dist/cli/index.js login --device --tier ews
   The only path that works for clients like "Apple Internet Accounts" when
   device code is CA-blocked. The helper writes the token itself — it never
   returns through the MCP/LLM. If the account has a TOTP secret configured
-  (`autoAuth[].totpSecret`), the MFA code is auto-filled (the password is still
+  (`autoAuth[].totpSecretRef`), the MFA code is auto-filled (the password is still
   typed by you); pass `--no-totp` to disable.
 - **Flags:** `--account <email>`, `--client-id <id>`, `--api-version v1|v2`,
   `--tier graph|ews|imap`, `--redirect-uri <uri>`.
 
 The `eule-helper` binary (Rust + `wry` = WKWebView/WebView2/WebKitGTK) is
-downloaded lazily on first use from this repo's GitHub release matching the
-installed version, checksum-verified, and cached `0700` in `~/.eule/bin/`.
-Prebuilt for macOS (universal), Linux (x64/arm64) and Windows (x64/arm64) by
-`.github/workflows/release.yml`. See `helper/` for the source.
+resolved without making local development depend on an already published
+release. Eule uses the first available source in this order:
+
+1. An absolute, explicitly trusted `EULE_HELPER_PATH`.
+2. `helper/target/release/eule-helper` (then `debug`) in a source checkout.
+3. The GitHub release matching the installed Eule version, checksum-verified
+   and cached `0700` in `~/.eule/bin/`.
+
+For example, before the first release exists:
+
+```bash
+cargo build --release --manifest-path helper/Cargo.toml
+# Automatic in this checkout, or explicit for another installation:
+EULE_HELPER_PATH="$PWD/helper/target/release/eule-helper" node dist/cli/index.js setup
+```
+
+`EULE_HELPER_PATH` must be absolute and executable. It is an explicit local
+trust override and is not verified against a GitHub checksum. Prebuilt release
+assets for macOS (universal), Linux (x64/arm64), and Windows (x64/arm64) are
+created by `.github/workflows/release.yml`. See `helper/` for the source.
 
 #### Locked-down tenants (only a legacy public client is consentable)
 
@@ -255,7 +333,9 @@ If the tenant permits device code, `login --device …` also works. (A macOS-onl
 The `clientId` and `apiVersion` are stored per token so refresh reuses the
 exact app + endpoint that issued it (a mixed v1+v2 store is supported).
 
-After authentication, configure your roles in `~/.eule/config.yaml`:
+The MCP tools or local wizard are the recommended configuration paths. For
+unattended or advanced deployments, structural settings can still be managed
+directly in `~/.eule/config.yaml`:
 
 ```yaml
 language: de
@@ -288,7 +368,7 @@ roles:
 ```yaml
 google:
   clientId: "123456.apps.googleusercontent.com"
-  clientSecret: "GOCSPX-..."
+  clientSecretRef: "oauth/google/client-secret.a1b2c3d4"
 
 roles:
   - id: personal
@@ -305,7 +385,7 @@ roles:
           host: "imap.mail.me.com"
           smtpHost: "smtp.mail.me.com"
           auth: password
-          password: "xxxx-xxxx-xxxx-xxxx"
+          credentialRef: "connector/personal/mail/icloud.a1b2c3d4"
       calendar:
         - id: gcal
           type: google
@@ -323,9 +403,13 @@ roles:
         - id: paperless
           type: paperless
           account: "paperless.local"
-          url: "http://paperless:8000"
-          token: "your-api-token"
+          url: "https://paperless.example.com"
+          credentialRef: "connector/personal/documents/paperless.a1b2c3d4"
 ```
+
+Opaque references are generated and maintained by Eule. Do not invent or copy
+them between machines; use `connector_configure`, `credential_rotate`, and
+`google_oauth_configure` so the referenced OS credential exists.
 
 ### Register with your AI assistant
 
@@ -359,12 +443,13 @@ via the credential window (it never passes through the model or argv):
 node dist/cli/index.js secret totp --account you@example.com
 ```
 
-This writes an `autoAuth` entry to `~/.eule/config.yaml`:
+The helper validates the base32 seed and stores it directly in the OS credential
+store. YAML contains only its generated reference:
 
 ```yaml
 autoAuth:
   - account: "you@example.com"
-    totpSecret: "YOUR_BASE32_TOTP_SECRET"
+    totpSecretRef: "totp/0123456789abcdef.a1b2c3d4"
 ```
 
 Pass `--no-totp` to `login --capture` to skip autofill for a given login.
@@ -391,7 +476,7 @@ Pass `--no-totp` to `login --capture` to skip autofill for a given login.
 - [x] Paperless-ngx connector
 - [ ] Apple Notes (macOS-only, AppleScript/SQLite)
 - [ ] Messengers — iMessage (macOS), WhatsApp (Business API), Telegram, Discord, Slack, Matrix
-- [ ] Google Workspace (Gmail API, Google Calendar API)
+- [x] Google Workspace (Gmail, Calendar, Contacts, and Drive APIs)
 - [ ] Auto-auth i18n resilience
 - [ ] IETF OAuth for Open Public Clients (`draft-ietf-mailmaint-oauth-public`) — provider-agnostic auth with dynamic client registration
 - [ ] Exchange on-premise support (Basic/NTLM auth, configurable EWS URL)
@@ -408,6 +493,27 @@ Contributions are welcome! This project is in early development, so there's plen
 5. Open a Pull Request
 
 Please follow [Conventional Commits](https://www.conventionalcommits.org/) for commit messages.
+
+### Releases and versioning
+
+`package.json` is the single source of truth for the Eule product version. Do
+not edit versions or create release tags manually. Release Please watches
+Conventional Commits on `main` and maintains a release PR containing the SemVer
+bump, `CHANGELOG.md`, Rust helper metadata, and lockfile updates. Merging that
+PR creates the `v<version>` GitHub release and builds checksum-protected helper
+binaries for every supported platform.
+
+- `fix:` produces a patch release.
+- `feat:` produces a minor release.
+- `feat!:`/`fix!:` or a `BREAKING CHANGE:` footer produces a major release.
+- Run `pnpm version:check` locally to verify all release metadata agrees.
+
+Package-registry publication is intentionally separate and is not performed by
+the release workflow.
+
+Architecture and security details are documented in
+[ARCHITECTURE.md](ARCHITECTURE.md), [SECURITY.md](SECURITY.md), and
+[FINAL_SECURITY_REVIEW.md](FINAL_SECURITY_REVIEW.md).
 
 ## License
 

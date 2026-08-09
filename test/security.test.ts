@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   escapeXml,
   escapeODataString,
@@ -90,6 +90,17 @@ describe("fetchWithTimeout", () => {
   it("aborts and reports a timeout for a hanging endpoint", async () => {
     // A route we never resolve; 1ms timeout forces the abort path.
     await expect(fetchWithTimeout("http://127.0.0.1:9/never", {}, 1)).rejects.toThrow();
+  });
+
+  it("accepts RequestInit.signal set to null", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(null, { status: 204 }));
+    await expect(
+      fetchWithTimeout("https://example.com", { signal: null }, 100),
+    ).resolves.toHaveProperty("status", 204);
+    expect(fetchMock.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
+    fetchMock.mockRestore();
   });
 });
 

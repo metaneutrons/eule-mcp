@@ -1,2 +1,13 @@
 export { BriefingService } from "./briefing-service.js";
+export { TaskService } from "./task-service.js";
+export { ConfigService } from "./config-service.js";
+export { ConfigurationControlService } from "./configuration-control-service.js";
+export { ContactService } from "./contact-service.js";
+export { FileService } from "./file-service.js";
+export { DocumentService } from "./document-service.js";
+export { CalendarService } from "./calendar-service.js";
+export { MessengerService } from "./messenger-service.js";
+export { MailService } from "./mail-service.js";
+export { AttachmentService } from "./attachment-service.js";
+export { AuthService } from "./auth-service.js";
 export type { Briefing } from "./briefing-service.js";

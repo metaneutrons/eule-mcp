@@ -5,12 +5,12 @@ import {
   tierAuthParam,
   loadTokens,
 } from "../providers/m365/index.js";
-import { oauthCapture, secretPrompt } from "../helper/run.js";
-import { isBase32Secret } from "../utils/security.js";
-import { readFileSync, unlinkSync } from "node:fs";
-import { randomBytes } from "node:crypto";
-import { join } from "node:path";
-import type { ApiTier, OAuthConfig } from "../types/index.js";
+import { oauthCapture } from "../helper/run.js";
+import { createInterface } from "node:readline/promises";
+import { nativeCredentialBroker } from "../helper/credential-store.js";
+import { ConfiguredCredentialResolver } from "../helper/configured-credential-resolver.js";
+import { ConfigurationControlService } from "../services/index.js";
+import type { ApiTier, ConnectorConfig, ConnectorKind, OAuthConfig } from "../types/index.js";
 
 const args = process.argv.slice(2);
 const command = args[0] ?? "help";
@@ -31,6 +31,79 @@ function parseFlags(argv: string[]): Record<string, string | boolean> {
     }
   }
   return out;
+}
+
+async function configure(): Promise<void> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY)
+    throw new Error("configure requires an interactive local terminal");
+  const io = createInterface({ input: process.stdin, output: process.stdout });
+  const config = new ConfigManager();
+  const control = new ConfigurationControlService(config, nativeCredentialBroker);
+  try {
+    console.log("\nEule configuration wizard — secrets stay in your OS credential store\n");
+    const roleId = (await io.question("Role id [personal]: ")).trim() || "personal";
+    const existing = config.get().roles.find((role) => role.id === roleId);
+    if (!existing) {
+      const name = (await io.question("Role name [Personal]: ")).trim() || "Personal";
+      let weeklyHours: number | undefined;
+      do {
+        const hoursText = (await io.question("Weekly hours [0]: ")).trim();
+        const candidate = hoursText ? Number(hoursText) : 0;
+        if (Number.isFinite(candidate) && candidate >= 0 && candidate <= 168) {
+          weeklyHours = candidate;
+        } else {
+          console.log("Enter a number from 0 to 168.");
+        }
+      } while (weeklyHours === undefined);
+      config.addRole({
+        id: roleId,
+        name,
+        weeklyHours,
+        contexts: [],
+        connectors: {},
+      });
+    }
+
+    console.log("1) Microsoft 365  2) IMAP/SMTP  3) CalDAV  4) CardDAV  5) Paperless");
+    const choice = (await io.question("Connector type: ")).trim();
+    const definitions: Record<string, { type: ConnectorConfig["type"]; kind: ConnectorKind }> = {
+      "1": { type: "m365", kind: "mail" },
+      "2": { type: "imap", kind: "mail" },
+      "3": { type: "caldav", kind: "calendar" },
+      "4": { type: "carddav", kind: "contacts" },
+      "5": { type: "paperless", kind: "documents" },
+    };
+    const definition = definitions[choice];
+    if (!definition) throw new Error("Unsupported connector selection");
+    const account = (await io.question("Account / username: ")).trim();
+    if (!account) throw new Error("Account is required");
+    const id = (await io.question(`Connector id [${definition.type}]: `)).trim() || definition.type;
+    let host: string | undefined;
+    let smtpHost: string | undefined;
+    let url: string | undefined;
+    if (definition.type === "imap") {
+      host = (await io.question("IMAP host: ")).trim();
+      smtpHost = (await io.question("SMTP host: ")).trim();
+    } else if (["caldav", "carddav", "paperless"].includes(definition.type)) {
+      url = (await io.question("Service URL (https://): ")).trim();
+    }
+    const result = await control.configureConnector({
+      role: roleId,
+      kind: definition.kind,
+      type: definition.type,
+      account,
+      id,
+      ...(host ? { host } : {}),
+      ...(smtpHost ? { smtpHost } : {}),
+      ...(url ? { url } : {}),
+    });
+    console.log(`\n✅ Configured ${definition.type} connector ${roleId}/${definition.kind}/${id}.`);
+    console.log(`Credential: ${result.credential}.`);
+    if (definition.type === "m365")
+      console.log("Next: run eule-mcp login --device --account " + account);
+  } finally {
+    io.close();
+  }
 }
 
 /** Deprecated — kept as a thin alias so existing docs/muscle-memory still work.
@@ -54,7 +127,9 @@ async function setup(): Promise<void> {
 
 async function login(): Promise<void> {
   const flags = parseFlags(args.slice(1));
-  const config = new ConfigManager().get();
+  const configManager = new ConfigManager();
+  const config = configManager.get();
+  const secrets = new ConfiguredCredentialResolver(configManager, nativeCredentialBroker);
 
   const tier: ApiTier = (
     ["graph", "ews", "imap"].includes(String(flags.tier)) ? String(flags.tier) : "ews"
@@ -84,10 +159,7 @@ async function login(): Promise<void> {
       // Opt-in MFA autofill: if this account has a TOTP secret in autoAuth, hand
       // it to the helper (via env, not argv) so it auto-enters the code. Skipped
       // with --no-totp. The password is always typed by the user.
-      const totpSecret =
-        flags["no-totp"] || !account
-          ? undefined
-          : config.autoAuth?.find((a) => a.account === account)?.totpSecret;
+      const totpSecret = flags["no-totp"] || !account ? undefined : secrets.totp(account);
       console.log(
         `\nWebview capture — tier ${tier}, client ${oauth.clientId}` +
           `${totpSecret ? " (auto-TOTP)" : ""}\n`,
@@ -143,39 +215,19 @@ async function secretCmd(): Promise<void> {
     process.exit(1);
   }
 
-  // The secret is entered in the helper's local window → written 0600 to a temp
-  // file → folded into config.yaml → temp file unlinked. It never appears in
-  // argv, this process's output, or the model context.
+  // The helper validates and stores the seed directly in the OS credential
+  // store. Node receives only success/failure; the seed never crosses argv,
+  // stdout, config.yaml, or model context.
   const cfgMgr = new ConfigManager();
-  const out = join(cfgMgr.euleDirPath, `.totp-${randomBytes(8).toString("hex")}.tmp`);
-  let exitCode = 0;
+  const control = new ConfigurationControlService(cfgMgr, nativeCredentialBroker);
   try {
-    const code = await secretPrompt(`TOTP secret (base32) for ${account}`, out);
-    if (code !== 0) {
-      console.error("\n❌ Cancelled.");
-      exitCode = code;
-    } else {
-      const secret = readFileSync(out, "utf-8").trim();
-      if (!isBase32Secret(secret)) {
-        console.error("\n❌ That isn't a base32 TOTP secret (A–Z, 2–7) — not stored.");
-        exitCode = 1;
-      } else {
-        cfgMgr.upsertAutoAuth(account, { totpSecret: secret });
-        console.log(`\n✅ TOTP secret stored for ${account} (config.yaml, 0600).`);
-        console.log(`   Use it:  eule-mcp login --capture --account ${account} …`);
-      }
-    }
+    await control.configureTotp(account);
+    console.log(`\n✅ TOTP secret stored for ${account} in the OS credential store.`);
+    console.log(`   Use it:  eule-mcp login --capture --account ${account} …`);
   } catch (err) {
     console.error("\n❌ Failed:", err instanceof Error ? err.message : String(err));
-    exitCode = 1;
-  } finally {
-    try {
-      unlinkSync(out);
-    } catch {
-      /* already gone / never created */
-    }
+    process.exit(1);
   }
-  if (exitCode) process.exit(exitCode);
 }
 
 async function main(): Promise<void> {
@@ -186,6 +238,9 @@ async function main(): Promise<void> {
     case "login":
       await login();
       break;
+    case "configure":
+      await configure();
+      break;
     case "secret":
       await secretCmd();
       break;
@@ -195,6 +250,7 @@ async function main(): Promise<void> {
     default:
       console.log("Eule MCP — Kiro Office Agent 🦉\n");
       console.log("Usage:");
+      console.log("  eule-mcp configure                    Local role/account setup wizard");
       console.log("  eule-mcp setup                        Interactive account setup");
       console.log("  eule-mcp login --device [--tier ews]  Cross-platform device-code login");
       console.log("       [--account <email>] [--client-id <id>] [--api-version v1|v2]");

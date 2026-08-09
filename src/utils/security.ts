@@ -1,3 +1,5 @@
+import { currentExecutionSignal } from "./execution-context.js";
+
 /**
  * Shared security primitives used across connectors and the MCP server.
  *
@@ -126,13 +128,20 @@ export async function fetchWithTimeout(
   timeoutMs = 30_000,
 ): Promise<Response> {
   const controller = new AbortController();
+  const signals = [init.signal, currentExecutionSignal(), controller.signal].filter(
+    (signal): signal is AbortSignal => signal != null,
+  );
+  const signal = signals.length === 1 ? signals[0] : AbortSignal.any(signals);
   const timer = setTimeout(() => {
     controller.abort();
   }, timeoutMs);
   try {
-    return await fetch(input, { ...init, signal: controller.signal });
+    return await fetch(input, { ...init, signal });
   } catch (err) {
     if (err instanceof Error && err.name === "AbortError") {
+      if (init.signal?.aborted && !controller.signal.aborted) {
+        throw new Error(`Request cancelled: ${String(input)}`, { cause: err });
+      }
       throw new Error(`Request timed out after ${String(timeoutMs)}ms: ${String(input)}`, {
         cause: err,
       });
