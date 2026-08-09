@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.0](https://github.com/metaneutrons/eule-mcp/compare/v0.2.2...v0.3.0) (2026-08-09)
+
+
+### Features
+
+* **auth:** expose native M365 webview login ([#36](https://github.com/metaneutrons/eule-mcp/issues/36)) ([3568f6e](https://github.com/metaneutrons/eule-mcp/commit/3568f6ed5718840b931adb8a01d59b73e34b99af))
+
+
+### Bug Fixes
+
+* **config:** support js-yaml v5 ([#37](https://github.com/metaneutrons/eule-mcp/issues/37)) ([a40e242](https://github.com/metaneutrons/eule-mcp/commit/a40e2420007d3b39433aafd9dbcdd3d1f1ed25e1))
+
 ## [0.2.2](https://github.com/metaneutrons/eule-mcp/compare/v0.2.1...v0.2.2) (2026-08-02)
 
 
