@@ -8,7 +8,6 @@
 
 <p align="center">
   <a href="https://github.com/metaneutrons/eule-mcp/actions"><img src="https://img.shields.io/github/actions/workflow/status/metaneutrons/eule-mcp/ci.yml?branch=main&style=flat-square" alt="CI"></a>
-  <a href="https://www.npmjs.com/package/eule-mcp"><img src="https://img.shields.io/npm/v/eule-mcp?style=flat-square" alt="npm"></a>
   <a href="https://github.com/metaneutrons/eule-mcp/blob/main/LICENSE"><img src="https://img.shields.io/github/license/metaneutrons/eule-mcp?style=flat-square" alt="License"></a>
   <a href="https://github.com/metaneutrons/eule-mcp"><img src="https://img.shields.io/github/stars/metaneutrons/eule-mcp?style=flat-square" alt="Stars"></a>
   <img src="https://img.shields.io/badge/status-WIP-orange?style=flat-square" alt="Status: WIP">
@@ -213,8 +212,9 @@ therefore not a substitute for multi-user RBAC.
 
 - Node.js 22+
 - An M365 or Google Workspace account
-- For `login --capture` only: a desktop session (the `eule-helper` GUI is
-  fetched on first use — no manual install)
+- For native M365 webview login (`auth_login` with `method: webview`, or
+  `login --capture`): a desktop session (the `eule-helper` GUI is fetched on
+  first use — no manual install)
 
 ### Install
 
@@ -315,7 +315,7 @@ For example, before the first release exists:
 ```bash
 cargo build --release --manifest-path helper/Cargo.toml
 # Automatic in this checkout, or explicit for another installation:
-EULE_HELPER_PATH="$PWD/helper/target/release/eule-helper" node dist/cli/index.js setup
+EULE_HELPER_PATH="$PWD/helper/target/release/eule-helper" node dist/cli/index.js login
 ```
 
 `EULE_HELPER_PATH` must be absolute and executable. It is an explicit local
