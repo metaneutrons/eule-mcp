@@ -14,6 +14,8 @@ export interface OauthCaptureOpts {
   /** base32 TOTP secret — passed to the helper via env (never argv) to
    *  auto-fill the MFA code. Password stays manual. */
   totpSecret?: string;
+  /** Cancels the local helper when the owning MCP operation is cancelled. */
+  signal?: AbortSignal;
 }
 
 function run(
@@ -62,7 +64,7 @@ export async function oauthCapture(o: OauthCaptureOpts): Promise<number> {
   if (o.redirectUri) args.push("--redirect-uri", o.redirectUri);
   // Secret goes via env so it never appears in the process argument list.
   const extraEnv = o.totpSecret ? { EULE_TOTP_SECRET: o.totpSecret } : undefined;
-  return run("oauth-capture", args, extraEnv);
+  return run("oauth-capture", args, extraEnv, o.signal);
 }
 
 /** Prompt for a secret in a local window; the helper writes it 0600 to `out`. */

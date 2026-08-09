@@ -31,7 +31,9 @@ export function registerAuthTools(server: McpServer, auth: AuthService): void {
               ...roles,
               "",
               `Authenticated accounts (${String(accounts.length)}):`,
-              ...(accounts.length ? accounts : ["  none — run 'eule-mcp setup' to add accounts"]),
+              ...(accounts.length
+                ? accounts
+                : ["  none — use auth_login (or run 'eule-mcp login') to add an account"]),
               "",
               `Data: ${status.dataPath}`,
             ].join("\n"),
@@ -66,10 +68,23 @@ export function registerAuthTools(server: McpServer, auth: AuthService): void {
   server.registerTool(
     "auth_login",
     {
-      description: "Authenticate an M365 or Google account",
+      description:
+        "Authenticate an M365 or Google account. For M365, auto uses the native Eule webview when a registered redirectUri is configured and fills any configured TOTP code locally; otherwise it opens browser OAuth. Existing refresh tokens are renewed automatically.",
       inputSchema: {
         account: z.email().optional(),
         tier: z.enum(["graph", "ews", "imap", "google"]).optional(),
+        method: z
+          .enum(["auto", "browser", "webview"])
+          .optional()
+          .describe(
+            "Login UI. auto (default) selects the Eule webview when a registered redirectUri is configured or supplied; webview is M365-only.",
+          ),
+        redirectUri: z
+          .url()
+          .optional()
+          .describe(
+            "M365 webview only: broker/custom redirect URI registered for the configured OAuth client.",
+          ),
       },
       annotations: {
         readOnlyHint: false,
@@ -78,11 +93,16 @@ export function registerAuthTools(server: McpServer, auth: AuthService): void {
         openWorldHint: true,
       },
     },
-    async ({ account, tier }, extra) =>
+    async ({ account, tier, method, redirectUri }, extra) =>
       executeTool(
         "auth_login",
         async () => {
-          const token = await auth.login(tier ?? "graph", account);
+          const token = await auth.login({
+            tier: tier ?? "graph",
+            account,
+            method,
+            redirectUri,
+          });
           return textResult(
             `✅ Authenticated: ${token.account}\nTier: ${token.tier}\nExpires: ${new Date(token.expiresAt).toISOString()}`,
           );

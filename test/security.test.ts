@@ -10,6 +10,7 @@ import {
   assertSecureUrl,
   fetchWithTimeout,
 } from "../src/utils/security.js";
+import { runWithExecutionContext } from "../src/utils/execution-context.js";
 
 describe("escapeXml", () => {
   it("escapes all five XML metacharacters", () => {
@@ -99,6 +100,27 @@ describe("fetchWithTimeout", () => {
       fetchWithTimeout("https://example.com", { signal: null }, 100),
     ).resolves.toHaveProperty("status", 204);
     expect(fetchMock.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
+    fetchMock.mockRestore();
+  });
+
+  it("reports an execution-context abort as cancellation rather than timeout", async () => {
+    const execution = new AbortController();
+    execution.abort();
+    const abortError = new Error("aborted");
+    abortError.name = "AbortError";
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockRejectedValue(abortError);
+
+    const request = runWithExecutionContext(
+      {
+        correlationId: "cancelled-request",
+        operation: "test",
+        startedAt: Date.now(),
+        signal: execution.signal,
+      },
+      () => fetchWithTimeout("https://example.com", {}, 1_000),
+    );
+
+    await expect(request).rejects.toThrow(/Request cancelled/);
     fetchMock.mockRestore();
   });
 });

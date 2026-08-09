@@ -24,8 +24,8 @@ export interface ConnectorConfig {
 }
 
 /** Optional auto-authentication credentials for an account. */
-/** Per-account MFA autofill config for `login --capture`. The password is always
- *  typed by the user in the webview; only the TOTP secret is stored here. */
+/** Per-account MFA autofill config for the native Eule webview. The password is
+ *  always typed by the user; only the TOTP secret is stored locally. */
 export interface AutoAuthConfig {
   readonly account: string;
   /** Legacy inline base32 TOTP seed for MFA autofill. */
@@ -77,6 +77,18 @@ export interface OAuthConfig {
    *  (`resource=`) and behave unpredictably against the v2.0 endpoint
    *  (`scope=`) even with an identical client ID. Default: "v2". */
   readonly apiVersion?: "v1" | "v2";
+  /** Broker/custom redirect registered for this public client. When present,
+   *  `auth_login(method: auto)` selects the native Eule webview. */
+  readonly redirectUri?: string;
+}
+
+/** Partial structural update accepted by the OAuth configuration control plane. */
+export interface OAuthConfigPatch {
+  readonly clientId?: string;
+  readonly tenant?: string;
+  readonly apiVersion?: "v1" | "v2";
+  /** `null` removes a previously configured webview redirect. */
+  readonly redirectUri?: string | null;
 }
 
 export interface GoogleOAuthConfig {

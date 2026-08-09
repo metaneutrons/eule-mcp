@@ -147,6 +147,8 @@ async function login(): Promise<void> {
     clientId: typeof flags["client-id"] === "string" ? flags["client-id"] : config.oauth.clientId,
     tenant: typeof flags.tenant === "string" ? flags.tenant : config.oauth.tenant,
     apiVersion,
+    redirectUri:
+      typeof flags["redirect-uri"] === "string" ? flags["redirect-uri"] : config.oauth.redirectUri,
   };
 
   try {
@@ -172,7 +174,7 @@ async function login(): Promise<void> {
         scope: "scope" in param ? param.scope : undefined,
         tenant: oauth.tenant,
         loginHint: account,
-        redirectUri: typeof flags["redirect-uri"] === "string" ? flags["redirect-uri"] : undefined,
+        redirectUri: oauth.redirectUri,
         totpSecret,
       });
       if (code !== 0) process.exit(code);

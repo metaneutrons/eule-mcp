@@ -1,6 +1,6 @@
 import { CONNECTOR_KINDS } from "../config/schema.js";
 import type { ConfigManager } from "../config/config-manager.js";
-import type { AppConfig, ConnectorKind, OAuthConfig, RoleConfig } from "../types/index.js";
+import type { AppConfig, ConnectorKind, OAuthConfigPatch, RoleConfig } from "../types/index.js";
 import { deleteCredential } from "../helper/credential-store.js";
 import { logger } from "../utils/logger.js";
 
@@ -112,7 +112,7 @@ export class ConfigService {
     if (connector?.credentialRef) this.tryRemoveCredential(connector.credentialRef);
   }
 
-  setOAuth(patch: Partial<Pick<OAuthConfig, "clientId" | "tenant" | "apiVersion">>): void {
+  setOAuth(patch: OAuthConfigPatch): void {
     this.config.setOAuth(patch);
   }
 

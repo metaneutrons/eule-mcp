@@ -93,6 +93,7 @@ export const appConfigSchema = z
         clientId: z.string().trim().min(1),
         tenant: z.string().trim().min(1),
         apiVersion: z.enum(["v1", "v2"]).optional(),
+        redirectUri: z.url().optional(),
       })
       .strict()
       .default({

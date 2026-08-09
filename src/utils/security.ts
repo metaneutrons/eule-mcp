@@ -117,7 +117,8 @@ export async function fetchWithTimeout(
   timeoutMs = 30_000,
 ): Promise<Response> {
   const controller = new AbortController();
-  const signals = [init.signal, currentExecutionSignal(), controller.signal].filter(
+  const executionSignal = currentExecutionSignal();
+  const signals = [init.signal, executionSignal, controller.signal].filter(
     (signal): signal is AbortSignal => signal != null,
   );
   const signal = signals.length === 1 ? signals[0] : AbortSignal.any(signals);
@@ -128,7 +129,7 @@ export async function fetchWithTimeout(
     return await fetch(input, { ...init, signal });
   } catch (err) {
     if (err instanceof Error && err.name === "AbortError") {
-      if (init.signal?.aborted && !controller.signal.aborted) {
+      if ((init.signal?.aborted || executionSignal?.aborted) && !controller.signal.aborted) {
         throw new Error(`Request cancelled: ${String(input)}`, { cause: err });
       }
       throw new Error(`Request timed out after ${String(timeoutMs)}ms: ${String(input)}`, {

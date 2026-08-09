@@ -13,8 +13,9 @@ language: de # de | en
 #   clientId: "9e5f94bc-e8a4-4e73-b8be-63364c29d753"
 #   tenant: "common"
 #   apiVersion: "v2" # or "v1"
+#   redirectUri: "urn:ietf:wg:oauth:2.0:oob" # only if registered for this client
 
-# Optional: TOTP autofill for `login --capture` (the native webview helper).
+# Optional: TOTP autofill for `auth_login` webview / CLI `login --capture`.
 # The password is always typed by you in the webview; only the MFA code is
 # auto-entered from this secret. Set it via the credential window, not by hand:
 #   node dist/cli/index.js secret totp --account user@example.com
