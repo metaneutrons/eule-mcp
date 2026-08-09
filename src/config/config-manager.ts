@@ -10,7 +10,8 @@ import {
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { createHash } from "node:crypto";
-import yaml from "js-yaml";
+// js-yaml v5 is ESM-only and exposes named module exports.
+import * as yaml from "js-yaml";
 import type {
   AppConfig,
   OAuthConfig,
