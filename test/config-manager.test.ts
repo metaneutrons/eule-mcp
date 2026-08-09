@@ -29,10 +29,23 @@ describe("ConfigManager mutations (backing the MCP config tools)", () => {
 
   it("setOAuth patches only the given fields", () => {
     const cm = new ConfigManager();
-    cm.setOAuth({ apiVersion: "v1", clientId: "apple" });
+    cm.setOAuth({
+      apiVersion: "v1",
+      clientId: "apple",
+      redirectUri: "urn:ietf:wg:oauth:2.0:oob",
+    });
+    cm.setOAuth({
+      tenant: "organizations",
+      clientId: undefined,
+      apiVersion: undefined,
+      redirectUri: undefined,
+    });
     expect(cm.get().oauth.clientId).toBe("apple");
     expect(cm.get().oauth.apiVersion).toBe("v1");
-    expect(cm.get().oauth.tenant).toBe("common"); // untouched default
+    expect(cm.get().oauth.tenant).toBe("organizations");
+    expect(cm.get().oauth.redirectUri).toBe("urn:ietf:wg:oauth:2.0:oob");
+    cm.setOAuth({ redirectUri: null });
+    expect(cm.get().oauth.redirectUri).toBeUndefined();
   });
 
   it("adds/removes connectors and rejects duplicate ids; survives a YAML round-trip", () => {

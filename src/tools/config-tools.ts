@@ -49,7 +49,7 @@ export function registerConfigTools(server: McpServer, config: ConfigService): v
         const current = config.get();
         const lines = [
           `language: ${current.language}`,
-          `oauth: clientId=${current.oauth.clientId} tenant=${current.oauth.tenant} apiVersion=${current.oauth.apiVersion ?? "v2"}`,
+          `oauth: clientId=${current.oauth.clientId} tenant=${current.oauth.tenant} apiVersion=${current.oauth.apiVersion ?? "v2"} redirectUri=${current.oauth.redirectUri ?? "—"}`,
           `google: ${current.google ? `configured (clientSecret=${current.google.clientSecret || current.google.clientSecretRef ? "set" : "—"})` : "—"}`,
           `autoAuth (${String(current.autoAuth?.length ?? 0)}):`,
           ...(current.autoAuth ?? []).map(
@@ -148,11 +148,18 @@ export function registerConfigTools(server: McpServer, config: ConfigService): v
     "config_set_oauth",
     {
       description:
-        "Set the public M365 OAuth client, tenant, or endpoint generation. [WRITES config.yaml]",
+        "Set the public M365 OAuth client, tenant, endpoint generation, or registered webview redirect. [WRITES config.yaml]",
       inputSchema: {
         clientId: z.string().optional(),
         tenant: z.string().optional(),
         apiVersion: z.enum(["v1", "v2"]).optional(),
+        redirectUri: z
+          .url()
+          .nullable()
+          .optional()
+          .describe(
+            "Broker/custom redirect registered for this M365 public client; null removes it",
+          ),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
     },

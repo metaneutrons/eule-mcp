@@ -67,7 +67,7 @@ Eule is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) serve
 | Tool | Description |
 |---|---|
 | `auth_status` | Show authentication status and configuration |
-| `auth_login` | Authenticate an account (M365 or Google) via browser OAuth |
+| `auth_login` | Authenticate an account; M365 can use the local Eule webview with TOTP autofill |
 | `auth_probe` | Test which API tier works for an account |
 | `auth_accounts` | List token health without exposing credentials |
 | `auth_logout` | Remove locally stored tokens for an account |
@@ -91,7 +91,7 @@ only success/failure and an opaque reference is committed to `config.yaml`.
 | `connector_configure` | Create/update a connector; capture any required secret locally `[WRITES]` |
 | `account_add` | Deprecated compatibility alias for `connector_configure` `[WRITES]` |
 | `account_remove` | Remove a connector from a role `[WRITES]` |
-| `config_set_oauth` | Set the M365 client id / tenant / api-version `[WRITES]` |
+| `config_set_oauth` | Set the M365 client id / tenant / API version / webview redirect `[WRITES]` |
 | `credential_status` | Report configured/missing/unavailable bindings without exposing values |
 | `credential_rotate` | Atomically rotate a connector password or token `[WRITES]` |
 | `google_oauth_configure` | Set the client id and capture the Google client secret locally `[WRITES]` |
@@ -253,7 +253,9 @@ configure Eule; it can perform this sequence itself:
 3. Call `connector_configure` for each account/domain binding.
 4. If prompted, enter the requested secret in the native Eule window.
 5. Use `google_oauth_configure` or `totp_configure` when applicable, then
-   `auth_login` for OAuth providers.
+   `auth_login` for OAuth providers. When the M365 OAuth client has a registered
+   `redirectUri`, the default `method: auto` opens the local Eule webview and
+   fills any configured TOTP code without exposing it to MCP.
 6. Verify local secret bindings with `credential_status` and OAuth tokens with
    `auth_accounts`.
 
@@ -270,6 +272,13 @@ provider is installed, running, and unlocked; then retry the configure action.
 > The old `setup` subcommand is a deprecated alias for `login` — prefer `login`.
 
 #### Login methods
+
+From an MCP client, `auth_login` defaults to `method: auto`. For M365 it selects
+the native Eule webview when a registered `redirectUri` is configured or passed
+to the call; otherwise it uses browser OAuth. Set `method: browser` or
+`method: webview` to choose explicitly. Webview login needs the account email,
+an interactive desktop session, and a redirect registered for the configured
+OAuth client.
 
 - **Browser (default):** `node dist/cli/index.js login --tier graph` — opens a
   browser, you paste the redirect URL back. Needs an app whose redirect URIs
@@ -432,12 +441,13 @@ kiro-cli mcp add --name eule --command node --args "/path/to/eule-mcp/dist/serve
 }
 ```
 
-### Optional: TOTP autofill for `login --capture`
+### Optional: TOTP autofill for M365 webview login
 
-When you log in via the native webview (`login --capture`), the MFA code can be
-filled automatically from a stored TOTP secret. You still type the password
-yourself in the window; only the 6-digit code is auto-entered. Store the secret
-via the credential window (it never passes through the model or argv):
+When you log in via the native webview (`auth_login` with `method: auto` or
+`webview`, or CLI `login --capture`), the MFA code can be filled automatically
+from a stored TOTP secret. You still type the password yourself in the window;
+only the 6-digit code is auto-entered. Store the secret via `totp_configure` or
+the CLI credential window; it never passes through the model or argv:
 
 ```bash
 node dist/cli/index.js secret totp --account you@example.com
@@ -453,6 +463,12 @@ autoAuth:
 ```
 
 Pass `--no-totp` to `login --capture` to skip autofill for a given login.
+
+After the initial interactive OAuth login, normal M365 access is unattended:
+Eule reuses the stored token and refreshes it before expiry. A new user action
+is required only when Microsoft revokes/expires the refresh token or Conditional
+Access requires a fresh sign-in. Eule deliberately does not store or replay the
+Microsoft password.
 
 ## Roadmap
 

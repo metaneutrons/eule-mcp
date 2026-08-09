@@ -14,6 +14,7 @@ import yaml from "js-yaml";
 import type {
   AppConfig,
   OAuthConfig,
+  OAuthConfigPatch,
   GoogleOAuthConfig,
   RoleConfig,
   ConnectorConfig,
@@ -220,10 +221,21 @@ export class ConfigManager {
     this.save({ ...this.config, google: config }, expectedRevision);
   }
 
-  /** Patch the oauth block (clientId/tenant/apiVersion). Structural only — no
+  /** Patch the oauth block. Structural only — no
    *  secret is involved (M365 public-client auth carries no client secret). */
-  setOAuth(patch: Partial<Pick<OAuthConfig, "clientId" | "tenant" | "apiVersion">>): void {
-    this.save({ ...this.config, oauth: { ...this.config.oauth, ...patch } });
+  setOAuth(patch: OAuthConfigPatch): void {
+    const definedPatch: Partial<OAuthConfig> = {
+      ...(patch.clientId !== undefined ? { clientId: patch.clientId } : {}),
+      ...(patch.tenant !== undefined ? { tenant: patch.tenant } : {}),
+      ...(patch.apiVersion !== undefined ? { apiVersion: patch.apiVersion } : {}),
+      ...(typeof patch.redirectUri === "string" ? { redirectUri: patch.redirectUri } : {}),
+    };
+    const oauth: OAuthConfig = {
+      ...this.config.oauth,
+      ...definedPatch,
+      ...(patch.redirectUri === null ? { redirectUri: undefined } : {}),
+    };
+    this.save({ ...this.config, oauth });
   }
 
   /** Append a connector to a role. Rejects a duplicate id. */

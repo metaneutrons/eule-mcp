@@ -2,6 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import { AuthService } from "../src/services/auth-service.js";
 import type { ConfigManager } from "../src/config/index.js";
 import type { TokenRepository } from "../src/auth/token-repository.js";
+import type { AccountToken, TokenStore } from "../src/types/index.js";
+import { ConfiguredCredentialResolver } from "../src/helper/configured-credential-resolver.js";
+import { runWithExecutionContext } from "../src/utils/execution-context.js";
 
 describe("AuthService inventory", () => {
   it("exposes health metadata without token material and delegates logout", () => {
@@ -31,5 +34,112 @@ describe("AuthService inventory", () => {
     expect(serialized).not.toContain("must-not-leak");
     expect(auth.logout("USER@example.com")).toBe(true);
     expect(remove).toHaveBeenCalledWith("USER@example.com");
+  });
+});
+
+describe("AuthService M365 webview login", () => {
+  it("routes auto login through the local helper when TOTP is configured", async () => {
+    const account = "user@example.com";
+    const totpSecret = "JBSWY3DPEHPK3PXP";
+    let store: TokenStore = { accounts: {} };
+    const repository: TokenRepository = {
+      load: () => store,
+      save: vi.fn(),
+      remove: vi.fn(() => false),
+    };
+    const config = {
+      get: () => ({
+        language: "en",
+        oauth: {
+          clientId: "public-client",
+          tenant: "organizations",
+          apiVersion: "v1",
+          redirectUri: "urn:ietf:wg:oauth:2.0:oob",
+        },
+        autoAuth: [{ account, totpSecret }],
+        roles: [],
+      }),
+      euleDirPath: "/data",
+    } as unknown as ConfigManager;
+    const capturedToken: AccountToken = {
+      account,
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      expiresAt: Date.now() + 60 * 60 * 1_000,
+      tier: "ews",
+      clientId: "public-client",
+      apiVersion: "v1",
+    };
+    const capture = vi.fn(async () => {
+      store = { accounts: { [account]: capturedToken } };
+      return 0;
+    });
+    const auth = new AuthService(
+      config,
+      repository,
+      new ConfiguredCredentialResolver(config),
+      capture,
+    );
+    const execution = new AbortController();
+
+    const token = await runWithExecutionContext(
+      {
+        correlationId: "m365-webview-login",
+        operation: "auth_login",
+        startedAt: Date.now(),
+        signal: execution.signal,
+      },
+      () =>
+        auth.login({
+          tier: "ews",
+          account: "USER@example.com",
+          method: "auto",
+        }),
+    );
+
+    expect(token).toEqual(capturedToken);
+    expect(capture).toHaveBeenCalledWith(
+      expect.objectContaining({
+        clientId: "public-client",
+        tier: "ews",
+        apiVersion: "v1",
+        resource: "https://outlook.office.com",
+        tenant: "organizations",
+        loginHint: account,
+        redirectUri: "urn:ietf:wg:oauth:2.0:oob",
+        totpSecret,
+        signal: execution.signal,
+      }),
+    );
+  });
+
+  it("requires an account for an explicitly selected M365 webview", async () => {
+    const repository: TokenRepository = {
+      load: () => ({ accounts: {} }),
+      save: vi.fn(),
+      remove: vi.fn(() => false),
+    };
+    const config = {
+      get: () => ({
+        language: "en",
+        oauth: { clientId: "public-client", tenant: "common" },
+        roles: [],
+      }),
+      euleDirPath: "/data",
+    } as unknown as ConfigManager;
+    const capture = vi.fn(async () => 0);
+    const auth = new AuthService(
+      config,
+      repository,
+      new ConfiguredCredentialResolver(config),
+      capture,
+    );
+
+    const error = await auth
+      .login({ tier: "graph", method: "webview" })
+      .catch((reason: unknown) => (reason instanceof Error ? reason : new Error(String(reason))));
+
+    expect(error.message).toMatch(/account email is required/i);
+    expect(capture).not.toHaveBeenCalled();
   });
 });

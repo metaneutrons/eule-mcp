@@ -1,11 +1,26 @@
 import type { ConfigManager } from "../config/index.js";
 import type { TokenRepository } from "../auth/token-repository.js";
-import type { AccountToken, ApiTier } from "../types/index.js";
-import { authenticateAccount, getAccessToken } from "../providers/m365/index.js";
+import type { AccountToken, ApiTier, TokenStore } from "../types/index.js";
+import { authenticateAccount, getAccessToken, tierAuthParam } from "../providers/m365/index.js";
 import { authenticateGoogle } from "../providers/google/index.js";
-import { fetchWithExecutionContext as fetch } from "../utils/execution-context.js";
+import {
+  currentExecutionSignal,
+  fetchWithExecutionContext as fetch,
+} from "../utils/execution-context.js";
 import { logger } from "../utils/logger.js";
 import { ConfiguredCredentialResolver } from "../helper/configured-credential-resolver.js";
+import { oauthCapture, type OauthCaptureOpts } from "../helper/run.js";
+
+export type AuthLoginMethod = "auto" | "browser" | "webview";
+
+export interface AuthLoginRequest {
+  readonly tier: ApiTier;
+  readonly account?: string;
+  readonly method?: AuthLoginMethod;
+  readonly redirectUri?: string;
+}
+
+type M365WebviewCapture = (options: OauthCaptureOpts) => Promise<number>;
 
 export interface AuthAccountSummary {
   readonly account: string;
@@ -23,6 +38,7 @@ export class AuthService {
     private readonly secrets: ConfiguredCredentialResolver = new ConfiguredCredentialResolver(
       config,
     ),
+    private readonly captureM365: M365WebviewCapture = oauthCapture,
   ) {}
 
   inventory(): AuthAccountSummary[] {
@@ -62,8 +78,20 @@ export class AuthService {
     };
   }
 
-  async login(tier: ApiTier, accountHint?: string): Promise<AccountToken> {
-    const account = accountHint?.trim().toLowerCase();
+  async login(request: AuthLoginRequest): Promise<AccountToken> {
+    const { tier, redirectUri } = request;
+    const account = request.account?.trim().toLowerCase();
+    const method = request.method ?? "auto";
+    if (tier === "google" && (method === "webview" || redirectUri !== undefined))
+      throw new Error("The native Eule webview login is available only for M365 accounts");
+    const configuredRedirectUri =
+      tier === "google" ? undefined : (redirectUri ?? this.config.get().oauth.redirectUri);
+    const useWebview =
+      tier !== "google" &&
+      (method === "webview" || (method === "auto" && configuredRedirectUri !== undefined));
+    const webview = useWebview
+      ? { account: this.requireWebviewAccount(account), redirectUri: configuredRedirectUri }
+      : undefined;
     // Google uses one fixed localhost redirect port registered with the OAuth
     // client, so interactive Google logins must be process-wide exclusive.
     const lockKey =
@@ -75,6 +103,7 @@ export class AuthService {
           if (!google) throw new Error("Google OAuth is not configured");
           return await authenticateGoogle(google, account);
         }
+        if (webview) return await this.loginM365Webview(tier, webview.account, webview.redirectUri);
         return await authenticateAccount(tier, account, this.config.get().oauth);
       } catch (error) {
         logger.error(
@@ -88,6 +117,69 @@ export class AuthService {
         throw new Error(`Authentication failed for ${tier}`, { cause: error });
       }
     });
+  }
+
+  private hasTotpBinding(account: string | undefined): boolean {
+    if (!account) return false;
+    return Boolean(
+      this.config
+        .get()
+        .autoAuth?.some((entry) => entry.account.toLowerCase() === account.toLowerCase()),
+    );
+  }
+
+  private requireWebviewAccount(account: string | undefined): string {
+    if (!account) throw new Error("An account email is required for the native Eule webview login");
+    return account;
+  }
+
+  private async loginM365Webview(
+    tier: Exclude<ApiTier, "google">,
+    account: string,
+    redirectUri: string | undefined,
+  ): Promise<AccountToken> {
+    const oauth = this.config.get().oauth;
+    const authParam = tierAuthParam(oauth, tier);
+    const before = this.tokens.load();
+    const exitCode = await this.captureM365({
+      clientId: oauth.clientId,
+      tier,
+      apiVersion: oauth.apiVersion === "v1" ? "v1" : "v2",
+      resource: "resource" in authParam ? authParam.resource : undefined,
+      scope: "scope" in authParam ? authParam.scope : undefined,
+      tenant: oauth.tenant,
+      loginHint: account,
+      redirectUri,
+      totpSecret: this.hasTotpBinding(account) ? this.secrets.totp(account) : undefined,
+      signal: currentExecutionSignal(),
+    });
+    if (exitCode !== 0)
+      throw new Error(
+        exitCode === 3
+          ? "M365 webview login was cancelled"
+          : `M365 webview login failed (helper exit code ${String(exitCode)})`,
+      );
+    return this.capturedToken(account, tier, before, this.tokens.load());
+  }
+
+  private capturedToken(
+    account: string,
+    tier: Exclude<ApiTier, "google">,
+    before: TokenStore,
+    after: TokenStore,
+  ): AccountToken {
+    const changed = Object.entries(after.accounts).filter(([key, token]) => {
+      const previous = before.accounts[key];
+      return (
+        token.tier === tier &&
+        (previous?.accessToken !== token.accessToken || previous.expiresAt !== token.expiresAt)
+      );
+    });
+    const exact = changed.find(([key]) => key.toLowerCase() === account.toLowerCase())?.[1];
+    if (exact) return exact;
+    const onlyChanged = changed.length === 1 ? changed[0]?.[1] : undefined;
+    if (onlyChanged) return onlyChanged;
+    throw new Error("M365 helper completed without writing an unambiguous account token");
   }
 
   logout(account: string): boolean {
