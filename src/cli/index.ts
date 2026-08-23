@@ -4,6 +4,7 @@ import {
   authenticateAccountDeviceCode,
   tierAuthParam,
   loadTokens,
+  REDIRECT_URI,
 } from "../providers/m365/index.js";
 import { oauthCapture } from "../helper/run.js";
 import { createInterface } from "node:readline/promises";
@@ -31,6 +32,17 @@ function parseFlags(argv: string[]): Record<string, string | boolean> {
     }
   }
   return out;
+}
+
+/**
+ * Whether a native login window can plausibly be shown. A remote shell has no
+ * usable window server even on macOS/Windows, so SSH sessions are treated as
+ * headless and get the device-code flow instead.
+ */
+function hasDesktopSession(): boolean {
+  if (process.env.SSH_CONNECTION ?? process.env.SSH_TTY) return false;
+  if (process.platform === "darwin" || process.platform === "win32") return true;
+  return Boolean(process.env.DISPLAY ?? process.env.WAYLAND_DISPLAY);
 }
 
 async function configure(): Promise<void> {
@@ -99,15 +111,14 @@ async function configure(): Promise<void> {
     });
     console.log(`\n✅ Configured ${definition.type} connector ${roleId}/${definition.kind}/${id}.`);
     console.log(`Credential: ${result.credential}.`);
-    if (definition.type === "m365")
-      console.log("Next: run eule-mcp login --device --account " + account);
+    if (definition.type === "m365") console.log("Next: run eule-mcp login --account " + account);
   } finally {
     io.close();
   }
 }
 
 /** Deprecated — kept as a thin alias so existing docs/muscle-memory still work.
- *  `login` is the real entry (device-code / webview capture / browser). */
+ *  `login` is the real entry (native window, device code, or legacy browser). */
 async function setup(): Promise<void> {
   const tokens = loadTokens();
   console.log("Note: `setup` is deprecated — use `login`. Delegating…\n");
@@ -118,7 +129,7 @@ async function setup(): Promise<void> {
       console.log(`  ${account}: tier ${token.tier}${expired}`);
     }
     console.log(
-      "\nTip: eule-mcp login --device --tier ews   (or --capture for broker-only clients)\n",
+      "\nTip: eule-mcp login --tier ews   (add --device over SSH, --capture for broker clients)\n",
     );
   }
   // Any flags after `setup` are honoured by login() (it parses args.slice(1)).
@@ -151,50 +162,94 @@ async function login(): Promise<void> {
       typeof flags["redirect-uri"] === "string" ? flags["redirect-uri"] : config.oauth.redirectUri,
   };
 
+  // Flow selection. An explicit flag always wins. Otherwise pick what this
+  // machine can actually run: the native window on a desktop session, device
+  // code when headless or over SSH. The browser paste-the-redirect flow is the
+  // worst of the three for the user and is now only used when named directly.
+  const explicit = flags.capture
+    ? "capture"
+    : flags.device
+      ? "device"
+      : flags.browser
+        ? "browser"
+        : undefined;
+  const mode = explicit ?? (hasDesktopSession() ? "capture" : "device");
+
+  /** Native webview login. Returns the helper's exit code. */
+  const captureLogin = async (): Promise<number> => {
+    // The helper writes tokens.json itself; the code never returns through this
+    // process. Required for clients whose only redirect URIs are broker-bound
+    // (e.g. Apple Internet Accounts EWS), and the nicer path everywhere else.
+    const param = tierAuthParam(oauth, tier);
+    // Opt-in MFA autofill: if this account has a TOTP secret in autoAuth, hand
+    // it to the helper (via env, not argv) so it auto-enters the code. Skipped
+    // with --no-totp. The password is always typed by the user.
+    const totpSecret = flags["no-totp"] || !account ? undefined : secrets.totp(account);
+    console.log(
+      `\nNative login window, tier ${tier}, client ${oauth.clientId}` +
+        `${totpSecret ? " (auto-TOTP)" : ""}\n`,
+    );
+    return oauthCapture({
+      clientId: oauth.clientId,
+      tier,
+      apiVersion: oauth.apiVersion === "v1" ? "v1" : "v2",
+      resource: "resource" in param ? param.resource : undefined,
+      scope: "scope" in param ? param.scope : undefined,
+      tenant: oauth.tenant,
+      loginHint: account,
+      // A configured/flagged redirect always wins. Otherwise an explicit
+      // --capture keeps the helper's broker default (oob) so existing
+      // broker-bound setups behave exactly as before, while the automatic path
+      // targets the ordinary navigable redirect the default client registers.
+      redirectUri: oauth.redirectUri ?? (explicit ? undefined : REDIRECT_URI),
+      totpSecret,
+    });
+  };
+
+  const deviceLogin = async (): Promise<void> => {
+    console.log(`\nDevice-code login, tier ${tier}, client ${oauth.clientId}\n`);
+    const token = await authenticateAccountDeviceCode(tier, oauth, (p) => {
+      console.log("==================================================");
+      console.log(`  Open:  ${p.verificationUrl}`);
+      console.log(`  Code:  ${p.userCode}`);
+      console.log("==================================================");
+      console.log("  Waiting for you to complete sign-in…\n");
+    });
+    console.log(`\n✅ Success! ${token.account} (tier ${token.tier})`);
+    console.log(`   Expires: ${new Date(token.expiresAt).toLocaleString()}`);
+  };
+
   try {
-    if (flags.capture) {
-      // Webview capture via the native eule-helper — for clients whose only
-      // redirect URIs are broker-bound (e.g. Apple Internet Accounts EWS), where
-      // neither the paste-redirect nor device-code flow works. The helper writes
-      // tokens.json itself; the secret/code never returns through this process.
-      const param = tierAuthParam(oauth, tier);
-      // Opt-in MFA autofill: if this account has a TOTP secret in autoAuth, hand
-      // it to the helper (via env, not argv) so it auto-enters the code. Skipped
-      // with --no-totp. The password is always typed by the user.
-      const totpSecret = flags["no-totp"] || !account ? undefined : secrets.totp(account);
-      console.log(
-        `\nWebview capture — tier ${tier}, client ${oauth.clientId}` +
-          `${totpSecret ? " (auto-TOTP)" : ""}\n`,
-      );
-      const code = await oauthCapture({
-        clientId: oauth.clientId,
-        tier,
-        apiVersion: oauth.apiVersion === "v1" ? "v1" : "v2",
-        resource: "resource" in param ? param.resource : undefined,
-        scope: "scope" in param ? param.scope : undefined,
-        tenant: oauth.tenant,
-        loginHint: account,
-        redirectUri: oauth.redirectUri,
-        totpSecret,
-      });
+    if (mode === "capture") {
+      let code: number;
+      try {
+        code = await captureLogin();
+      } catch (err) {
+        // The helper could not be obtained at all (no release for this platform,
+        // download blocked, no local build). That is a machine-capability
+        // problem rather than a failed sign-in, so the automatic path degrades
+        // to device code. An explicit --capture still surfaces the error.
+        if (explicit) throw err;
+        console.log(
+          `Native login window unavailable (${err instanceof Error ? err.message : String(err)}).`,
+        );
+        console.log("Falling back to the device-code flow.");
+        await deviceLogin();
+        return;
+      }
+      // A non-zero exit means the sign-in itself failed or was cancelled. Do not
+      // silently start a second flow behind the user's back.
       if (code !== 0) process.exit(code);
       console.log("\n✅ Token written to ~/.eule/tokens.json");
       return;
     }
-    if (flags.device) {
-      console.log(`\nDevice-code login — tier ${tier}, client ${oauth.clientId}\n`);
-      const token = await authenticateAccountDeviceCode(tier, oauth, (p) => {
-        console.log("==================================================");
-        console.log(`  Open:  ${p.verificationUrl}`);
-        console.log(`  Code:  ${p.userCode}`);
-        console.log("==================================================");
-        console.log("  Waiting for you to complete sign-in…\n");
-      });
-      console.log(`\n✅ Success! ${token.account} (tier ${token.tier})`);
-      console.log(`   Expires: ${new Date(token.expiresAt).toLocaleString()}`);
+    if (mode === "device") {
+      await deviceLogin();
       return;
     }
-    // Browser authorization-code (paste-the-redirect) fallback.
+    // Legacy browser authorization-code flow: sign in, then paste the redirect
+    // URL back by hand. Kept only for environments where no helper binary may
+    // run and the tenant also blocks device code.
     const token = await authenticateAccount(tier, account, oauth);
     console.log(`\n✅ Success! ${token.account} (tier ${token.tier})`);
     console.log(`   Expires: ${new Date(token.expiresAt).toLocaleString()}`);
@@ -254,10 +309,13 @@ async function main(): Promise<void> {
       console.log("Usage:");
       console.log("  eule-mcp configure                    Local role/account setup wizard");
       console.log("  eule-mcp setup                        Interactive account setup");
-      console.log("  eule-mcp login --device [--tier ews]  Cross-platform device-code login");
+      console.log("  eule-mcp login [--tier ews]           Native window, device code if headless");
       console.log("       [--account <email>] [--client-id <id>] [--api-version v1|v2]");
-      console.log("  eule-mcp login --capture [--tier ews] Webview capture (broker-only clients)");
-      console.log("  eule-mcp login [--tier graph] …       Browser (paste-redirect) login");
+      console.log(
+        "  eule-mcp login --capture [--tier ews] Force the native window (broker clients)",
+      );
+      console.log("  eule-mcp login --device [--tier ews]  Force device code (works over SSH)");
+      console.log("  eule-mcp login --browser [--tier ews] Legacy browser paste-the-redirect");
       console.log(
         "  eule-mcp secret totp --account <email> Store a TOTP secret via a local window",
       );

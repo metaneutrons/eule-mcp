@@ -21,7 +21,13 @@ const DEFAULT_OAUTH: OAuthConfig = {
  * We use a local HTTP server that intercepts requests to ANY path and
  * extracts the code, then we exchange it using this exact redirect_uri.
  */
-const REDIRECT_URI = "https://login.microsoftonline.com/common/oauth2/nativeclient";
+/**
+ * The ordinary navigable redirect URI (Thunderbird and most public clients
+ * register it). Exported because the automatic login path points the webview
+ * capture at this same URI, which makes that flow the browser flow minus the
+ * manual copy-paste step.
+ */
+export const REDIRECT_URI = "https://login.microsoftonline.com/common/oauth2/nativeclient";
 
 // Exported for unit tests (and any future auth path) so endpoint + param
 // construction has a single source of truth and can't drift.
@@ -540,7 +546,15 @@ export async function authenticateAccountDeviceCode(
     // authorization_declined / access_denied / expired_token / bad_verification_code,
     // or a Conditional Access block on the device-code flow.
     const desc = (err.error_description ?? "").split("\n")[0] ?? "";
-    throw new Error(`Device-code login failed: ${err.error ?? "unknown"} — ${desc}`);
+    // `access_denied` here is usually a tenant Conditional Access policy that
+    // disables the device-code flow outright (a common anti-phishing control),
+    // not a user who clicked "No". Either way the actionable next step is the
+    // webview, so say so instead of leaving the operator with a raw AADSTS code.
+    const hint =
+      err.error === "access_denied" || err.error === "authorization_declined"
+        ? ` If the tenant blocks the device-code flow, sign in with the native window instead: eule-mcp login --capture --tier ${tier}.`
+        : "";
+    throw new Error(`Device-code login failed: ${err.error ?? "unknown"}. ${desc}${hint}`);
   }
   throw new Error("Device-code login timed out.");
 }

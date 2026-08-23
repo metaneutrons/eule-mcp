@@ -8,6 +8,7 @@ export {
   InteractionRequiredError,
   TIER_SCOPES,
   tierAuthParam,
+  REDIRECT_URI,
 } from "./auth/oauth.js";
 export type { DeviceCodePrompt } from "./auth/oauth.js";
 
