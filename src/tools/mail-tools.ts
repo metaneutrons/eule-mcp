@@ -1,12 +1,55 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { AttachmentService } from "../services/attachment-service.js";
-import type { MailService, MailSendInput } from "../services/mail-service.js";
+import type { MailService, MailSendInput, MailUpdateOutcome } from "../services/mail-service.js";
 import { renderMail } from "../renderer/index.js";
 import { SAVE_PATH_HINT } from "../utils/path-sandbox.js";
 import { executeTool, textResult } from "./tool-runtime.js";
 
 const accountScope = { account: z.string().min(1), role: z.string().optional() };
+
+/** Above this many results, list per sender instead of per message. */
+const GROUPED_OUTPUT_THRESHOLD = 30;
+
+/**
+ * Renders what a bulk update actually touched.
+ *
+ * A bare "✅ deleted" cannot be told apart from the same message about the wrong
+ * mail, so subject and sender are always included. Small batches list every
+ * message; large ones group by sender with one example each, because a wrong
+ * sender stands out in a grouped view while nobody reads 200 lines.
+ */
+export function renderUpdateOutcomes(outcomes: readonly MailUpdateOutcome[]): string {
+  const failed = outcomes.filter((o) => o.error);
+  const ok = outcomes.filter((o) => !o.error);
+  const describe = (o: MailUpdateOutcome): string =>
+    `${o.subject ?? "(subject unavailable)"} — ${o.from ?? "(sender unavailable)"}`;
+  const actions = [...new Set(ok.flatMap((o) => o.actions))].join(", ") || "no change";
+  const lines: string[] = [`✅ ${String(ok.length)} message(s): ${actions}`];
+
+  if (ok.length > 0 && ok.length <= GROUPED_OUTPUT_THRESHOLD) {
+    lines.push("", ...ok.map((o) => `  ${describe(o)}\n    id: ${o.id}`));
+  } else if (ok.length > GROUPED_OUTPUT_THRESHOLD) {
+    const bySender = new Map<string, MailUpdateOutcome[]>();
+    for (const outcome of ok) {
+      const key = outcome.from ?? "(sender unavailable)";
+      bySender.set(key, [...(bySender.get(key) ?? []), outcome]);
+    }
+    lines.push("");
+    for (const [sender, group] of [...bySender.entries()].sort((a, b) => b[1].length - a[1].length))
+      lines.push(
+        `  ${String(group.length)}× ${sender} — e.g. "${group[0]?.subject ?? "(subject unavailable)"}"`,
+      );
+    lines.push("", `  ids: ${ok.map((o) => o.id).join(", ")}`);
+  }
+
+  if (failed.length > 0) {
+    lines.push("", `❌ ${String(failed.length)} failed:`);
+    for (const outcome of failed)
+      lines.push(`  ${outcome.id}: ${outcome.error ?? "unknown error"}`);
+  }
+  return lines.join("\n");
+}
 const sendInput = {
   to: z.string().max(32_000),
   subject: z.string().max(998).optional(),
@@ -167,9 +210,16 @@ export function registerMailTools(
   server.registerTool(
     "mail_update",
     {
-      description: "Mark, move, or delete an email",
+      description:
+        "Mark, move, or delete one or many emails. Deleting always moves to the trash folder, never purges. The result names the subject and sender of every message touched, so a wrong id is visible.",
       inputSchema: {
-        id: z.string().min(1),
+        id: z.string().min(1).optional().describe("Single message id; or use ids"),
+        ids: z
+          .array(z.string().min(1))
+          .min(1)
+          .max(200)
+          .optional()
+          .describe("Message ids to apply the same action to"),
         ...accountScope,
         is_read: z.boolean().optional(),
         move_to: z.string().min(1).max(256).optional(),
@@ -177,12 +227,17 @@ export function registerMailTools(
       },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
     },
-    async ({ id, account, role, is_read, move_to, delete: remove }) =>
-      executeTool("mail_update", async () =>
-        textResult(
-          `✅ ${(await mail.update(id, account, role, { isRead: is_read, moveTo: move_to, delete: remove })).join(", ")}`,
-        ),
-      ),
+    async ({ id, ids, account, role, is_read, move_to, delete: remove }) =>
+      executeTool("mail_update", async () => {
+        const targets = ids ?? (id ? [id] : []);
+        if (targets.length === 0) throw new Error("Provide either id or ids");
+        const outcomes = await mail.update(targets, account, role, {
+          isRead: is_read,
+          moveTo: move_to,
+          delete: remove,
+        });
+        return textResult(renderUpdateOutcomes(outcomes));
+      }),
   );
   server.registerTool(
     "mail_attachment_get",

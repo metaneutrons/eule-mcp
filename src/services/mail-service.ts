@@ -10,6 +10,21 @@ import {
 
 const MAX_RECIPIENTS = 100;
 const MAX_ATTACHMENTS = 20;
+/**
+ * Ceiling for one `mail_update` call. High enough to clear a real inbox backlog
+ * in a few calls, low enough that a mistaken id list stays reviewable and a
+ * single call cannot run for minutes against a slow provider.
+ */
+const MAX_UPDATE_BATCH = 200;
+
+/** Per-message result of a bulk update, carrying enough to spot a wrong target. */
+export interface MailUpdateOutcome {
+  readonly id: string;
+  readonly subject?: string;
+  readonly from?: string;
+  readonly actions: string[];
+  readonly error?: string;
+}
 
 export function parseRecipients(value: string | undefined, required = false): string[] | undefined {
   const recipients =
@@ -170,29 +185,66 @@ export class MailService {
     }
   }
   async update(
-    id: string,
+    ids: readonly string[],
     account: string,
     role: string | undefined,
     patch: { isRead?: boolean; moveTo?: string; delete?: boolean },
-  ): Promise<string[]> {
+  ): Promise<MailUpdateOutcome[]> {
     if (patch.isRead === undefined && !patch.moveTo && !patch.delete)
       throw new Error("At least one update action is required");
+    if (ids.length === 0) throw new Error("At least one message id is required");
+    if (ids.length > MAX_UPDATE_BATCH)
+      throw new Error(
+        `At most ${String(MAX_UPDATE_BATCH)} messages can be updated in one call (got ${String(ids.length)})`,
+      );
     const connector = this.registry.getMailConnectorForAccount(account, role, "write");
     if (!connector) throw new Error(`No connector for ${account}`);
-    const actions: string[] = [];
-    if (patch.isRead !== undefined) {
-      await connector.markRead(id, patch.isRead);
-      actions.push(patch.isRead ? "marked read" : "marked unread");
+
+    // Read the headline metadata BEFORE mutating. After a move or delete the id
+    // no longer resolves in the source folder, so this is the only point at
+    // which the caller can be told what was actually touched. Best effort: a
+    // connector without getSummaries, or a lookup that fails, must not stop the
+    // action itself.
+    const summaries = new Map<string, MailMessage>();
+    if (connector.getSummaries) {
+      try {
+        for (const summary of await connector.getSummaries(ids)) summaries.set(summary.id, summary);
+      } catch {
+        /* diagnostics are best effort */
+      }
     }
-    if (patch.moveTo) {
-      await connector.moveMessage(id, patch.moveTo);
-      actions.push(`moved to ${patch.moveTo}`);
+
+    const outcomes: MailUpdateOutcome[] = [];
+    for (const id of ids) {
+      const summary = summaries.get(id);
+      const actions: string[] = [];
+      try {
+        if (patch.isRead !== undefined) {
+          await connector.markRead(id, patch.isRead);
+          actions.push(patch.isRead ? "marked read" : "marked unread");
+        }
+        if (patch.moveTo) {
+          await connector.moveMessage(id, patch.moveTo);
+          actions.push(`moved to ${patch.moveTo}`);
+        }
+        if (patch.delete) {
+          await connector.deleteMessage(id);
+          actions.push("deleted");
+        }
+        outcomes.push({ id, subject: summary?.subject, from: summary?.from, actions });
+      } catch (error) {
+        // One bad id must not abandon the rest of the batch, but it has to be
+        // reported per message rather than collapsed into a single failure.
+        outcomes.push({
+          id,
+          subject: summary?.subject,
+          from: summary?.from,
+          actions,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
-    if (patch.delete) {
-      await connector.deleteMessage(id);
-      actions.push("deleted");
-    }
-    return actions;
+    return outcomes;
   }
   getConnector(account: string, role?: string): MailConnector {
     const connector = this.registry.getMailConnectorForAccount(account, role);

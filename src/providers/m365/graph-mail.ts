@@ -113,6 +113,32 @@ export class GraphMailConnector implements MailConnector {
     return Buffer.from(await res.arrayBuffer());
   }
 
+  /**
+   * Headline metadata for a set of ids. Graph has no id-set filter, so this is
+   * one request per id, but `$select` keeps each response tiny compared with
+   * `getMessage`, which expands attachments. Concurrency is bounded so a large
+   * bulk preview cannot open hundreds of sockets at once. Ids that no longer
+   * resolve are skipped rather than failing the whole batch.
+   */
+  async getSummaries(ids: readonly string[]): Promise<MailMessage[]> {
+    const h = await this.headers();
+    const select = "$select=id,subject,from,toRecipients,receivedDateTime,bodyPreview,isRead";
+    const results: MailMessage[] = [];
+    const queue = [...ids];
+    const worker = async (): Promise<void> => {
+      for (let id = queue.shift(); id !== undefined; id = queue.shift()) {
+        // Execution-context fetch so a cancelled tool call stops the sweep.
+        const res = await fetch(`${this.base}/messages/${encodeURIComponent(id)}?${select}`, {
+          headers: h,
+        });
+        if (!res.ok) continue;
+        results.push(this.mapMessage((await res.json()) as GraphMessage));
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(4, ids.length) }, () => worker()));
+    return results;
+  }
+
   async searchMessages(query: string, limit = 10): Promise<MailMessage[]> {
     const h = await this.headers();
     const url = `${this.base}/messages?$search="${encodeURIComponent(query)}"&$top=${String(limit)}&$select=id,subject,from,toRecipients,receivedDateTime,bodyPreview,isRead`;

@@ -90,6 +90,16 @@ export interface MailConnector {
   displayName?: string;
   listMessages(folder?: string, limit?: number): Promise<MailMessage[]>;
   getMessage(id: string): Promise<MailMessageFull>;
+  /**
+   * Headline metadata for specific ids, without fetching bodies or attachments.
+   *
+   * Exists so a bulk action can name what it is about to touch. `getMessage` is
+   * far too heavy for that (full body, `$expand=attachments`), and after a move
+   * or delete the id may no longer resolve, so callers read summaries *before*
+   * mutating. Optional: callers must degrade gracefully when a connector does
+   * not implement it. Unknown ids are omitted rather than throwing.
+   */
+  getSummaries?(ids: readonly string[]): Promise<MailMessage[]>;
   searchMessages(query: string, limit?: number, folder?: string): Promise<MailMessage[]>;
   sendMessage(to: string[], subject: string, body: string, opts?: MailSendOpts): Promise<void>;
   createDraft?(
