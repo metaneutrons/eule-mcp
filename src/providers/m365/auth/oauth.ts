@@ -52,9 +52,11 @@ export function tokenEndpoint(oauth: OAuthConfig): string {
  * (auth-code, refresh, device-code) so they can't diverge.
  */
 export function tierAuthParam(oauth: OAuthConfig, tier: ApiTier): Record<string, string> {
-  return oauth.apiVersion === "v1"
-    ? { resource: TIER_RESOURCES[tier] }
-    : { scope: TIER_SCOPES[tier] };
+  if (oauth.apiVersion === "v1") return { resource: TIER_RESOURCES[tier] };
+  // v1 has no per-permission scopes, so extras only apply to v2. Deduplicated so
+  // repeating a tier default cannot produce an invalid scope string.
+  const scopes = [...TIER_SCOPES[tier].split(" "), ...(oauth.extraScopes ?? [])].filter(Boolean);
+  return { scope: [...new Set(scopes)].join(" ") };
 }
 
 /** Scope sets per API tier (v2.0 endpoint — `scope=`). */

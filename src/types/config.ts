@@ -42,6 +42,9 @@ export interface RoleConnectors {
   readonly messenger?: readonly ConnectorConfig[];
   readonly files?: readonly ConnectorConfig[];
   readonly documents?: readonly ConnectorConfig[];
+  /** Task backends: Microsoft To Do via Graph, or VTODO over CalDAV
+   *  (Apple Reminders, Nextcloud Tasks). */
+  readonly tasks?: readonly ConnectorConfig[];
 }
 
 /** A single role definition. */
@@ -80,6 +83,14 @@ export interface OAuthConfig {
   /** Broker/custom redirect registered for this public client. When present,
    *  `auth_login(method: auto)` selects the native Eule webview. */
   readonly redirectUri?: string;
+  /**
+   * Extra v2 scopes appended to the tier defaults, e.g.
+   * `https://graph.microsoft.com/Tasks.ReadWrite` for Microsoft To Do.
+   * Opt-in on purpose: requesting a scope the client's app registration does
+   * not consent makes every login for that client fail, so this is only added
+   * when you point `clientId` at an app that actually has the permission.
+   */
+  readonly extraScopes?: readonly string[];
 }
 
 /** Partial structural update accepted by the OAuth configuration control plane. */

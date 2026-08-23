@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { ConfigManager } from "../config/index.js";
-import { DatabaseManager, TaskManager, ContactManager } from "../db/index.js";
+import { DatabaseManager, ContactManager } from "../db/index.js";
 import {
   ConfigService,
   ConfigurationControlService,
@@ -67,8 +67,10 @@ registerFileTools(server, new FileService(registry));
 registerCalendarTools(server, new CalendarService(registry));
 
 // --- Task tools ---
-const taskManager = new TaskManager(dbManager);
-registerTaskTools(server, new TaskService(taskManager));
+// Tasks live in the user's own system (Microsoft To Do, Apple Reminders,
+// Nextcloud Tasks) rather than in a private store, so they route through the
+// connector registry like every other domain.
+registerTaskTools(server, new TaskService(registry));
 
 const contactManager = new ContactManager(dbManager);
 registerContactTools(server, new ContactService(registry, contactManager));

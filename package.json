@@ -1,7 +1,7 @@
 {
   "name": "eule-mcp",
   "version": "0.3.0",
-  "description": "MCP server for an office assistant - E-Mail/Calendar integration, GTD tasks & resource planning",
+  "description": "MCP server for an office assistant - E-Mail/Calendar integration, tasks & resource planning",
   "type": "module",
   "license": "GPL-3.0-or-later",
   "author": "metaneutrons",

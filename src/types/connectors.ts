@@ -292,3 +292,69 @@ export interface DocumentConnector {
   listDocumentTypes(): Promise<DocDocumentType[]>;
   createDocumentType(name: string, opts?: { match?: string }): Promise<DocDocumentType>;
 }
+
+/** A task list / collection (a To Do list, or a CalDAV VTODO collection). */
+export interface TaskListInfo {
+  readonly id: string;
+  readonly account: string;
+  readonly name: string;
+  readonly isDefault?: boolean;
+}
+
+/**
+ * A task as the remote system models it.
+ *
+ * `id` is opaque and provider-specific: Graph encodes `${listId}/${taskId}`,
+ * CalDAV uses the object URL. Callers pass it back verbatim; only the owning
+ * connector interprets it.
+ */
+export interface RemoteTask {
+  readonly id: string;
+  readonly account: string;
+  readonly listId: string;
+  readonly listName?: string;
+  readonly title: string;
+  readonly notes?: string;
+  readonly completed: boolean;
+  /** Due date, ISO-8601 date or date-time. */
+  readonly due?: string;
+  readonly completedAt?: string;
+  /** Provider-native importance, normalised to low | normal | high. */
+  readonly importance?: "low" | "normal" | "high";
+}
+
+/** Input for creating a task. */
+export interface RemoteTaskInput {
+  readonly title: string;
+  readonly notes?: string;
+  readonly due?: string;
+  readonly importance?: "low" | "normal" | "high";
+  /** Target list; the connector's default list is used when omitted. */
+  readonly listId?: string;
+}
+
+/** Fields that may be changed on an existing task. */
+export interface RemoteTaskUpdate {
+  readonly title?: string;
+  readonly notes?: string;
+  readonly due?: string | null;
+  readonly importance?: "low" | "normal" | "high";
+  readonly completed?: boolean;
+}
+
+/** Task connector interface — implemented per provider (Graph To Do, CalDAV VTODO). */
+export interface TaskConnector {
+  readonly account: string;
+  readonly tier: string;
+  readonly readOnly: boolean;
+  listTaskLists(): Promise<TaskListInfo[]>;
+  /** Open tasks by default; pass `includeCompleted` to get finished ones too. */
+  listTasks(opts?: {
+    listId?: string;
+    includeCompleted?: boolean;
+    limit?: number;
+  }): Promise<RemoteTask[]>;
+  createTask(input: RemoteTaskInput): Promise<RemoteTask>;
+  updateTask(id: string, updates: RemoteTaskUpdate): Promise<RemoteTask>;
+  deleteTask(id: string): Promise<void>;
+}

@@ -6,6 +6,13 @@ import type {
   CalendarInfo,
 } from "../../types/index.js";
 import { assertSecureUrl, escapeICalText, unescapeICalText } from "../../utils/security.js";
+import {
+  applyComponentUpdates,
+  icalToIso,
+  icalValue as ical,
+  isoToIcal,
+  readComponentProp,
+} from "./ics.js";
 
 export interface CalDavConfig {
   account: string;
@@ -13,109 +20,26 @@ export interface CalDavConfig {
   password: string;
 }
 
-function ical(val: string, key: string): string {
-  const re = new RegExp(`${key}[^:]*:([^\\r\\n]+)`, "i");
-  return re.exec(val)?.[1]?.trim() ?? "";
-}
-
-function icalToIso(dt: string): string {
-  // 20260410T140000Z → 2026-04-10T14:00:00Z
-  if (dt.length < 15) return dt;
-  return `${dt.slice(0, 4)}-${dt.slice(4, 6)}-${dt.slice(6, 8)}T${dt.slice(9, 11)}:${dt.slice(11, 13)}:${dt.slice(13, 15)}${dt.endsWith("Z") ? "Z" : ""}`;
-}
-
-function isoToIcal(iso: string): string {
-  return iso.replace(/[-:]/g, "").split(".")[0] ?? iso;
-}
-
-/** Property name at the start of an (unfolded) iCal content line, uppercased. */
-function propName(line: string): string {
-  return /^([A-Za-z0-9-]+)/.exec(line)?.[1]?.toUpperCase() ?? "";
-}
-
-/** Reads the first VEVENT-level value of `name`, or "" if absent. */
-function readVeventProp(ics: string, name: string): string {
-  const target = name.toUpperCase();
-  const stack: string[] = [];
-  for (const line of ics.split(/\r?\n/)) {
-    const u = line.toUpperCase();
-    if (u.startsWith("BEGIN:")) stack.push(u.slice(6).trim());
-    else if (u.startsWith("END:")) stack.pop();
-    else if (
-      stack[stack.length - 1] === "VEVENT" &&
-      !/^[ \t]/.test(line) &&
-      propName(line) === target
-    ) {
-      return line.slice(line.indexOf(":") + 1).trim();
-    }
-  }
-  return "";
-}
-
 /**
- * Rewrites the given VEVENT-level properties in an iCalendar object *in place*,
- * preserving every untouched property (DESCRIPTION, ATTENDEE, RRULE, VALARM,
- * VALUE=DATE flags, …) byte-for-byte, and bumping SEQUENCE / DTSTAMP /
- * LAST-MODIFIED. Edits are scoped to the VEVENT component only — never a nested
- * VALARM's SUMMARY/DESCRIPTION nor a VTIMEZONE's DTSTART. Exported for testing.
+ * Rewrites the given VEVENT-level properties in place, preserving every
+ * untouched property and bumping SEQUENCE / DTSTAMP / LAST-MODIFIED. Exported
+ * for testing; see {@link applyComponentUpdates} for the scoping rules.
  */
 export function applyEventUpdates(
   ics: string,
   updates: Partial<CalendarEventInput>,
   nowStamp: string,
 ): string {
-  const edits = new Map<string, string>([
+  const edits = new Map<string, string | null>([
     ["DTSTAMP", nowStamp],
     ["LAST-MODIFIED", nowStamp],
-    ["SEQUENCE", String((Number(readVeventProp(ics, "SEQUENCE")) || 0) + 1)],
+    ["SEQUENCE", String((Number(readComponentProp(ics, "VEVENT", "SEQUENCE")) || 0) + 1)],
   ]);
   if (updates.subject !== undefined) edits.set("SUMMARY", escapeICalText(updates.subject));
   if (updates.location !== undefined) edits.set("LOCATION", escapeICalText(updates.location));
   if (updates.start !== undefined) edits.set("DTSTART", isoToIcal(updates.start));
   if (updates.end !== undefined) edits.set("DTEND", isoToIcal(updates.end));
-
-  // TEXT props keep any parameters (e.g. ;LANGUAGE=); date props are replaced
-  // wholesale so a UTC value can't collide with a leftover ;TZID= parameter.
-  const keepParams = new Set(["SUMMARY", "LOCATION"]);
-  const lines = ics.split(/\r?\n/);
-  const remaining = new Map(edits);
-  const stack: string[] = [];
-  const out: string[] = [];
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i] ?? "";
-    const u = line.toUpperCase();
-
-    if (u.startsWith("BEGIN:")) {
-      stack.push(u.slice(6).trim());
-      out.push(line);
-    } else if (u.startsWith("END:")) {
-      if (u.slice(4).trim() === "VEVENT" && remaining.size) {
-        for (const [name, value] of remaining) out.push(`${name}:${value}`);
-        remaining.clear();
-      }
-      stack.pop();
-      out.push(line);
-    } else if (/^[ \t]/.test(line)) {
-      out.push(line); // folded continuation of the previous property
-    } else if (stack[stack.length - 1] === "VEVENT" && remaining.has(propName(line))) {
-      const name = propName(line);
-      const value = remaining.get(name) ?? "";
-      remaining.delete(name);
-      const colon = line.indexOf(":");
-      const semi = line.indexOf(";");
-      if (keepParams.has(name) && semi >= 0 && semi < colon) {
-        out.push(`${line.slice(0, colon)}:${value}`); // NAME;params:value
-      } else {
-        out.push(`${name}:${value}`);
-      }
-      // Drop the folded continuation lines of the property we just replaced.
-      while (i + 1 < lines.length && /^[ \t]/.test(lines[i + 1] ?? "")) i++;
-    } else {
-      out.push(line);
-    }
-  }
-  return out.join("\r\n");
+  return applyComponentUpdates(ics, "VEVENT", edits, new Set(["SUMMARY", "LOCATION"]));
 }
 
 export class CalDavCalendarConnector implements CalendarConnector {

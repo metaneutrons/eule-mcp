@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import Database from "better-sqlite3";
-import { IdeaManager, NoteManager, ContactManager } from "../src/db/knowledge-managers.js";
+import { ContactManager } from "../src/db/knowledge-managers.js";
 import type { DatabaseManager } from "../src/db/database-manager.js";
 
 vi.mock("node:fs", async () => {
@@ -19,72 +19,6 @@ function createTestDb(): DatabaseManager {
   `);
   return { db } as unknown as DatabaseManager;
 }
-
-describe("IdeaManager", () => {
-  let dbm: DatabaseManager;
-  let im: IdeaManager;
-
-  beforeEach(() => {
-    dbm = createTestDb();
-    im = new IdeaManager(dbm);
-  });
-  afterEach(() => {
-    (dbm.db as Database.Database).close();
-  });
-
-  it("captures an idea", () => {
-    const idea = im.add("Use AI for grading", { tags: "teaching,ai" });
-    expect(idea.id).toBe(1);
-    expect(idea.content).toBe("Use AI for grading");
-    expect(idea.tags).toBe("teaching,ai");
-  });
-
-  it("lists ideas excluding promoted", () => {
-    im.add("Idea 1");
-    const idea2 = im.add("Idea 2");
-    im.promoteToTask(idea2.id, 99);
-    expect(im.list()).toHaveLength(1);
-  });
-
-  it("filters by role", () => {
-    im.add("A", { role_id: "VPDIT" });
-    im.add("B", { role_id: "teaching" });
-    expect(im.list("VPDIT")).toHaveLength(1);
-  });
-});
-
-describe("NoteManager", () => {
-  let dbm: DatabaseManager;
-  let nm: NoteManager;
-
-  beforeEach(() => {
-    dbm = createTestDb();
-    nm = new NoteManager(dbm);
-  });
-  afterEach(() => {
-    (dbm.db as Database.Database).close();
-  });
-
-  it("creates a note", () => {
-    const note = nm.add("Meeting Notes", "Discussed budget for Q3", { tags: "meeting" });
-    expect(note.id).toBe(1);
-    expect(note.title).toBe("Meeting Notes");
-  });
-
-  it("searches notes via FTS", () => {
-    nm.add("Budget", "Q3 budget planning details");
-    nm.add("Hiring", "New developer position");
-    const results = nm.search("budget");
-    expect(results).toHaveLength(1);
-    expect(results[0]?.title).toBe("Budget");
-  });
-
-  it("lists notes", () => {
-    nm.add("A", "body a");
-    nm.add("B", "body b");
-    expect(nm.list()).toHaveLength(2);
-  });
-});
 
 describe("ContactManager", () => {
   let dbm: DatabaseManager;

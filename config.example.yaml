@@ -9,11 +9,17 @@ language: de # de | en
 # consentable (Thunderbird, or "Apple Internet Accounts"
 # f8d98a96-0999-43f5-8af3-69971c7bb423 for EWS): v1 uses /oauth2 with resource=.
 # The v1-vs-v2 choice + client id are stored per token, so refresh reuses them.
+# extraScopes appends v2 scopes to the tier defaults. Microsoft To Do needs
+# Tasks.ReadWrite, which Thunderbird's registration does NOT consent, so this is
+# opt-in: only add it together with a clientId whose app actually has the
+# permission, otherwise every graph login for that client starts failing.
 # oauth:
 #   clientId: "9e5f94bc-e8a4-4e73-b8be-63364c29d753"
 #   tenant: "common"
 #   apiVersion: "v2" # or "v1"
 #   redirectUri: "urn:ietf:wg:oauth:2.0:oob" # only if registered for this client
+#   extraScopes:
+#     - "https://graph.microsoft.com/Tasks.ReadWrite"
 
 # Optional: TOTP autofill for `auth_login` webview / CLI `login --capture`.
 # The password is always typed by you in the webview; only the MFA code is
@@ -45,7 +51,7 @@ roles:
     policy:
       enabled: true
       readOnly: false
-      allowedConnectorKinds: [mail, calendar, contacts, files]
+      allowedConnectorKinds: [mail, calendar, contacts, files, tasks]
     connectors:
       mail:
         - id: vpdit-personal
@@ -59,6 +65,13 @@ roles:
           mailbox: vp-dit@hs-hannover.de
       calendar:
         - id: vpdit-cal
+          type: m365
+          account: fabian@hs-hannover.de
+      # Tasks live in your own system, Eule keeps no task database of its own.
+      # type: m365   → Microsoft To Do (needs oauth.extraScopes Tasks.ReadWrite)
+      # type: caldav → VTODO collections (Apple Reminders, Nextcloud Tasks)
+      tasks:
+        - id: vpdit-todo
           type: m365
           account: fabian@hs-hannover.de
   - id: lexICT
@@ -80,4 +93,13 @@ roles:
   - id: private
     name: "Private"
     weeklyHours: 0
-    connectors: {}
+    connectors:
+      # Apple Reminders over iCloud CalDAV. Use an app-specific password
+      # (appleid.apple.com), captured via `eule-mcp configure`, not inline.
+      # tasks:
+      #   - id: reminders
+      #     type: caldav
+      #     account: you@icloud.com
+      #     url: "https://caldav.icloud.com"
+      #     credentialRef: "connector/private/tasks/reminders.a1b2c3d4"
+      {}

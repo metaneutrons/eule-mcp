@@ -14,6 +14,7 @@ export const CONNECTOR_KINDS = [
   "messenger",
   "files",
   "documents",
+  "tasks",
 ] as const;
 
 export const CONNECTOR_TYPES = [
@@ -94,6 +95,7 @@ export const appConfigSchema = z
         tenant: z.string().trim().min(1),
         apiVersion: z.enum(["v1", "v2"]).optional(),
         redirectUri: z.url().optional(),
+        extraScopes: z.array(z.string().trim().min(1)).optional(),
       })
       .strict()
       .default({
