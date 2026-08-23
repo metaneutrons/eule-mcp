@@ -17,6 +17,11 @@
 
 > [!WARNING]
 > **This project is under active development.** Things will break, APIs will change, and features may be incomplete until v1.0. Use at your own risk — and feel free to contribute!
+>
+> Versioning follows that: while the major version is 0, a breaking change bumps
+> the **minor** (`0.3.0` → `0.4.0`), it does not promote the project to `1.0.0`.
+> Reaching 1.0 will be a deliberate decision, not a side effect of a
+> `BREAKING CHANGE` footer.
 
 ---
 
