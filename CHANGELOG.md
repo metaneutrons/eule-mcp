@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.4.0](https://github.com/metaneutrons/eule-mcp/compare/v0.3.0...v0.4.0) (2026-08-23)
+
+
+### ⚠ BREAKING CHANGES
+
+* **tasks:** task tools now operate on the user's task system instead of a local database. Task ids are provider strings rather than integers, and the GTD fields (status, project_id, context, waiting_for, estimated_hours) are gone. task_lists and task_delete are new. Existing rows in eule.db are not migrated.
+
+### Features
+
+* **cli:** choose the best login flow by default, demote browser paste ([b23241c](https://github.com/metaneutrons/eule-mcp/commit/b23241c9e6a0bc9464ac87751a7cc2340ebf624f))
+* **mail:** batch mail_update and always name what was touched ([00383b5](https://github.com/metaneutrons/eule-mcp/commit/00383b5184c13b2e0f9f5ba768f0c4672710ad37))
+* **tasks:** back tasks with Microsoft To Do and CalDAV, drop the local store ([df260ba](https://github.com/metaneutrons/eule-mcp/commit/df260bae5021dfc812bbe54ba6679b605fca27c3))
+
+
+### Bug Fixes
+
+* **caldav:** read iCal properties component-scoped and unfold before parsing ([3c45bc4](https://github.com/metaneutrons/eule-mcp/commit/3c45bc4dbf406bfac8448a340b384cf77de0a7ed))
+
 ## [0.3.0](https://github.com/metaneutrons/eule-mcp/compare/v0.2.2...v0.3.0) (2026-08-09)
 
 
