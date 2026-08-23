@@ -84,9 +84,11 @@ export function applyComponentUpdates(
       out.push(line);
     } else if (u.startsWith("END:")) {
       if (u.slice(4).trim() === wanted && remaining.size) {
-        for (const [name, value] of remaining)
-          if (value !== null)
-            out.push(value.startsWith(";") ? `${name}${value}` : `${name}:${value}`);
+        // Properties the component did not have yet are appended before its END.
+        for (const [name, value] of remaining) {
+          const written = contentLine(name, value);
+          if (written !== undefined) out.push(written);
+        }
         remaining.clear();
       }
       stack.pop();
@@ -97,17 +99,8 @@ export function applyComponentUpdates(
       const name = propName(line);
       const value = remaining.get(name) ?? null;
       remaining.delete(name);
-      if (value !== null) {
-        const colon = line.indexOf(":");
-        const semi = line.indexOf(";");
-        if (value.startsWith(";")) {
-          out.push(`${name}${value}`); // edit supplies its own parameters
-        } else if (keepParams.has(name) && semi >= 0 && semi < colon) {
-          out.push(`${line.slice(0, colon)}:${value}`); // NAME;params:value
-        } else {
-          out.push(`${name}:${value}`);
-        }
-      }
+      const written = contentLine(name, value, keepParams.has(name) ? line : undefined);
+      if (written !== undefined) out.push(written);
       // Drop the folded continuation lines of the property we just replaced.
       while (i + 1 < lines.length && /^[ \t]/.test(lines[i + 1] ?? "")) i++;
     } else {
@@ -115,4 +108,23 @@ export function applyComponentUpdates(
     }
   }
   return out.join("\r\n");
+}
+
+/**
+ * Renders one content line for an edit, or undefined when the edit removes the
+ * property.
+ *
+ * `existing` is the line being replaced, passed only when its parameters should
+ * survive. An edit value starting with `;` always supplies its own parameters
+ * and therefore wins over the existing ones.
+ */
+function contentLine(name: string, value: string | null, existing?: string): string | undefined {
+  if (value === null) return undefined;
+  if (value.startsWith(";")) return `${name}${value}`;
+  if (existing !== undefined) {
+    const colon = existing.indexOf(":");
+    const semi = existing.indexOf(";");
+    if (semi >= 0 && semi < colon) return `${existing.slice(0, colon)}:${value}`;
+  }
+  return `${name}:${value}`;
 }
