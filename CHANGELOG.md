@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/metaneutrons/eule-mcp/compare/v0.4.0...v0.5.0) (2026-08-23)
+
+
+### Features
+
+* **mail:** add preview-first mail_bulk_update ([49645ef](https://github.com/metaneutrons/eule-mcp/commit/49645ef7d1e9ef192edb56114bcbe434a5f40f48))
+
 ## [0.4.0](https://github.com/metaneutrons/eule-mcp/compare/v0.3.0...v0.4.0) (2026-08-23)
 
 
