@@ -40,4 +40,9 @@ export type {
   DocDocument,
   DocBulkMethod,
   DocumentConnector,
+  TaskListInfo,
+  RemoteTask,
+  RemoteTaskInput,
+  RemoteTaskUpdate,
+  TaskConnector,
 } from "./connectors.js";

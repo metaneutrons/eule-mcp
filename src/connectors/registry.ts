@@ -5,6 +5,7 @@ import type {
   MessengerConnector,
   FileConnector,
   DocumentConnector,
+  TaskConnector,
   RoleConfig,
   ConnectorConfig,
 } from "../types/index.js";
@@ -20,6 +21,8 @@ import { GraphContactConnector } from "../providers/m365/graph-contacts.js";
 import { EwsContactConnector } from "../providers/m365/ews-contacts.js";
 import { CalDavCalendarConnector } from "../providers/caldav/index.js";
 import { CardDavContactConnector } from "../providers/caldav/index.js";
+import { CalDavTaskConnector } from "../providers/caldav/index.js";
+import { GraphTaskConnector } from "../providers/m365/graph-tasks.js";
 import { ICalFeedConnector } from "../providers/ical/index.js";
 import { GraphTeamsConnector } from "../providers/m365/graph-teams.js";
 import { GraphFileConnector } from "../providers/m365/graph-files.js";
@@ -254,6 +257,54 @@ export class ConnectorRegistry {
             connectors.push(new EwsCalendarConnector(target, getToken, isShared));
             break;
         }
+      }
+    }
+
+    return connectors;
+  }
+
+  /**
+   * Get all task connectors, optionally filtered by role. Backed by real task
+   * systems (Microsoft To Do, Apple Reminders, Nextcloud Tasks) rather than a
+   * private store, so tasks stay visible to the user's other clients.
+   */
+  getTaskConnectors(role?: string, mode: AccessMode = "read"): TaskConnector[] {
+    const cfg = this.config.get();
+    const oauth = cfg.oauth;
+    const tokens = loadTokens();
+    const connectors: TaskConnector[] = [];
+
+    const roles = this.policy.select(role, "tasks", mode);
+
+    for (const r of roles) {
+      for (const cc of r.connectors.tasks ?? []) {
+        if (cc.type === "caldav") {
+          const password = this.secrets.connector(cc);
+          if (cc.url && password) {
+            connectors.push(
+              new CalDavTaskConnector(cc.account, {
+                account: cc.account,
+                url: cc.url,
+                password,
+              }),
+            );
+          }
+          continue;
+        }
+
+        // M365. Delegated /me/todo has no shared-mailbox form, so cc.mailbox is
+        // deliberately ignored here, and only a graph-tier token can serve it.
+        const token = tokens.accounts[cc.account];
+        if (!token) continue;
+        if (token.tier !== "graph") {
+          logger.warn(
+            `Task connector ${cc.id}: ${cc.account} is on tier ${token.tier}; Microsoft To Do needs a graph token with Tasks.ReadWrite.`,
+          );
+          continue;
+        }
+        connectors.push(
+          new GraphTaskConnector(cc.account, () => getAccessToken(cc.account, oauth)),
+        );
       }
     }
 

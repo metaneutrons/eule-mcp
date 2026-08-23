@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <strong>MCP server for an office assistant — E-Mail/Calendar integration, GTD tasks & resource planning</strong>
+  <strong>MCP server for an office assistant — E-Mail/Calendar integration, tasks & resource planning</strong>
 </p>
 
 <p align="center">
@@ -37,7 +37,7 @@ Eule is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) serve
 │            Eule MCP Server                  │
 │                                             │
 │  ┌─────────┐ ┌──────────┐ ┌─────────────┐   │
-│  │  Mail   │ │ Calendar │ │  GTD Tasks  │   │
+│  │  Mail   │ │ Calendar │ │    Tasks    │   │
 │  └────┬────┘ └────┬─────┘ └──────┬──────┘   │
 │  ┌────┴──┐ ┌──────┴──┐ ┌────────┴───────┐   │
 │  │ Chat  │ │  Files  │ │   Contacts     │   │
@@ -59,7 +59,7 @@ Eule is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) serve
 - **Role-based context** — map accounts and connectors to professional roles
 - **LLM-optimized output** — HTML emails rendered as clean Markdown with thread splitting
 
-## Tools (58)
+## Tools (60)
 
 ### 🔐 Auth (5)
 
@@ -162,15 +162,32 @@ therefore not a substitute for multi-user RBAC.
 | `calendar_update` | Update an existing event |
 | `calendar_delete` | Delete an event |
 
-### ✅ GTD Tasks (5)
+### ✅ Tasks (7)
+
+Tasks live in **your** task system. Eule keeps no task database of its own, so
+everything it creates is immediately visible in To Do, Reminders or Nextcloud on
+every device, and anything you add there shows up here.
 
 | Tool | Description |
 |---|---|
-| `task_add` | Capture a new task (supports email source linking) |
-| `task_list` | List tasks by status/project/context/role |
-| `task_update` | Update task properties |
-| `task_complete` | Mark task as done |
-| `task_search` | Full-text search across tasks |
+| `task_lists` | List the available task lists across backends |
+| `task_list` | List tasks (open by default) |
+| `task_search` | Search tasks by title and notes |
+| `task_add` | Create a task |
+| `task_update` | Update title, notes, due date, priority or completion |
+| `task_complete` | Mark a task as done |
+| `task_delete` | Delete a task permanently |
+
+Backends:
+
+- **Microsoft To Do** via Graph (`type: m365`). Needs the `Tasks.ReadWrite`
+  scope, which is **opt-in** through `oauth.extraScopes` because Thunderbird's
+  default registration does not consent it. Point `clientId` at an app that has
+  the permission, otherwise every graph login for that client will fail.
+  Delegated `/me/todo` has no shared-mailbox form, so `mailbox:` is ignored here.
+- **Apple Reminders / Nextcloud Tasks** as VTODO over CalDAV (`type: caldav`).
+  Reuses the CalDAV credentials; for iCloud use an app-specific password. Only
+  collections that advertise VTODO are treated as task lists.
 
 ### 👤 Contacts (3)
 
@@ -194,17 +211,20 @@ therefore not a substitute for multi-user RBAC.
 
 ## Provider Matrix
 
-| | Mail | Calendar | Contacts | Chat | Files | Documents |
-|---|---|---|---|---|---|---|
-| **M365 Graph** | ✅ rw | ✅ rw | ✅ rw | ✅ Teams | ✅ rw | — |
-| **M365 EWS** | ✅ rw | ✅ rw | ✅ rw | — | — | — |
-| **Google** | ✅ rw | ✅ rw | ✅ rw | — | ✅ rw | — |
-| **IMAP/SMTP** | ✅ rw | — | — | — | — | — |
-| **CalDAV** | — | ✅ rw | — | — | — | — |
-| **CardDAV** | — | — | ✅ rw | — | — | — |
-| **iCal Feed** | — | ro | — | — | — | — |
-| **Signal** | — | — | — | ✅ rw | — | — |
-| **Paperless-NGX** | — | — | — | — | — | ✅ rw |
+| | Mail | Calendar | Contacts | Tasks | Chat | Files | Documents |
+|---|---|---|---|---|---|---|---|
+| **M365 Graph** | ✅ rw | ✅ rw | ✅ rw | ✅ rw¹ | ✅ Teams | ✅ rw | — |
+| **M365 EWS** | ✅ rw | ✅ rw | ✅ rw | — | — | — | — |
+| **Google** | ✅ rw | ✅ rw | ✅ rw | — | — | ✅ rw | — |
+| **IMAP/SMTP** | ✅ rw | — | — | — | — | — | — |
+| **CalDAV** | — | ✅ rw | — | ✅ rw² | — | — | — |
+| **CardDAV** | — | — | ✅ rw | — | — | — | — |
+| **iCal Feed** | — | ro | — | — | — | — | — |
+| **Signal** | — | — | — | — | ✅ rw | — | — |
+| **Paperless-NGX** | — | — | — | — | — | — | ✅ rw |
+
+¹ Microsoft To Do; requires the opt-in `Tasks.ReadWrite` scope.
+² VTODO collections: Apple Reminders (iCloud), Nextcloud Tasks.
 
 ## Quickstart
 
@@ -493,7 +513,7 @@ Microsoft password.
 - [x] HTML → Markdown rendering with thread splitting
 - [x] Provider-based architecture
 - [x] Calendar read/write (Graph + EWS + CalDAV)
-- [x] GTD task engine with SQLite + Markdown export
+- [x] Tasks against the user's own system (Microsoft To Do, Apple Reminders, Nextcloud Tasks)
 - [x] Role & context CRUD
 - [x] Contacts (local + remote write via Graph/EWS)
 - [x] Graph API connectors (Mail + Calendar + Contacts)

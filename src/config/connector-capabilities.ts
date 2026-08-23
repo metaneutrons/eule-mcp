@@ -27,7 +27,9 @@ export const CONNECTOR_CAPABILITIES: Readonly<
   Record<ConnectorConfig["type"], ConnectorCapability>
 > = {
   m365: {
-    kinds: ["mail", "calendar", "contacts", "messenger", "files"],
+    // "tasks" is Microsoft To Do via Graph; it needs the Tasks.ReadWrite scope,
+    // which is opt-in through oauth.extraScopes.
+    kinds: ["mail", "calendar", "contacts", "messenger", "files", "tasks"],
     credential: "none",
     requiredFields: [],
     optionalFields: [],
@@ -48,7 +50,9 @@ export const CONNECTOR_CAPABILITIES: Readonly<
     optionalFields: ["port", "smtpPort"],
   },
   caldav: {
-    kinds: ["calendar"],
+    // "tasks" is VTODO over the same collection set (Apple Reminders,
+    // Nextcloud Tasks), so it reuses the CalDAV credentials unchanged.
+    kinds: ["calendar", "tasks"],
     credential: "password",
     requiredFields: ["url"],
     optionalFields: [],

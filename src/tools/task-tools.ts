@@ -1,119 +1,212 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { TaskService } from "../services/task-service.js";
+import type { ProviderFailure } from "../services/provider-orchestration.js";
+import type { RemoteTask } from "../types/index.js";
 import { executeTool, textResult } from "./tool-runtime.js";
 
-const activeStatus = z.enum(["inbox", "next", "waiting", "someday"]);
+const importance = z.enum(["low", "normal", "high"]);
+
+/** Partial reads must say so, otherwise a missing backend looks like "no tasks". */
+function withFailures(text: string, failures: readonly ProviderFailure[]): string {
+  if (failures.length === 0) return text;
+  const notes = failures.map((f) => `  ${f.account}: ${f.message}`).join("\n");
+  return `${text}\n\n⚠️ Some task backends could not be read:\n${notes}`;
+}
+
+function render(task: RemoteTask): string {
+  const parts = [task.completed ? "✅" : "○", task.title];
+  if (task.due) parts.push(`(due ${task.due.slice(0, 10)})`);
+  if (task.importance && task.importance !== "normal") parts.push(`[${task.importance}]`);
+  const where = task.listName ? `${task.listName} · ${task.account}` : task.account;
+  return `${parts.join(" ")}\n   ${where}\n   id: ${task.id}`;
+}
 
 export function registerTaskTools(server: McpServer, tasks: TaskService): void {
   server.registerTool(
-    "task_add",
+    "task_lists",
     {
-      description: "Add a new task (defaults to inbox)",
-      inputSchema: {
-        title: z.string().describe("Task title"),
-        body: z.string().optional().describe("Task details/notes"),
-        status: activeStatus.optional().describe("GTD status (default: inbox)"),
-        role_id: z.string().optional().describe("Role ID"),
-        project_id: z.number().optional().describe("Project ID"),
-        context: z.string().optional().describe("GTD context (e.g. @computer, @phone, @office)"),
-        priority: z.number().optional().describe("Priority (0=normal, higher=more urgent)"),
-        due_date: z.string().optional().describe("Due date (YYYY-MM-DD)"),
-        waiting_for: z.string().optional().describe("Who/what are we waiting for"),
-        source_type: z.string().optional().describe("Source type (e.g. email, meeting)"),
-        source_id: z.string().optional().describe("Source ID (e.g. email message ID)"),
-        estimated_hours: z.number().optional().describe("Estimated hours to complete"),
-      },
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+      description: "List the available task lists across configured task backends",
+      inputSchema: { role: z.string().optional().describe("Filter by role ID") },
+      annotations: { readOnlyHint: true, openWorldHint: true },
     },
-    async (input) =>
-      executeTool("task_add", () => {
-        const task = tasks.add(input);
-        return textResult(`✅ Task #${String(task.id)} added: ${task.title} [${task.status}]`);
-      }),
+    async ({ role }, extra) =>
+      executeTool(
+        "task_lists",
+        async () => {
+          const { lists, failures } = await tasks.lists(role);
+          const body =
+            lists
+              .map(
+                (l) =>
+                  `${l.name}${l.isDefault ? " (default)" : ""}\n   ${l.account}\n   id: ${l.id}`,
+              )
+              .join("\n\n") || "No task lists found.";
+          return textResult(withFailures(body, failures));
+        },
+        { signal: extra.signal },
+      ),
   );
 
   server.registerTool(
     "task_list",
     {
-      description: "List active tasks, optionally filtered",
+      description: "List tasks from Microsoft To Do, Apple Reminders or Nextcloud Tasks",
       inputSchema: {
-        status: activeStatus.optional().describe("Filter by status"),
-        project_id: z.number().optional().describe("Filter by project ID"),
-        context: z.string().optional().describe("Filter by context"),
-        role_id: z.string().optional().describe("Filter by role"),
+        role: z.string().optional().describe("Filter by role ID"),
+        account: z.string().optional().describe("Limit to one account"),
+        list_id: z.string().optional().describe("Limit to one task list (from task_lists)"),
+        include_completed: z.boolean().optional().describe("Include completed tasks"),
+        limit: z.number().int().min(1).max(200).optional().describe("Max tasks (default 100)"),
       },
-      annotations: { readOnlyHint: true },
+      annotations: { readOnlyHint: true, openWorldHint: true },
     },
-    async (query) =>
-      executeTool("task_list", () => {
-        const found = tasks.list(query);
-        if (found.length === 0) return textResult("No tasks found.");
-        return textResult(
-          found
-            .map(
-              (task) =>
-                `[${task.status}] #${String(task.id)} ${task.title}${task.due_date ? ` 📅 ${task.due_date}` : ""}${task.waiting_for ? ` ⏳ ${task.waiting_for}` : ""}${task.context ? ` @${task.context}` : ""}`,
-            )
-            .join("\n"),
-        );
-      }),
+    async ({ role, account, list_id, include_completed, limit }, extra) =>
+      executeTool(
+        "task_list",
+        async () => {
+          const { tasks: found, failures } = await tasks.list({
+            role,
+            account,
+            listId: list_id,
+            includeCompleted: include_completed,
+            limit,
+          });
+          const body = found.map(render).join("\n\n") || "No tasks.";
+          return textResult(withFailures(body, failures));
+        },
+        { signal: extra.signal },
+      ),
+  );
+
+  server.registerTool(
+    "task_search",
+    {
+      description: "Search tasks by title and notes across configured task backends",
+      inputSchema: {
+        query: z.string().min(1).describe("Text to search for"),
+        role: z.string().optional().describe("Filter by role ID"),
+        include_completed: z.boolean().optional().describe("Include completed tasks"),
+        limit: z.number().int().min(1).max(200).optional().describe("Max matches (default 50)"),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    async ({ query, role, include_completed, limit }, extra) =>
+      executeTool(
+        "task_search",
+        async () => {
+          const { tasks: found, failures } = await tasks.search(query, {
+            role,
+            includeCompleted: include_completed,
+            limit,
+          });
+          const body = found.map(render).join("\n\n") || `No tasks matching "${query}".`;
+          return textResult(withFailures(body, failures));
+        },
+        { signal: extra.signal },
+      ),
+  );
+
+  server.registerTool(
+    "task_add",
+    {
+      description: "Create a task in the user's task system",
+      inputSchema: {
+        title: z.string().min(1).describe("Task title"),
+        notes: z.string().optional().describe("Task details/notes"),
+        due: z.string().optional().describe("Due date (YYYY-MM-DD or ISO-8601 date-time)"),
+        importance: importance.optional().describe("Priority"),
+        list_id: z.string().optional().describe("Target list (from task_lists)"),
+        role: z.string().optional().describe("Role ID"),
+        account: z.string().optional().describe("Target account"),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+    },
+    async ({ title, notes, due, importance: prio, list_id, role, account }, extra) =>
+      executeTool(
+        "task_add",
+        async () => {
+          const { task, tier } = await tasks.add({
+            title,
+            notes,
+            due,
+            importance: prio,
+            listId: list_id,
+            role,
+            account,
+          });
+          return textResult(`✅ Task created in ${task.listName ?? tier}\n\n${render(task)}`);
+        },
+        { signal: extra.signal },
+      ),
   );
 
   server.registerTool(
     "task_update",
     {
-      description: "Update a task's properties",
+      description: "Update a task (title, notes, due date, priority, completion)",
       inputSchema: {
-        id: z.number().describe("Task ID"),
-        title: z.string().optional(),
-        body: z.string().optional(),
-        status: activeStatus.optional(),
-        role_id: z.string().optional(),
-        project_id: z.number().nullable().optional(),
-        context: z.string().optional(),
-        priority: z.number().optional(),
-        due_date: z.string().nullable().optional(),
-        waiting_for: z.string().nullable().optional(),
-        estimated_hours: z.number().nullable().optional(),
+        id: z.string().min(1).describe("Task ID (from task_list or task_search)"),
+        title: z.string().optional().describe("New title"),
+        notes: z.string().optional().describe("New notes"),
+        due: z.string().nullable().optional().describe("New due date, or null to clear it"),
+        importance: importance.optional().describe("New priority"),
+        completed: z.boolean().optional().describe("Mark done or reopen"),
+        role: z.string().optional().describe("Role ID"),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
     },
-    async ({ id, ...updates }) =>
-      executeTool("task_update", () => {
-        const task = tasks.update(id, updates);
-        return textResult(`✅ Task #${String(task.id)} updated: ${task.title} [${task.status}]`);
-      }),
+    async ({ id, title, notes, due, importance: prio, completed, role }, extra) =>
+      executeTool(
+        "task_update",
+        async () => {
+          const task = await tasks.update(
+            id,
+            { title, notes, due, importance: prio, completed },
+            role,
+          );
+          return textResult(`✅ Task updated\n\n${render(task)}`);
+        },
+        { signal: extra.signal },
+      ),
   );
 
   server.registerTool(
     "task_complete",
     {
       description: "Mark a task as done",
-      inputSchema: { id: z.number().describe("Task ID") },
+      inputSchema: {
+        id: z.string().min(1).describe("Task ID (from task_list or task_search)"),
+        role: z.string().optional().describe("Role ID"),
+      },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
     },
-    async ({ id }) =>
-      executeTool("task_complete", () => {
-        const task = tasks.complete(id);
-        return textResult(`✅ Task #${String(task.id)} completed: ${task.title}`);
-      }),
+    async ({ id, role }, extra) =>
+      executeTool(
+        "task_complete",
+        async () => textResult(`✅ Completed\n\n${render(await tasks.complete(id, role))}`),
+        { signal: extra.signal },
+      ),
   );
 
   server.registerTool(
-    "task_search",
+    "task_delete",
     {
-      description: "Full-text search across tasks",
-      inputSchema: { query: z.string().describe("Search query") },
-      annotations: { readOnlyHint: true },
+      description: "Delete a task permanently from the user's task system",
+      inputSchema: {
+        id: z.string().min(1).describe("Task ID (from task_list or task_search)"),
+        role: z.string().optional().describe("Role ID"),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
     },
-    async ({ query }) =>
-      executeTool("task_search", () => {
-        const found = tasks.search(query);
-        if (found.length === 0) return textResult("No tasks found.");
-        return textResult(
-          found.map((task) => `[${task.status}] #${String(task.id)} ${task.title}`).join("\n"),
-        );
-      }),
+    async ({ id, role }, extra) =>
+      executeTool(
+        "task_delete",
+        async () => {
+          await tasks.remove(id, role);
+          return textResult(`🗑️ Task deleted: ${id}`);
+        },
+        { signal: extra.signal },
+      ),
   );
 }
