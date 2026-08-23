@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { ConnectorRegistry } from "../connectors/index.js";
 import type { MailConnector, MailMessage, MailMessageFull, MailSendOpts } from "../types/index.js";
 import { resolveAttachmentPaths } from "../utils/outgoing-attachments.js";
@@ -16,6 +17,32 @@ const MAX_ATTACHMENTS = 20;
  * single call cannot run for minutes against a slow provider.
  */
 const MAX_UPDATE_BATCH = 200;
+
+/**
+ * Above this many matches a bulk action needs an extra explicit acknowledgement.
+ * A too-broad filter is the realistic failure here, and it goes wrong quietly
+ * and in breadth, unlike a single mistaken id.
+ */
+const BULK_ACK_THRESHOLD = 50;
+/** How long a preview stays confirmable. Long enough to read, short enough not to go stale. */
+const BULK_PREVIEW_TTL_MS = 15 * 60 * 1000;
+
+/** One message pinned by a preview, kept so the action can name what it touched. */
+export interface BulkTarget {
+  readonly id: string;
+  readonly account: string;
+  readonly subject: string;
+  readonly from: string;
+}
+
+export interface BulkPreview {
+  readonly token: string;
+  readonly targets: BulkTarget[];
+  readonly failures: ProviderFailure[];
+  /** True when the caller must also pass acknowledgeLarge to proceed. */
+  readonly needsAcknowledgement: boolean;
+  readonly expiresAt: number;
+}
 
 /** Per-message result of a bulk update, carrying enough to spot a wrong target. */
 export interface MailUpdateOutcome {
@@ -67,6 +94,11 @@ export class MailService {
   private readonly draftSubmissionIdempotency = new Map<
     string,
     { promise: Promise<void>; createdAt: number }
+  >();
+  /** Pinned bulk previews, keyed by the token handed back to the caller. */
+  private readonly bulkPreviews = new Map<
+    string,
+    { targets: BulkTarget[]; createdAt: number; fingerprint: string }
   >();
   constructor(private readonly registry: ConnectorRegistry) {}
 
@@ -285,6 +317,109 @@ export class MailService {
       connector.signature = signature;
       release();
     }
+  }
+
+  /**
+   * Step one of a bulk action: run the query, pin exactly what it matched, and
+   * hand back a token. Nothing is changed here.
+   *
+   * The pinning is the point. Confirming by re-running the query would act on a
+   * different set than the one the caller reviewed: mail keeps arriving, and
+   * criteria like unread state change on their own. The provider search
+   * syntaxes also differ (Graph $search, IMAP SEARCH, Gmail q), so the same
+   * query can match differently per account.
+   */
+  async previewBulk(
+    query: string,
+    opts: { role?: string; folder?: string; limit?: number } = {},
+  ): Promise<BulkPreview> {
+    const limit = Math.min(opts.limit ?? 100, MAX_UPDATE_BATCH);
+    const { messages, failures } = await this.search(query, opts.role, opts.folder, limit);
+    const targets: BulkTarget[] = messages
+      .slice(0, limit)
+      .map((m) => ({ id: m.id, account: m.account, subject: m.subject, from: m.from }));
+
+    this.pruneBulkPreviews();
+    const token = randomUUID();
+    this.bulkPreviews.set(token, {
+      targets,
+      createdAt: Date.now(),
+      fingerprint: JSON.stringify({ query, role: opts.role, folder: opts.folder }),
+    });
+    return {
+      token,
+      targets,
+      failures,
+      needsAcknowledgement: targets.length > BULK_ACK_THRESHOLD,
+      expiresAt: Date.now() + BULK_PREVIEW_TTL_MS,
+    };
+  }
+
+  /**
+   * Step two: apply the action to the pinned set, grouped per account because a
+   * search fans out across connectors while an update targets one.
+   *
+   * Deleting moves to the trash on every provider; nothing here purges.
+   */
+  async executeBulk(
+    token: string,
+    action: { delete: true } | { moveTo: string },
+    opts: { role?: string; acknowledgeLarge?: boolean } = {},
+  ): Promise<MailUpdateOutcome[]> {
+    this.pruneBulkPreviews();
+    const pinned = this.bulkPreviews.get(token);
+    if (!pinned)
+      throw new Error(
+        "Unknown or expired confirmation token. Run the preview again and confirm with its fresh token.",
+      );
+    if (pinned.targets.length > BULK_ACK_THRESHOLD && !opts.acknowledgeLarge)
+      throw new Error(
+        `This would affect ${String(pinned.targets.length)} messages (over the ${String(BULK_ACK_THRESHOLD)} threshold). Re-run with acknowledge_large to proceed.`,
+      );
+
+    // Consume the token first: a confirmation must not be replayable, otherwise
+    // a retried call could act twice on ids that have already moved.
+    this.bulkPreviews.delete(token);
+
+    const byAccount = new Map<string, BulkTarget[]>();
+    for (const target of pinned.targets)
+      byAccount.set(target.account, [...(byAccount.get(target.account) ?? []), target]);
+
+    const patch = "delete" in action ? { delete: true } : { moveTo: action.moveTo };
+    const outcomes: MailUpdateOutcome[] = [];
+    for (const [account, targets] of byAccount) {
+      const ids = targets.map((t) => t.id);
+      try {
+        const result = await this.update(ids, account, opts.role, patch);
+        // The preview already knows subject and sender, so a per-account
+        // summary lookup that now fails cannot blank out the report.
+        for (const [index, outcome] of result.entries()) {
+          const target = targets[index];
+          outcomes.push({
+            ...outcome,
+            subject: outcome.subject ?? target?.subject,
+            from: outcome.from ?? target?.from,
+          });
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        for (const target of targets)
+          outcomes.push({
+            id: target.id,
+            subject: target.subject,
+            from: target.from,
+            actions: [],
+            error: message,
+          });
+      }
+    }
+    return outcomes;
+  }
+
+  private pruneBulkPreviews(): void {
+    const cutoff = Date.now() - BULK_PREVIEW_TTL_MS;
+    for (const [key, entry] of this.bulkPreviews)
+      if (entry.createdAt < cutoff || this.bulkPreviews.size > 100) this.bulkPreviews.delete(key);
   }
 
   private pruneIdempotency(): void {

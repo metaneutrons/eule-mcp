@@ -1,7 +1,12 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { AttachmentService } from "../services/attachment-service.js";
-import type { MailService, MailSendInput, MailUpdateOutcome } from "../services/mail-service.js";
+import type {
+  BulkTarget,
+  MailService,
+  MailSendInput,
+  MailUpdateOutcome,
+} from "../services/mail-service.js";
 import { renderMail } from "../renderer/index.js";
 import { SAVE_PATH_HINT } from "../utils/path-sandbox.js";
 import { executeTool, textResult } from "./tool-runtime.js";
@@ -10,6 +15,39 @@ const accountScope = { account: z.string().min(1), role: z.string().optional() }
 
 /** Above this many results, list per sender instead of per message. */
 const GROUPED_OUTPUT_THRESHOLD = 30;
+
+/**
+ * Renders a bulk preview. Grouping by sender is the diagnostic that matters at
+ * this size: a filter that pulled in the wrong sender is obvious in a grouped
+ * list and invisible in a bare count.
+ */
+function renderBulkPreview(
+  targets: readonly BulkTarget[],
+  token: string,
+  needsAck: boolean,
+): string {
+  if (targets.length === 0) return "No messages match. Nothing to confirm.";
+  const lines: string[] = [`🔍 Preview only, nothing has been changed yet.`, ""];
+  lines.push(`${String(targets.length)} message(s) would be affected:`, "");
+
+  if (targets.length <= GROUPED_OUTPUT_THRESHOLD) {
+    for (const t of targets) lines.push(`  ${t.subject} — ${t.from}\n    ${t.account} · ${t.id}`);
+  } else {
+    const bySender = new Map<string, BulkTarget[]>();
+    for (const t of targets) bySender.set(t.from, [...(bySender.get(t.from) ?? []), t]);
+    for (const [sender, group] of [...bySender.entries()].sort((a, b) => b[1].length - a[1].length))
+      lines.push(`  ${String(group.length)}× ${sender} — e.g. "${group[0]?.subject ?? ""}"`);
+    lines.push("", `  ids: ${targets.map((t) => t.id).join(", ")}`);
+  }
+
+  lines.push("", `To apply, call again with confirm_token: "${token}"`);
+  if (needsAck)
+    lines.push(
+      `⚠️ Over ${String(targets.length)} messages: also pass acknowledge_large: true.`,
+      "Check the senders above before confirming; a filter that is too broad fails quietly and in breadth.",
+    );
+  return lines.join("\n");
+}
 
 /**
  * Renders what a bulk update actually touched.
@@ -235,6 +273,79 @@ export function registerMailTools(
           isRead: is_read,
           moveTo: move_to,
           delete: remove,
+        });
+        return textResult(renderUpdateOutcomes(outcomes));
+      }),
+  );
+  server.registerTool(
+    "mail_bulk_update",
+    {
+      description:
+        "Apply one action to every message matching a search. Preview-first: without confirm_token this only reports what WOULD be affected and changes nothing. Confirming acts on exactly the previewed messages, never on a re-run of the query. Deleting moves to the trash, never purges. For deletes, prefer an exact sender address over free-text: sender filters are far less prone to false matches than subject text.",
+      inputSchema: {
+        query: z
+          .string()
+          .trim()
+          .min(1)
+          .max(1000)
+          .optional()
+          .describe("Search query. Required for the preview; omit when confirming."),
+        action: z.enum(["delete", "move"]).describe("delete moves to trash; move needs move_to"),
+        move_to: z.string().min(1).max(256).optional().describe("Target folder for action=move"),
+        role: z.string().optional(),
+        folder: z.string().max(256).optional().describe("Limit the search to one folder"),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(200)
+          .optional()
+          .describe("Max messages to affect (default 100)"),
+        confirm_token: z
+          .string()
+          .optional()
+          .describe("Token from a previous preview. Supplying it performs the action."),
+        acknowledge_large: z
+          .boolean()
+          .optional()
+          .describe("Required to confirm a batch above the safety threshold"),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false },
+    },
+    async ({ query, action, move_to, role, folder, limit, confirm_token, acknowledge_large }) =>
+      executeTool("mail_bulk_update", async () => {
+        // Narrow explicitly rather than asserting: action and move_to are
+        // separate inputs, and a delete must never silently become a move.
+        let patch: { delete: true } | { moveTo: string };
+        if (action === "move") {
+          if (!move_to) throw new Error("action=move requires move_to");
+          patch = { moveTo: move_to };
+        } else {
+          patch = { delete: true };
+        }
+
+        if (!confirm_token) {
+          if (!query) throw new Error("query is required to build a preview");
+          const preview = await mail.previewBulk(query, { role, folder, limit });
+          const body = renderBulkPreview(
+            preview.targets,
+            preview.token,
+            preview.needsAcknowledgement,
+          );
+          const note =
+            action === "move"
+              ? `Action on confirm: move to ${String(move_to)}`
+              : "Action on confirm: delete (to trash)";
+          return textResult(
+            [note, "", body, ...preview.failures.map((f) => `⚠️ [${f.account}] ${f.message}`)].join(
+              "\n",
+            ),
+          );
+        }
+
+        const outcomes = await mail.executeBulk(confirm_token, patch, {
+          role,
+          acknowledgeLarge: acknowledge_large,
         });
         return textResult(renderUpdateOutcomes(outcomes));
       }),
