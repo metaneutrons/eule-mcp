@@ -9,22 +9,6 @@ export function unfold(ics: string): string {
   return ics.replace(/\r?\n[ \t]/g, "");
 }
 
-/**
- * Reads the first value of `key` anywhere in the object, ignoring parameters.
- *
- * Component-agnostic on purpose, for values that exist once per object (UID).
- * For anything a nested component can also carry (SUMMARY, DESCRIPTION) use
- * {@link readComponentProp} instead, or an alarm's text can be returned as the
- * event's.
- */
-export function icalValue(data: string, key: string): string {
-  // Keys are internal constants, never user input, but escaping keeps the
-  // constructed pattern honest if that ever changes.
-  const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const re = new RegExp(`^${escaped}[^:\\r\\n]*:(.*)$`, "im");
-  return re.exec(unfold(data))?.[1]?.trim() ?? "";
-}
-
 /** 20260410T140000Z → 2026-04-10T14:00:00Z (dates shorter than that pass through). */
 export function icalToIso(dt: string): string {
   if (dt.length === 8) return `${dt.slice(0, 4)}-${dt.slice(4, 6)}-${dt.slice(6, 8)}`;
