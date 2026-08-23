@@ -6,6 +6,7 @@
   "packages": {
     ".": {
       "package-name": "eule-mcp",
+      "bump-minor-pre-major": true,
       "extra-files": [
         { "type": "generic", "path": "helper/Cargo.toml" },
         { "type": "generic", "path": "helper/Cargo.lock" }
