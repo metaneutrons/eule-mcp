@@ -64,7 +64,7 @@ Eule is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) serve
 - **Role-based context** — map accounts and connectors to professional roles
 - **LLM-optimized output** — HTML emails rendered as clean Markdown with thread splitting
 
-## Tools (60)
+## Tools (61)
 
 ### 🔐 Auth (5)
 
@@ -116,7 +116,7 @@ therefore not a substitute for multi-user RBAC.
 > connector IDs within a role. `connector_capabilities` exposes the same SSOT
 > catalog used by validation.
 
-### 📧 Mail (8)
+### 📧 Mail (9)
 
 | Tool | Description |
 |---|---|
@@ -127,6 +127,7 @@ therefore not a substitute for multi-user RBAC.
 | `mail_draft` | Create an email draft (with optional attachments), saved to Drafts |
 | `mail_send_draft` | Send an existing draft |
 | `mail_update` | Mark read/unread, move to folder, or delete — one message or a batch via `ids` |
+| `mail_bulk_update` | Apply one action to every search hit, preview-first |
 | `mail_attachment_get` | Fetch an attachment: save to disk, extract its text, or view an image inline |
 
 > **Attachments.** Outgoing files are read from `~/Downloads`, `~/Documents`, or
@@ -152,6 +153,18 @@ therefore not a substitute for multi-user RBAC.
 > purges. On IMAP this resolves the server's `\Trash` special-use folder (or a
 > conventional name such as `Deleted Messages`); only a server with no trash at
 > all falls back to setting the `\Deleted` flag.
+
+> **Query-driven bulk actions.** `mail_bulk_update` applies one action to every
+> message matching a search. It is **preview-first**: without `confirm_token` it
+> reports what *would* be affected and changes nothing. Confirming acts on
+> **exactly the previewed messages**, never on a re-run of the query, because
+> mail keeps arriving between the two calls and the provider search syntaxes
+> differ (Graph `$search`, IMAP `SEARCH`, Gmail `q`), so a re-run can match a
+> different set than the one you reviewed. A confirmation token is single-use and
+> expires after 15 minutes. Above 50 matches the call additionally requires
+> `acknowledge_large: true`. For deletes, prefer an exact sender address over
+> free-text: sender filters are far less prone to false matches than subject
+> text, and a too-broad filter fails quietly and in breadth.
 
 ### 💬 Messenger (3)
 
