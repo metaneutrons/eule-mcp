@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { DAVClient } from "tsdav";
 import type { ContactConnector, ContactInput, RemoteContact } from "../../types/index.js";
 import { assertSecureUrl, escapeICalText } from "../../utils/security.js";
@@ -70,7 +71,8 @@ export class CardDavContactConnector implements ContactConnector {
     const addressBooks = await c.fetchAddressBooks();
     const ab = addressBooks[0];
     if (!ab) throw new Error("No address book found");
-    const uid = `eule-${String(Date.now())}`;
+    // randomUUID, not a timestamp, so rapid creates cannot share a UID.
+    const uid = `eule-${randomUUID()}`;
     const lines = [
       "BEGIN:VCARD",
       "VERSION:3.0",

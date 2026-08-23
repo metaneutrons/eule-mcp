@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { DAVClient } from "tsdav";
 import type {
   CalendarConnector,
@@ -6,13 +7,7 @@ import type {
   CalendarInfo,
 } from "../../types/index.js";
 import { assertSecureUrl, escapeICalText, unescapeICalText } from "../../utils/security.js";
-import {
-  applyComponentUpdates,
-  icalToIso,
-  icalValue as ical,
-  isoToIcal,
-  readComponentProp,
-} from "./ics.js";
+import { applyComponentUpdates, icalToIso, isoToIcal, readComponentProp, unfold } from "./ics.js";
 
 export interface CalDavConfig {
   account: string;
@@ -103,7 +98,9 @@ export class CalDavCalendarConnector implements CalendarConnector {
       : calendars[0];
     if (!cal) throw new Error("No calendars found");
 
-    const uid = `eule-${String(Date.now())}@eule-mcp`;
+    // randomUUID, not a timestamp: two events created in the same millisecond
+    // would otherwise share a UID and collide in the collection.
+    const uid = `eule-${randomUUID()}@eule-mcp`;
     const stamp = isoToIcal(new Date().toISOString());
     const attendees = (event.attendees ?? [])
       .map((a) => `ATTENDEE:mailto:${escapeICalText(a)}`)
@@ -189,22 +186,26 @@ export class CalDavCalendarConnector implements CalendarConnector {
   }
 
   private parse(data: string, url: string): CalendarEvent {
-    const dtstart = ical(data, "DTSTART");
-    const dtend = ical(data, "DTEND");
+    // VEVENT-scoped, never a global regex: a VALARM carries its own SUMMARY and
+    // DESCRIPTION, and a VTIMEZONE its own DTSTART, so an unscoped read can
+    // return an alarm's reminder text or a timezone rule's date as the event's.
+    const prop = (name: string): string => readComponentProp(data, "VEVENT", name);
+    const dtstart = prop("DTSTART");
+    const dtend = prop("DTEND");
     const isAllDay = dtstart.length === 8; // 20260410 vs 20260410T140000Z
 
-    const attendeeMatches = data.match(/ATTENDEE[^:]*:mailto:([^\r\n]+)/gi) ?? [];
+    const attendeeMatches = unfold(data).match(/ATTENDEE[^:]*:mailto:([^\r\n]+)/gi) ?? [];
     const attendees = attendeeMatches.map((a) => a.replace(/.*mailto:/i, "").trim());
 
     return {
-      id: ical(data, "UID") || url,
+      id: prop("UID") || url,
       account: this.account,
       // SUMMARY/LOCATION are iCal TEXT — unescape so a later updateEvent (which
       // re-escapes on write) round-trips instead of accumulating backslashes.
-      subject: unescapeICalText(ical(data, "SUMMARY")),
+      subject: unescapeICalText(prop("SUMMARY")),
       start: isAllDay ? dtstart : icalToIso(dtstart),
       end: isAllDay ? dtend || dtstart : icalToIso(dtend || dtstart),
-      location: unescapeICalText(ical(data, "LOCATION")) || undefined,
+      location: unescapeICalText(prop("LOCATION")) || undefined,
       isAllDay,
       attendees,
     };

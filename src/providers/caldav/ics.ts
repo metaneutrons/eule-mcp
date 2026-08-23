@@ -1,9 +1,28 @@
 //! Shared iCalendar helpers for the CalDAV connectors (VEVENT and VTODO).
 
-/** Reads the first value of `key` anywhere in the object, ignoring parameters. */
+/**
+ * Undoes RFC 5545 line folding: a CRLF followed by a space or tab continues the
+ * previous content line. Without this a long SUMMARY or DESCRIPTION is silently
+ * truncated at the fold, which servers insert at 75 octets.
+ */
+export function unfold(ics: string): string {
+  return ics.replace(/\r?\n[ \t]/g, "");
+}
+
+/**
+ * Reads the first value of `key` anywhere in the object, ignoring parameters.
+ *
+ * Component-agnostic on purpose, for values that exist once per object (UID).
+ * For anything a nested component can also carry (SUMMARY, DESCRIPTION) use
+ * {@link readComponentProp} instead, or an alarm's text can be returned as the
+ * event's.
+ */
 export function icalValue(data: string, key: string): string {
-  const re = new RegExp(`${key}[^:]*:([^\\r\\n]+)`, "i");
-  return re.exec(data)?.[1]?.trim() ?? "";
+  // Keys are internal constants, never user input, but escaping keeps the
+  // constructed pattern honest if that ever changes.
+  const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp(`^${escaped}[^:\\r\\n]*:(.*)$`, "im");
+  return re.exec(unfold(data))?.[1]?.trim() ?? "";
 }
 
 /** 20260410T140000Z → 2026-04-10T14:00:00Z (dates shorter than that pass through). */
@@ -31,15 +50,13 @@ export function readComponentProp(ics: string, component: string, name: string):
   const target = name.toUpperCase();
   const wanted = component.toUpperCase();
   const stack: string[] = [];
-  for (const line of ics.split(/\r?\n/)) {
+  // Unfold first, so a value split across continuation lines is returned whole
+  // rather than truncated at the fold.
+  for (const line of unfold(ics).split(/\r?\n/)) {
     const u = line.toUpperCase();
     if (u.startsWith("BEGIN:")) stack.push(u.slice(6).trim());
     else if (u.startsWith("END:")) stack.pop();
-    else if (
-      stack[stack.length - 1] === wanted &&
-      !/^[ \t]/.test(line) &&
-      propName(line) === target
-    )
+    else if (stack[stack.length - 1] === wanted && propName(line) === target)
       return line.slice(line.indexOf(":") + 1).trim();
   }
   return "";
