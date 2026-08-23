@@ -121,7 +121,7 @@ therefore not a substitute for multi-user RBAC.
 | `mail_send` | Send, reply, or forward an email, with optional file attachments |
 | `mail_draft` | Create an email draft (with optional attachments), saved to Drafts |
 | `mail_send_draft` | Send an existing draft |
-| `mail_update` | Mark read/unread, move to folder (archive, spam, ...), or delete |
+| `mail_update` | Mark read/unread, move to folder, or delete — one message or a batch via `ids` |
 | `mail_attachment_get` | Fetch an attachment: save to disk, extract its text, or view an image inline |
 
 > **Attachments.** Outgoing files are read from `~/Downloads`, `~/Documents`, or
@@ -132,6 +132,21 @@ therefore not a substitute for multi-user RBAC.
 > EWS fallback tier, attach via a new message or draft instead.
 > `mail_send` and `mail_send_draft` accept an optional `idempotency_key` to
 > prevent duplicate submission within the running server process.
+
+> **Bulk updates.** `mail_update` takes either `id` or `ids` (up to 200) and
+> applies the same action to all of them in one call. The result names the
+> **subject and sender** of every message touched, not just a count, because a
+> bare "moved to Deleted Items" looks identical whether the id was right or
+> wrong. Up to 30 results are listed individually; larger batches are grouped by
+> sender with one example subject each (`23× notification@example.com — e.g.
+> "…"`) and still carry the exact ids, so a wrong sender is obvious and a
+> targeted undo stays possible. A failing id is reported on its own and does not
+> abandon the rest of the batch.
+>
+> **Deleting always moves to the trash folder**, on every provider, and never
+> purges. On IMAP this resolves the server's `\Trash` special-use folder (or a
+> conventional name such as `Deleted Messages`); only a server with no trash at
+> all falls back to setting the `\Deleted` flag.
 
 ### 💬 Messenger (3)
 

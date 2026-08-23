@@ -174,6 +174,31 @@ export class EwsMailConnector implements MailConnector {
     return { ...msg, body, bodyType, attachments };
   }
 
+  /**
+   * Headline metadata for a set of ids. EWS batches this natively: GetItem
+   * accepts many ItemIds in one request, and IdOnly plus a short
+   * AdditionalProperties list keeps bodies and attachments out of the response.
+   */
+  async getSummaries(ids: readonly string[]): Promise<MailMessage[]> {
+    if (ids.length === 0) return [];
+    const itemIds = ids.map((id) => `<t:ItemId Id="${escapeXml(id)}"/>`).join("");
+    const data = await this.post(`
+    <m:GetItem>
+      <m:ItemShape>
+        <t:BaseShape>IdOnly</t:BaseShape>
+        <t:AdditionalProperties>
+          <t:FieldURI FieldURI="item:Subject"/>
+          <t:FieldURI FieldURI="message:From"/>
+          <t:FieldURI FieldURI="message:ToRecipients"/>
+          <t:FieldURI FieldURI="item:DateTimeReceived"/>
+          <t:FieldURI FieldURI="message:IsRead"/>
+        </t:AdditionalProperties>
+      </m:ItemShape>
+      <m:ItemIds>${itemIds}</m:ItemIds>
+    </m:GetItem>`);
+    return this.extractMessages(data).map((m) => this.mapMessage(m));
+  }
+
   async searchMessages(query: string, limit = 10, folder = "inbox"): Promise<MailMessage[]> {
     const data = await this.post(`
     <m:FindItem Traversal="Shallow">

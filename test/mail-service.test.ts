@@ -89,7 +89,7 @@ describe("MailService commands", () => {
 
   it("rejects an update with no action", async () => {
     await expect(
-      service(connector()).update("id", "sender@example.com", undefined, {}),
+      service(connector()).update(["id"], "sender@example.com", undefined, {}),
     ).rejects.toThrow(/one update action/);
   });
 
@@ -109,5 +109,108 @@ describe("MailService commands", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("bulk mail_update", () => {
+  function summarising(): MailConnector {
+    const mail = connector();
+    mail.getSummaries = vi.fn(async (ids: readonly string[]) =>
+      ids.map((id) => ({
+        id,
+        account: "sender@example.com",
+        subject: `Subject ${id}`,
+        from: `sender${id}@example.com`,
+        to: [],
+        receivedAt: "",
+        snippet: "",
+        isRead: false,
+      })),
+    );
+    return mail;
+  }
+
+  it("applies one action to every id and reports subject and sender per message", async () => {
+    const mail = summarising();
+    const outcomes = await service(mail).update(["1", "2", "3"], "sender@example.com", undefined, {
+      delete: true,
+    });
+    expect(mail.deleteMessage).toHaveBeenCalledTimes(3);
+    expect(outcomes).toHaveLength(3);
+    expect(outcomes[0]).toMatchObject({
+      id: "1",
+      subject: "Subject 1",
+      from: "sender1@example.com",
+      actions: ["deleted"],
+    });
+  });
+
+  it("reads summaries BEFORE mutating, since a deleted id no longer resolves", async () => {
+    const order: string[] = [];
+    const mail = connector();
+    mail.getSummaries = vi.fn(async (ids: readonly string[]) => {
+      order.push("summaries");
+      return ids.map((id) => ({
+        id,
+        account: "sender@example.com",
+        subject: "s",
+        from: "f",
+        to: [],
+        receivedAt: "",
+        snippet: "",
+        isRead: false,
+      }));
+    });
+    mail.deleteMessage = vi.fn(async () => {
+      order.push("delete");
+    });
+    await service(mail).update(["1", "2"], "sender@example.com", undefined, { delete: true });
+    expect(order).toEqual(["summaries", "delete", "delete"]);
+  });
+
+  it("keeps going when one id fails and reports that id specifically", async () => {
+    const mail = summarising();
+    mail.deleteMessage = vi.fn(async (id: string) => {
+      if (id === "2") throw new Error("not found");
+    });
+    const outcomes = await service(mail).update(["1", "2", "3"], "sender@example.com", undefined, {
+      delete: true,
+    });
+    expect(outcomes.filter((o) => o.error)).toHaveLength(1);
+    expect(outcomes[1]).toMatchObject({ id: "2", error: "not found" });
+    // The failure must not swallow the successful siblings.
+    expect(outcomes.filter((o) => !o.error).map((o) => o.id)).toEqual(["1", "3"]);
+  });
+
+  it("still performs the action when the connector cannot supply summaries", async () => {
+    const mail = connector();
+    delete mail.getSummaries;
+    const outcomes = await service(mail).update(["1"], "sender@example.com", undefined, {
+      delete: true,
+    });
+    expect(mail.deleteMessage).toHaveBeenCalledTimes(1);
+    expect(outcomes[0]).toMatchObject({ id: "1", actions: ["deleted"], subject: undefined });
+  });
+
+  it("does not let a failing summary lookup block the action", async () => {
+    const mail = connector();
+    mail.getSummaries = vi.fn(async () => {
+      throw new Error("metadata unavailable");
+    });
+    const outcomes = await service(mail).update(["1"], "sender@example.com", undefined, {
+      delete: true,
+    });
+    expect(outcomes[0]?.actions).toEqual(["deleted"]);
+  });
+
+  it("refuses an oversized batch and an empty one", async () => {
+    const mail = summarising();
+    const many = Array.from({ length: 201 }, (_, i) => String(i));
+    await expect(
+      service(mail).update(many, "sender@example.com", undefined, { delete: true }),
+    ).rejects.toThrow(/At most 200/);
+    await expect(
+      service(mail).update([], "sender@example.com", undefined, { delete: true }),
+    ).rejects.toThrow(/at least one message id/i);
   });
 });

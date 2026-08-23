@@ -424,6 +424,53 @@ export class ImapMailConnector implements MailConnector {
     }
   }
 
+  /**
+   * Envelope-only lookup for a set of UIDs. IMAP batches this natively: one
+   * FETCH over a comma-separated UID set, no bodies.
+   */
+  async getSummaries(ids: readonly string[]): Promise<MailMessage[]> {
+    const uids = ids.filter((id) => /^\d+$/.test(id)).map(Number);
+    if (uids.length === 0) return [];
+    const client = await this.connect();
+    try {
+      const lock = await client.getMailboxLock("INBOX");
+      try {
+        const results: MailMessage[] = [];
+        for await (const raw of client.fetch(
+          uids,
+          { envelope: true, flags: true },
+          { uid: true },
+        )) {
+          const msg = raw as {
+            uid: number;
+            envelope?: {
+              subject?: string;
+              date?: Date;
+              from?: { address?: string }[];
+              to?: { address?: string }[];
+            };
+            flags?: Set<string>;
+          };
+          results.push({
+            id: String(msg.uid),
+            account: this.account,
+            subject: msg.envelope?.subject ?? "",
+            from: msg.envelope?.from?.[0]?.address ?? "",
+            to: (msg.envelope?.to ?? []).map((a) => a.address ?? ""),
+            receivedAt: msg.envelope?.date?.toISOString() ?? "",
+            snippet: "",
+            isRead: msg.flags?.has("\\Seen") ?? false,
+          });
+        }
+        return results;
+      } finally {
+        lock.release();
+      }
+    } finally {
+      await client.logout();
+    }
+  }
+
   async markRead(id: string, isRead: boolean): Promise<void> {
     const client = await this.connect();
     try {
@@ -453,11 +500,41 @@ export class ImapMailConnector implements MailConnector {
     }
   }
 
+  /**
+   * Resolves the mailbox that acts as the trash, preferring the server's
+   * declared `\Trash` special-use folder and falling back to the names in
+   * common use. Returns undefined when the server offers no trash at all.
+   */
+  private async trashMailbox(client: ImapFlow): Promise<string | undefined> {
+    const mailboxes = await client.list();
+    const special = mailboxes.find((box) => box.specialUse === "\\Trash");
+    if (special) return special.path;
+    const candidates = new Set([
+      "trash",
+      "deleted messages",
+      "deleted items",
+      "inbox.trash",
+      "papierkorb",
+      "gelöschte elemente",
+    ]);
+    return mailboxes.find((box) => candidates.has(box.path.toLowerCase()))?.path;
+  }
+
   async deleteMessage(id: string): Promise<void> {
     const client = await this.connect();
     try {
+      // Move to the trash rather than only setting \Deleted. The flag leaves the
+      // message in place, hidden by most clients and still exposed to an EXPUNGE
+      // from any other session, which is neither visible nor reliably
+      // recoverable. Only if the server has no trash at all do we fall back to
+      // the flag, and then we say so.
+      const trash = await this.trashMailbox(client);
       const lock = await client.getMailboxLock("INBOX");
       try {
+        if (trash) {
+          await client.messageMove(id, trash, { uid: true });
+          return;
+        }
         await client.messageFlagsAdd(id, ["\\Deleted"], { uid: true });
       } finally {
         lock.release();

@@ -111,6 +111,31 @@ export class GoogleMailConnector implements MailConnector {
     return msgs;
   }
 
+  /**
+   * Headline metadata for a set of ids. Gmail has no id-set endpoint, so this
+   * is one request per id, but `format=metadata` with an explicit header list
+   * returns just those headers instead of the full payload. Concurrency is
+   * bounded; ids that no longer resolve are skipped.
+   */
+  async getSummaries(ids: readonly string[]): Promise<MailMessage[]> {
+    const h = await this.headers();
+    const query = "format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=To";
+    const results: MailMessage[] = [];
+    const queue = [...ids];
+    const worker = async (): Promise<void> => {
+      for (let id = queue.shift(); id !== undefined; id = queue.shift()) {
+        // Execution-context fetch so a cancelled tool call stops the sweep.
+        const res = await fetch(`${BASE}/messages/${encodeURIComponent(id)}?${query}`, {
+          headers: h,
+        });
+        if (!res.ok) continue;
+        results.push(this.mapSummary((await res.json()) as GmailMsg));
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(4, ids.length) }, () => worker()));
+    return results;
+  }
+
   async sendMessage(
     to: string[],
     subject: string,
