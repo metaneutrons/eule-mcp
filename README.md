@@ -280,26 +280,38 @@ to the call; otherwise it uses browser OAuth. Set `method: browser` or
 an interactive desktop session, and a redirect registered for the configured
 OAuth client.
 
-- **Browser (default):** `node dist/cli/index.js login --tier graph` — opens a
-  browser, you paste the redirect URL back. Needs an app whose redirect URIs
-  include the `nativeclient` URL (Thunderbird's does).
+- **Default (no flag):** `node dist/cli/index.js login --tier ews` picks the
+  best flow this machine can run. On a desktop session it opens the native
+  login window and points it at the ordinary `nativeclient` redirect, so you
+  sign in once and nothing has to be copied by hand. Over SSH or without a
+  display it uses device code instead. If the helper binary cannot be obtained
+  at all (no release for this platform, download blocked), it degrades to
+  device code automatically.
 - **Device code (cross-platform, no browser redirect):**
   `node dist/cli/index.js login --device --tier ews` — prints a URL + code you
-  open on any device. Pure HTTP, works over SSH/headless. Best for
-  Windows/Linux. Note: a tenant can block the device-code flow via Conditional
-  Access (a common anti-phishing control) — if the poll never completes, use
-  `--capture`.
+  open on any device. Pure HTTP, works over SSH/headless. Note: a tenant can
+  block the device-code flow via Conditional Access (a common anti-phishing
+  control) — if the poll never completes, use `--capture`.
+- **Browser paste-the-redirect (legacy):** `node dist/cli/index.js login
+  --browser --tier graph` — opens a browser and asks you to paste the redirect
+  URL back. Superseded by the default flow, which does the same thing without
+  the copy-paste. Kept for environments where no helper binary may run *and*
+  the tenant blocks device code.
 - **Webview capture (cross-platform GUI):**
   `node dist/cli/index.js login --capture --tier ews` — opens a native login
   window via the `eule-helper` binary and intercepts a broker-bound redirect
   (`urn:ietf:wg:oauth:2.0:oob` / custom scheme) that no browser can navigate to.
   The only path that works for clients like "Apple Internet Accounts" when
-  device code is CA-blocked. The helper writes the token itself — it never
+  device code is CA-blocked. Passing `--capture` explicitly keeps the helper's
+  broker default (`oob`) unless you override it with `--redirect-uri`; the
+  automatic path above instead targets `nativeclient`, which is what the default
+  client registers. The helper writes the token itself — it never
   returns through the MCP/LLM. If the account has a TOTP secret configured
   (`autoAuth[].totpSecretRef`), the MFA code is auto-filled (the password is still
   typed by you); pass `--no-totp` to disable.
 - **Flags:** `--account <email>`, `--client-id <id>`, `--api-version v1|v2`,
-  `--tier graph|ews|imap`, `--redirect-uri <uri>`.
+  `--tier graph|ews|imap`, `--redirect-uri <uri>`. Flow overrides: `--capture`,
+  `--device`, `--browser`.
 
 The `eule-helper` binary (Rust + `wry` = WKWebView/WebView2/WebKitGTK) is
 resolved without making local development depend on an already published
