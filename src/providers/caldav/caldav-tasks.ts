@@ -1,4 +1,5 @@
-import { DAVClient, type DAVCalendar } from "tsdav";
+import { randomUUID } from "node:crypto";
+import { DAVClient, type DAVCalendar, type DAVCalendarObject } from "tsdav";
 import type {
   RemoteTask,
   RemoteTaskInput,
@@ -8,13 +9,7 @@ import type {
 } from "../../types/index.js";
 import { assertSecureUrl, escapeICalText, unescapeICalText } from "../../utils/security.js";
 import type { CalDavConfig } from "./caldav-calendar.js";
-import {
-  applyComponentUpdates,
-  icalToIso,
-  icalValue,
-  isoToIcal,
-  readComponentProp,
-} from "./ics.js";
+import { applyComponentUpdates, icalToIso, isoToIcal, readComponentProp } from "./ics.js";
 
 /** RFC 5545 PRIORITY: 1-4 high, 5 normal, 6-9 low, 0 undefined. */
 function priorityToImportance(value: string): "low" | "normal" | "high" | undefined {
@@ -129,7 +124,9 @@ export class CalDavTaskConnector implements TaskConnector {
       : calendars[0];
     if (!calendar) throw new Error(`No VTODO collection available for ${this.account}`);
 
-    const uid = `eule-${String(Date.now())}@eule-mcp`;
+    // randomUUID, not a timestamp: two tasks created in the same millisecond
+    // would otherwise share a UID and collide in the collection.
+    const uid = `eule-${randomUUID()}@eule-mcp`;
     const stamp = isoToIcal(new Date().toISOString());
     const ics = [
       "BEGIN:VCALENDAR",
@@ -155,14 +152,21 @@ export class CalDavTaskConnector implements TaskConnector {
     return this.parse(ics, url, calendar.url);
   }
 
+  /** Locates the collection an object URL belongs to, plus the object itself. */
+  private async findTaskObject(
+    client: DAVClient,
+    id: string,
+  ): Promise<{ calendar: DAVCalendar; object: DAVCalendarObject }> {
+    const calendar = (await this.todoCalendars(client)).find((c) => id.startsWith(c.url));
+    if (!calendar) throw new Error(`Task ${id} not found`);
+    const object = (await client.fetchCalendarObjects({ calendar, objectUrls: [id] }))[0];
+    if (!object) throw new Error(`Task ${id} not found`);
+    return { calendar, object };
+  }
+
   async updateTask(id: string, updates: RemoteTaskUpdate): Promise<RemoteTask> {
     const client = await this.client();
-    const calendars = await this.todoCalendars(client);
-    const calendar = calendars.find((c) => id.startsWith(c.url));
-    if (!calendar) throw new Error(`Task ${id} not found`);
-    const objects = await client.fetchCalendarObjects({ calendar, objectUrls: [id] });
-    const object = objects[0];
-    if (!object) throw new Error(`Task ${id} not found`);
+    const { calendar, object } = await this.findTaskObject(client, id);
 
     const original = String(object.data ?? "");
     const stamp = isoToIcal(new Date().toISOString());
@@ -200,33 +204,32 @@ export class CalDavTaskConnector implements TaskConnector {
 
   async deleteTask(id: string): Promise<void> {
     const client = await this.client();
-    const calendars = await this.todoCalendars(client);
-    const calendar = calendars.find((c) => id.startsWith(c.url));
-    if (!calendar) throw new Error(`Task ${id} not found`);
-    const objects = await client.fetchCalendarObjects({ calendar, objectUrls: [id] });
-    const object = objects[0];
-    if (!object) throw new Error(`Task ${id} not found`);
+    const { object } = await this.findTaskObject(client, id);
     await client.deleteCalendarObject({
       calendarObject: { url: object.url, etag: object.etag },
     });
   }
 
   private parse(data: string, url: string, listId: string, listName?: string): RemoteTask {
-    const status = icalValue(data, "STATUS").toUpperCase();
-    const percent = Number(icalValue(data, "PERCENT-COMPLETE"));
-    const completedAt = icalValue(data, "COMPLETED");
-    const due = icalValue(data, "DUE");
+    // Read VTODO-scoped, never with a global regex. A DISPLAY alarm carries its
+    // own SUMMARY and DESCRIPTION, so an unscoped read can return the alarm's
+    // reminder text as the task's notes whenever the task has none of its own.
+    const prop = (name: string): string => readComponentProp(data, "VTODO", name);
+    const status = prop("STATUS").toUpperCase();
+    const percent = Number(prop("PERCENT-COMPLETE"));
+    const completedAt = prop("COMPLETED");
+    const due = prop("DUE");
     return {
       id: url,
       account: this.account,
       listId,
       listName,
-      title: unescapeICalText(icalValue(data, "SUMMARY")),
-      notes: unescapeICalText(icalValue(data, "DESCRIPTION")) || undefined,
+      title: unescapeICalText(prop("SUMMARY")),
+      notes: unescapeICalText(prop("DESCRIPTION")) || undefined,
       completed: status === "COMPLETED" || percent === 100,
       due: due ? icalToIso(due) : undefined,
       completedAt: completedAt ? icalToIso(completedAt) : undefined,
-      importance: priorityToImportance(icalValue(data, "PRIORITY")),
+      importance: priorityToImportance(prop("PRIORITY")),
     };
   }
 }

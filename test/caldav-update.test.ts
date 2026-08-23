@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { applyEventUpdates } from "../src/providers/caldav/caldav-calendar.js";
+import { readComponentProp, unfold } from "../src/providers/caldav/ics.js";
 
 // A realistic object: a VTIMEZONE (with its own DTSTART), a recurring VEVENT
 // with attendees/description, and a VALARM (with its own SUMMARY/DESCRIPTION).
@@ -87,5 +88,66 @@ describe("applyEventUpdates (CalDAV in-place update)", () => {
     const allDay = ICS.replace("DTSTART:20260410T120000Z", "DTSTART;VALUE=DATE:20260410");
     const out = applyEventUpdates(allDay, { subject: "renamed" }, NOW);
     expect(out).toContain("DTSTART;VALUE=DATE:20260410");
+  });
+});
+
+describe("component-scoped reads (Codacy finding on PR #42)", () => {
+  // A VTODO whose only DESCRIPTION/SUMMARY sit in a nested DISPLAY alarm. A
+  // DISPLAY alarm is required to carry a DESCRIPTION, so this is the normal
+  // shape of a reminder, not a contrived one.
+  const TASK_WITH_ALARM = [
+    "BEGIN:VCALENDAR",
+    "BEGIN:VTODO",
+    "UID:task-1@test",
+    "SUMMARY:Pay the invoice",
+    "STATUS:NEEDS-ACTION",
+    "BEGIN:VALARM",
+    "ACTION:DISPLAY",
+    "SUMMARY:Alarm headline",
+    "DESCRIPTION:Reminder text",
+    "TRIGGER:-PT15M",
+    "END:VALARM",
+    "END:VTODO",
+    "END:VCALENDAR",
+  ].join("\r\n");
+
+  it("does not return a nested alarm's DESCRIPTION as the task's own", () => {
+    // The task has no DESCRIPTION at all, so an unscoped read returns the
+    // alarm's reminder text as the task notes.
+    expect(readComponentProp(TASK_WITH_ALARM, "VTODO", "DESCRIPTION")).toBe("");
+    expect(readComponentProp(TASK_WITH_ALARM, "VALARM", "DESCRIPTION")).toBe("Reminder text");
+  });
+
+  it("returns the component's own SUMMARY, not the alarm's", () => {
+    expect(readComponentProp(TASK_WITH_ALARM, "VTODO", "SUMMARY")).toBe("Pay the invoice");
+    expect(readComponentProp(TASK_WITH_ALARM, "VALARM", "SUMMARY")).toBe("Alarm headline");
+  });
+});
+
+describe("RFC 5545 line folding", () => {
+  const FOLDED = [
+    "BEGIN:VCALENDAR",
+    "BEGIN:VEVENT",
+    "UID:evt@test",
+    "SUMMARY:This subject is long enough that a server will fold it acro",
+    " ss several lines rather than emit one very long line",
+    "LOCATION:Room 1",
+    "END:VEVENT",
+    "END:VCALENDAR",
+  ].join("\r\n");
+
+  it("joins continuation lines instead of truncating at the fold", () => {
+    expect(readComponentProp(FOLDED, "VEVENT", "SUMMARY")).toBe(
+      "This subject is long enough that a server will fold it across several lines rather than emit one very long line",
+    );
+  });
+
+  it("still reads the property after a folded one", () => {
+    expect(readComponentProp(FOLDED, "VEVENT", "LOCATION")).toBe("Room 1");
+  });
+
+  it("unfold leaves an unfolded object untouched", () => {
+    const plain = "BEGIN:VEVENT\r\nSUMMARY:Short\r\nEND:VEVENT";
+    expect(unfold(plain)).toBe(plain);
   });
 });
