@@ -6,8 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
   release-please:
@@ -16,26 +15,12 @@ jobs:
       release-created: ${{ steps.release.outputs.release_created }}
       tag-name: ${{ steps.release.outputs.tag_name }}
     steps:
-      # Mint a GitHub App token so the release PR is authored by the App rather
-      # than by GITHUB_TOKEN. GitHub suppresses workflow runs for events created
-      # with GITHUB_TOKEN (the recursion guard), which is why release PRs
-      # currently arrive with no CI at all. Adding the release branch to ci.yml
-      # would not help: the push is suppressed for the same reason.
-      #
-      # continue-on-error plus the `||` fallback keep this inert until the two
-      # secrets exist, so it degrades to exactly the previous behaviour instead
-      # of breaking releases.
-      - uses: actions/create-github-app-token@v2
-        id: app-token
-        continue-on-error: true
-        with:
-          app-id: ${{ secrets.RELEASE_PLEASE_APP_ID }}
-          private-key: ${{ secrets.RELEASE_PLEASE_APP_PRIVATE_KEY }}
-
       - id: release
         uses: googleapis/release-please-action@v5
         with:
-          token: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
+          # A fine-grained PAT lets events created by Release Please trigger CI.
+          # Unlike GITHUB_TOKEN, it is not subject to Actions' recursion guard.
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
