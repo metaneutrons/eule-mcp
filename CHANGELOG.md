@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/metaneutrons/eule-mcp/compare/v0.5.0...v0.6.0) (2026-08-26)
+
+
+### Features
+
+* **auth:** harden native M365 credential autofill ([#50](https://github.com/metaneutrons/eule-mcp/issues/50)) ([4bfc305](https://github.com/metaneutrons/eule-mcp/commit/4bfc3054f1fd4c27d668efc962109f6e23097fe3))
+
 ## [0.5.0](https://github.com/metaneutrons/eule-mcp/compare/v0.4.0...v0.5.0) (2026-08-23)
 
 
