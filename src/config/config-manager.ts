@@ -184,11 +184,15 @@ export class ConfigManager {
     this.save({ ...this.config, roles });
   }
 
-  /** Create or update an account's autoAuth TOTP binding. New flows persist an
-   *  OS credential-store reference; inline secrets remain migration-only. */
+  /** Create or update an account's native-webview credential bindings. New
+   *  flows persist OS credential-store references; inline TOTP is migration-only. */
   upsertAutoAuth(
     account: string,
-    patch: { totpSecret?: string; totpSecretRef?: string },
+    patch: {
+      totpSecret?: string | null;
+      totpSecretRef?: string | null;
+      passwordSecretRef?: string | null;
+    },
     expectedRevision?: string,
   ): void {
     const normalizedAccount = account.trim().toLowerCase();
@@ -196,25 +200,56 @@ export class ConfigManager {
     const idx = existing.findIndex((a) => a.account.toLowerCase() === normalizedAccount);
     const next = [...existing];
     const previous = idx === -1 ? undefined : next[idx];
-    const merged = { ...previous, account: normalizedAccount, ...patch };
-    const normalized =
-      patch.totpSecretRef !== undefined
-        ? { account: merged.account, totpSecretRef: patch.totpSecretRef }
-        : patch.totpSecret !== undefined
-          ? { account: merged.account, totpSecret: patch.totpSecret }
-          : merged;
+    let totpSecret = previous?.totpSecret;
+    let totpSecretRef = previous?.totpSecretRef;
+    let passwordSecretRef = previous?.passwordSecretRef;
+    if (patch.totpSecret !== undefined) {
+      totpSecret = patch.totpSecret ?? undefined;
+      if (totpSecret) totpSecretRef = undefined;
+    }
+    if (patch.totpSecretRef !== undefined) {
+      totpSecretRef = patch.totpSecretRef ?? undefined;
+      if (totpSecretRef) totpSecret = undefined;
+    }
+    if (patch.passwordSecretRef !== undefined)
+      passwordSecretRef = patch.passwordSecretRef ?? undefined;
+    const normalized = {
+      account: normalizedAccount,
+      ...(totpSecret ? { totpSecret } : {}),
+      ...(totpSecretRef ? { totpSecretRef } : {}),
+      ...(passwordSecretRef ? { passwordSecretRef } : {}),
+    };
     if (idx === -1) next.push(normalized);
     else next[idx] = normalized;
     this.save({ ...this.config, autoAuth: next }, expectedRevision);
   }
 
-  removeAutoAuth(account: string): void {
+  /** Remove one binding without deleting the account's other auto-auth secret. */
+  removeAutoAuthCredential(account: string, kind: "totp" | "password"): void {
     const normalizedAccount = account.trim().toLowerCase();
-    const next = (this.config.autoAuth ?? []).filter(
-      (entry) => entry.account.toLowerCase() !== normalizedAccount,
-    );
-    if (next.length === (this.config.autoAuth ?? []).length)
-      throw new Error(`No TOTP configuration for "${normalizedAccount}"`);
+    const existing = this.config.autoAuth ?? [];
+    const idx = existing.findIndex((entry) => entry.account.toLowerCase() === normalizedAccount);
+    const entry = idx === -1 ? undefined : existing[idx];
+    const configured =
+      kind === "totp"
+        ? Boolean(entry?.totpSecret ?? entry?.totpSecretRef)
+        : Boolean(entry?.passwordSecretRef);
+    if (!entry || !configured)
+      throw new Error(
+        `No ${kind === "totp" ? "TOTP" : "password"} configuration for "${normalizedAccount}"`,
+      );
+    const updated = {
+      account: entry.account,
+      ...(kind === "totp" && entry.passwordSecretRef
+        ? { passwordSecretRef: entry.passwordSecretRef }
+        : {}),
+      ...(kind === "password" && entry.totpSecret ? { totpSecret: entry.totpSecret } : {}),
+      ...(kind === "password" && entry.totpSecretRef ? { totpSecretRef: entry.totpSecretRef } : {}),
+    };
+    const next = [...existing];
+    if (updated.totpSecret || updated.totpSecretRef || updated.passwordSecretRef)
+      next[idx] = updated;
+    else next.splice(idx, 1);
     this.save({ ...this.config, autoAuth: next.length ? next : undefined });
   }
 

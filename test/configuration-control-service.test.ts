@@ -67,14 +67,32 @@ function harness(options: { failUpsert?: boolean } = {}) {
       config = { ...config, google };
       revision++;
     }),
-    upsertAutoAuth: vi.fn((account, entry) => {
-      config = { ...config, autoAuth: [{ account, ...entry }] };
+    upsertAutoAuth: vi.fn((account, patch) => {
+      if (failNextUpsert) {
+        failNextUpsert = false;
+        throw new Error("disk full");
+      }
+      const previous = config.autoAuth?.find((entry) => entry.account === account);
+      const merged = { ...previous, account, ...patch };
+      if (patch.totpSecretRef) delete merged.totpSecret;
+      if (patch.totpSecret) delete merged.totpSecretRef;
+      for (const key of ["totpSecret", "totpSecretRef", "passwordSecretRef"] as const)
+        if (merged[key] === null) delete merged[key];
+      config = { ...config, autoAuth: [merged] };
       revision++;
     }),
-    removeAutoAuth: vi.fn((account: string) => {
+    removeAutoAuthCredential: vi.fn((account: string, kind: "totp" | "password") => {
+      const previous = config.autoAuth?.find((entry) => entry.account === account);
+      if (!previous) throw new Error("not configured");
+      const next = { ...previous };
+      if (kind === "totp") {
+        delete next.totpSecret;
+        delete next.totpSecretRef;
+      } else delete next.passwordSecretRef;
       config = {
         ...config,
-        autoAuth: config.autoAuth?.filter((entry) => entry.account !== account),
+        autoAuth:
+          next.totpSecret || next.totpSecretRef || next.passwordSecretRef ? [next] : undefined,
       };
       revision++;
     }),
@@ -258,19 +276,26 @@ describe("ConfigurationControlService", () => {
     expect(context.getConfig().roles[0]?.connectors.documents).toBeUndefined();
   });
 
-  it("captures Google and TOTP secrets and reports presence without reading values", async () => {
+  it("captures Google, TOTP, and M365 password secrets without resolving M365 values in Node", async () => {
     const context = harness();
     await context.service.configureGoogleOAuth("google-client");
     await context.service.configureTotp("User@Example.com");
-    expect(context.credentials.capture).toHaveBeenLastCalledWith(
+    await context.service.configureM365Password("User@Example.com");
+    expect(context.credentials.capture).toHaveBeenNthCalledWith(
+      2,
       expect.any(String),
       "TOTP seed for user@example.com",
       { format: "totp" },
+    );
+    expect(context.credentials.capture).toHaveBeenLastCalledWith(
+      expect.stringMatching(/^oauth\/m365\/password\//),
+      expect.stringContaining("store for automatic Eule webview sign-in"),
     );
     const statuses = context.service.credentialStatus();
     expect(statuses).toEqual([
       { scope: "google/oauth", state: "configured" },
       { scope: "totp/user@example.com", state: "configured" },
+      { scope: "m365-password/user@example.com", state: "configured" },
     ]);
     expect(context.credentials.read).not.toHaveBeenCalled();
     const resolver = new ConfiguredCredentialResolver(context.manager, context.credentials);
@@ -278,7 +303,43 @@ describe("ConfigurationControlService", () => {
       clientId: "google-client",
       clientSecret: "secret",
     });
-    expect(resolver.totp("user@example.com")).toBe("secret");
+    expect(resolver.m365AutoAuth("user@example.com")).toEqual({
+      totpCredentialRef: expect.stringMatching(/^totp\//),
+      passwordCredentialRef: expect.stringMatching(/^oauth\/m365\/password\//),
+    });
+    expect(context.credentials.read).toHaveBeenCalledTimes(1);
+  });
+
+  it("removes TOTP and password independently", async () => {
+    const context = harness();
+    await context.service.configureTotp("user@example.com");
+    const totpReference = context.getConfig().autoAuth?.[0]?.totpSecretRef;
+    await context.service.configureM365Password("user@example.com");
+    const passwordReference = context.getConfig().autoAuth?.[0]?.passwordSecretRef;
+
+    await context.service.removeTotp("user@example.com");
+    expect(context.getConfig().autoAuth?.[0]?.passwordSecretRef).toBe(passwordReference);
+    expect(context.credentials.removed).toContain(totpReference);
+    expect(context.credentials.removed).not.toContain(passwordReference);
+
+    await context.service.removeM365Password("user@example.com");
+    expect(context.getConfig().autoAuth).toBeUndefined();
+    expect(context.credentials.removed).toContain(passwordReference);
+  });
+
+  it("keeps the active M365 password binding when replacement commit fails", async () => {
+    const context = harness();
+    await context.service.configureM365Password("user@example.com");
+    const activeReference = context.getConfig().autoAuth?.[0]?.passwordSecretRef;
+
+    context.failNextUpsert();
+    await expect(context.service.configureM365Password("user@example.com")).rejects.toThrow(
+      /disk full/,
+    );
+
+    expect(context.getConfig().autoAuth?.[0]?.passwordSecretRef).toBe(activeReference);
+    expect(context.credentials.removed).not.toContain(activeReference);
+    expect(context.credentials.removed.at(-1)).toBe(context.credentials.captured.at(-1));
   });
 
   it("reports a required but unbound connector credential as missing", async () => {

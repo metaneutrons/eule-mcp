@@ -47,8 +47,9 @@ transport cannot enforce.
   the current registration API through a domain adapter.
 - The MCP configuration control plane is self-describing and can create/update
   every supported connector without accepting secrets as tool input.
-- A single credential broker mediates connector passwords/tokens, Google client
-  secrets, and TOTP seeds through the branded native helper and OS store.
+- A single credential broker mediates connector passwords/tokens and Google
+  client secrets; M365 password/TOTP autofill follows a stricter direct
+  OS-store-to-native-helper path with only opaque references crossing Node.
 - Revisioned capture/commit/cleanup transactions, stale-write detection,
   per-resource locks, serialized prompts, and cancellation prevent unsafe
   partial configuration or concurrent credential replacement.
@@ -78,11 +79,12 @@ negative cases. Per-tenant encryption keys should be managed outside config.
 
 ### P0: secret management
 
-Connector passwords/API tokens, Google client secrets, and TOTP seeds use opaque
-references backed by macOS Keychain, Windows Credential Manager, or Linux Secret
-Service when created through MCP or the CLI. Remaining work for a hosted,
-multi-tenant deployment is to add enterprise secret-manager adapters and move
-OAuth refresh tokens behind that tenant-scoped boundary.
+Connector passwords/API tokens, Google client secrets, TOTP seeds, and opt-in
+M365 passwords use opaque references backed by macOS Keychain, Windows
+Credential Manager, or Linux Secret Service when created through MCP or the CLI.
+Remaining work for a hosted, multi-tenant deployment is to add enterprise
+secret-manager adapters and move OAuth refresh tokens behind that tenant-scoped
+boundary.
 
 ### P1: complete the auditable command architecture
 

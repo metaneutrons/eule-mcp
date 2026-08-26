@@ -54,13 +54,17 @@ lifecycle only.
 ## Credential boundary
 
 The native Rust helper is the credential-entry boundary. Its branded local
-window stores connector passwords/API tokens, Google client secrets, and TOTP
-seeds in the operating-system credential store. Secret-bearing fields do not
+window stores connector passwords/API tokens, Google client secrets, TOTP
+seeds, and explicitly opted-in M365 passwords in the operating-system
+credential store. Secret-bearing fields do not
 exist in MCP schemas. Configuration contains only scoped, revisioned references;
 the helper's stdout is isolated from the stdio MCP transport. When a provider
 needs a value, Node asks the helper to write it to an owner-only temporary file,
 reads it, deletes the file immediately, and caches it only for the server
-process lifetime. Legacy inline secrets remain a migration fallback.
+process lifetime. M365 webview password/TOTP values take a stricter path: Node
+passes only opaque references and the native OAuth helper reads them directly
+into zeroizing memory, with origin-restricted injection. Legacy inline secrets
+remain a migration fallback; legacy inline TOTP is not forwarded to autofill.
 
 Helper resolution is centralized: an absolute operator-supplied
 `EULE_HELPER_PATH` or a source checkout's Cargo build is used before the
@@ -68,9 +72,9 @@ version-matched, checksum-verified release download. This keeps bootstrap and
 pre-release development functional without weakening the integrity policy for
 installed releases.
 
-`ConfiguredCredentialResolver` is the single read boundary used by auth,
-connector routing, and CLI login, so keychain and legacy-inline resolution
-cannot drift between consumers.
+`ConfiguredCredentialResolver` is the SSOT for connector/Google resolution and
+for selecting opaque M365 auto-auth references. It deliberately does not read
+M365 password/TOTP values into Node.
 
 `CONNECTOR_CAPABILITIES` is the single source of truth for supported
 connector/domain combinations, required/optional fields, local credential mode,

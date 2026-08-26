@@ -60,29 +60,30 @@ Eule is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) serve
 
 - **Multi-provider architecture** — M365, Google Workspace, CalDAV, CardDAV, IMAP, iCal, Signal
 - **Tiered API access** — Graph API → EWS → IMAP/SMTP, auto-detected per tenant
-- **Native webview login** — cross-platform helper for broker-only clients, with optional TOTP autofill
+- **Native webview login** — cross-platform helper with opt-in password/TOTP autofill
 - **Role-based context** — map accounts and connectors to professional roles
 - **LLM-optimized output** — HTML emails rendered as clean Markdown with thread splitting
 
-## Tools (61)
+## Tools (63)
 
 ### 🔐 Auth (5)
 
 | Tool | Description |
 |---|---|
 | `auth_status` | Show authentication status and configuration |
-| `auth_login` | Authenticate an account; M365 can use the local Eule webview with TOTP autofill |
+| `auth_login` | Authenticate an account; M365 can use the local Eule webview with opt-in password/TOTP autofill |
 | `auth_probe` | Test which API tier works for an account |
 | `auth_accounts` | List token health without exposing credentials |
 | `auth_logout` | Remove locally stored tokens for an account |
 
-### 👤 Roles, accounts & configuration (16)
+### 👤 Roles, accounts & configuration (18)
 
 Eule can be configured end-to-end by an LLM without the user editing YAML.
 **No MCP tool accepts a secret**: a write that needs a password, API token,
-Google client secret, or TOTP seed opens a branded local Eule window. The helper
-validates and writes the value directly to the OS credential store; MCP receives
-only success/failure and an opaque reference is committed to `config.yaml`.
+Google client secret, TOTP seed, or opt-in M365 password opens a branded local
+Eule window. The helper validates and writes the value directly to the OS
+credential store; MCP receives only success/failure and an opaque reference is
+committed to `config.yaml`.
 
 | Tool | Description |
 |---|---|
@@ -102,6 +103,8 @@ only success/failure and an opaque reference is committed to `config.yaml`.
 | `google_oauth_remove` | Remove Google OAuth config and its local secret `[DESTRUCTIVE]` |
 | `totp_configure` | Capture/rotate a validated TOTP seed locally `[WRITES]` |
 | `totp_remove` | Remove a TOTP binding and local secret `[DESTRUCTIVE]` |
+| `m365_password_configure` | Opt in to local M365 webview password autofill `[WRITES]` |
+| `m365_password_remove` | Remove an M365 password-autofill binding `[DESTRUCTIVE]` |
 
 Roles can define an enforceable `policy` with `enabled`, `readOnly`, and
 `allowedConnectorKinds`. Policy checks happen centrally in the connector
@@ -305,10 +308,11 @@ configure Eule; it can perform this sequence itself:
 2. Create a work context with `role_upsert`.
 3. Call `connector_configure` for each account/domain binding.
 4. If prompted, enter the requested secret in the native Eule window.
-5. Use `google_oauth_configure` or `totp_configure` when applicable, then
+5. Use `google_oauth_configure`, `totp_configure`, or the explicitly opt-in
+   `m365_password_configure` when applicable, then
    `auth_login` for OAuth providers. When the M365 OAuth client has a registered
    `redirectUri`, the default `method: auto` opens the local Eule webview and
-   fills any configured TOTP code without exposing it to MCP.
+   fills configured password/TOTP values without exposing them to MCP or Node.
 6. Verify local secret bindings with `credential_status` and OAuth tokens with
    `auth_accounts`.
 
@@ -359,12 +363,13 @@ OAuth client.
   broker default (`oob`) unless you override it with `--redirect-uri`; the
   automatic path above instead targets `nativeclient`, which is what the default
   client registers. The helper writes the token itself — it never
-  returns through the MCP/LLM. If the account has a TOTP secret configured
-  (`autoAuth[].totpSecretRef`), the MFA code is auto-filled (the password is still
-  typed by you); pass `--no-totp` to disable.
+  returns through the MCP/LLM. Configured `autoAuth` password and TOTP bindings
+  are resolved directly by the native helper and auto-filled only on Microsoft's
+  HTTPS login origin. Pass `--no-password` or `--no-totp` to disable either one
+  for a login.
 - **Flags:** `--account <email>`, `--client-id <id>`, `--api-version v1|v2`,
   `--tier graph|ews|imap`, `--redirect-uri <uri>`. Flow overrides: `--capture`,
-  `--device`, `--browser`.
+  `--device`, `--browser`; autofill overrides: `--no-password`, `--no-totp`.
 
 The `eule-helper` binary (Rust + `wry` = WKWebView/WebView2/WebKitGTK) is
 resolved without making local development depend on an already published
@@ -506,16 +511,16 @@ kiro-cli mcp add --name eule --command node --args "/path/to/eule-mcp/dist/serve
 }
 ```
 
-### Optional: TOTP autofill for M365 webview login
+### Optional: M365 password and TOTP autofill
 
 When you log in via the native webview (`auth_login` with `method: auto` or
-`webview`, or CLI `login --capture`), the MFA code can be filled automatically
-from a stored TOTP secret. You still type the password yourself in the window;
-only the 6-digit code is auto-entered. Store the secret via `totp_configure` or
-the CLI credential window; it never passes through the model or argv:
+`webview`, or CLI `login --capture`), Eule can fill a stored password and TOTP
+code. Each is a separate opt-in. Capture them via the MCP configuration tools
+or CLI credential window:
 
 ```bash
 node dist/cli/index.js secret totp --account you@example.com
+node dist/cli/index.js secret password --account you@example.com
 ```
 
 The helper validates the base32 seed and stores it directly in the OS credential
@@ -525,19 +530,38 @@ store. YAML contains only its generated reference:
 autoAuth:
   - account: "you@example.com"
     totpSecretRef: "totp/0123456789abcdef.a1b2c3d4"
+    passwordSecretRef: "oauth/m365/password/0123456789abcdef.a1b2c3d4"
 ```
 
-Pass `--no-totp` to `login --capture` to skip autofill for a given login.
+The opaque references—not the values—pass from TypeScript to the helper. The
+helper reads both secrets directly from macOS Keychain, Windows Credential
+Manager, or Linux Secret Service into zeroizing memory. It never places them in
+Node memory, a temporary file, an environment variable, argv, stdout, logs, MCP,
+or model context. Password injection is permitted only while the current page is
+exactly `https://login.microsoftonline.com`; arbitrary password characters are
+JSON-encoded before the one-time field fill. Pass `--no-password` or `--no-totp`
+to skip either binding for a login, or add `--remove` to the corresponding
+`eule-mcp secret` command to delete it.
+
+This is a security trade-off, not a stronger MFA mode: storing password and
+TOTP seed under the same OS principal collocates both factors. Leave either or
+both bindings unconfigured when tenant policy or your threat model requires
+independent factors. Legacy inline `totpSecret` values are migration-only and
+are not forwarded to autofill; run `totp_configure` once to migrate them.
 
 After the initial interactive OAuth login, normal M365 access is unattended:
 Eule reuses the stored token and refreshes it before expiry. A new user action
 is required only when Microsoft revokes/expires the refresh token or Conditional
-Access requires a fresh sign-in. Eule deliberately does not store or replay the
-Microsoft password.
+Access requires a fresh sign-in. With password and TOTP autofill opted in, the
+native webview can complete ordinary Microsoft login screens automatically;
+Conditional Access, federated identity providers, CAPTCHA, push approval,
+passkeys, changed Microsoft UI, or other interactive challenges can still
+require the user. The login window may appear briefly and this is not a promise
+of fully headless authentication.
 
 ## Roadmap
 
-- [x] OAuth with PKCE + webview TOTP autofill
+- [x] OAuth with PKCE + opt-in webview password/TOTP autofill
 - [x] Device-code login (cross-platform, no redirect URI; CA-blockable)
 - [x] Legacy v1 endpoint + per-token client-id/apiVersion (locked-down tenants)
 - [x] Webview capture helper (Rust/wry) — cross-platform, signed + notarized releases

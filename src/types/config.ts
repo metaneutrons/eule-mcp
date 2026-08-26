@@ -23,15 +23,15 @@ export interface ConnectorConfig {
   readonly signalCliUrl?: string;
 }
 
-/** Optional auto-authentication credentials for an account. */
-/** Per-account MFA autofill config for the native Eule webview. The password is
- *  always typed by the user; only the TOTP secret is stored locally. */
+/** Optional per-account autofill bindings for the native Eule webview. */
 export interface AutoAuthConfig {
   readonly account: string;
-  /** Legacy inline base32 TOTP seed for MFA autofill. */
+  /** Legacy inline base32 TOTP seed. Migration-only; not forwarded to autofill. */
   readonly totpSecret?: string;
   /** Preferred OS credential-store reference for the TOTP seed. */
   readonly totpSecretRef?: string;
+  /** Opt-in OS credential-store reference for the Microsoft 365 password. */
+  readonly passwordSecretRef?: string;
 }
 
 /** Connectors grouped by domain. */

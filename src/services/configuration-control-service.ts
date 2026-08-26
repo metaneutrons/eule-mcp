@@ -4,6 +4,7 @@ import {
   CONNECTOR_CAPABILITIES,
   connectorCredentialRef,
   googleClientSecretRef,
+  m365PasswordCredentialRef,
   parseConnectorConfig,
   totpCredentialRef,
 } from "../config/index.js";
@@ -211,7 +212,7 @@ export class ConfigurationControlService {
   async configureTotp(accountInput: string): Promise<void> {
     const account = accountInput.trim().toLowerCase();
     if (!account) throw new Error("Account is required");
-    return this.exclusive(`totp:${account}`, () => this.configureTotpLocked(account));
+    return this.exclusive(`auto-auth:${account}`, () => this.configureTotpLocked(account));
   }
 
   private async configureTotpLocked(account: string): Promise<void> {
@@ -223,7 +224,7 @@ export class ConfigurationControlService {
     await this.credentials.capture(reference, `TOTP seed for ${account}`, { format: "totp" });
     try {
       this.assertRevision(revision);
-      this.config.upsertAutoAuth(account, { totpSecretRef: reference }, revision);
+      this.config.upsertAutoAuth(account, { totpSecret: null, totpSecretRef: reference }, revision);
     } catch (error) {
       this.tryRemove(reference);
       throw error;
@@ -235,7 +236,7 @@ export class ConfigurationControlService {
   async removeTotp(accountInput: string): Promise<void> {
     const account = accountInput.trim().toLowerCase();
     if (!account) throw new Error("Account is required");
-    return this.exclusive(`totp:${account}`, () => {
+    return this.exclusive(`auto-auth:${account}`, () => {
       this.removeTotpLocked(account);
     });
   }
@@ -243,10 +244,50 @@ export class ConfigurationControlService {
   private removeTotpLocked(account: string): void {
     const reference = this.config
       .get()
-      .autoAuth?.find((entry) => entry.account === account)?.totpSecretRef;
-    this.config.removeAutoAuth(account);
+      .autoAuth?.find((entry) => entry.account.toLowerCase() === account)?.totpSecretRef;
+    this.config.removeAutoAuthCredential(account, "totp");
     if (reference) this.tryRemove(reference);
     this.audit("totp.removed", { account });
+  }
+
+  async configureM365Password(accountInput: string): Promise<void> {
+    const account = accountInput.trim().toLowerCase();
+    if (!account) throw new Error("Account is required");
+    return this.exclusive(`auto-auth:${account}`, () => this.configureM365PasswordLocked(account));
+  }
+
+  private async configureM365PasswordLocked(account: string): Promise<void> {
+    const previous = this.config
+      .get()
+      .autoAuth?.find((entry) => entry.account.toLowerCase() === account)?.passwordSecretRef;
+    const revision = this.config.revision;
+    const reference = m365PasswordCredentialRef(account);
+    await this.credentials.capture(
+      reference,
+      `Microsoft 365 password for ${account} — store for automatic Eule webview sign-in`,
+    );
+    try {
+      this.assertRevision(revision);
+      this.config.upsertAutoAuth(account, { passwordSecretRef: reference }, revision);
+    } catch (error) {
+      this.tryRemove(reference);
+      throw error;
+    }
+    if (previous) this.tryRemove(previous);
+    this.audit("m365_password.configured", { account });
+  }
+
+  async removeM365Password(accountInput: string): Promise<void> {
+    const account = accountInput.trim().toLowerCase();
+    if (!account) throw new Error("Account is required");
+    return this.exclusive(`auto-auth:${account}`, () => {
+      const reference = this.config
+        .get()
+        .autoAuth?.find((entry) => entry.account.toLowerCase() === account)?.passwordSecretRef;
+      this.config.removeAutoAuthCredential(account, "password");
+      if (reference) this.tryRemove(reference);
+      this.audit("m365_password.removed", { account });
+    });
   }
 
   credentialStatus(): CredentialBindingStatus[] {
@@ -275,6 +316,11 @@ export class ConfigurationControlService {
       if (entry.totpSecretRef)
         bindings.push({ scope: `totp/${entry.account}`, reference: entry.totpSecretRef });
       else if (entry.totpSecret) bindings.push({ scope: `totp/${entry.account}`, legacy: true });
+      if (entry.passwordSecretRef)
+        bindings.push({
+          scope: `m365-password/${entry.account}`,
+          reference: entry.passwordSecretRef,
+        });
     }
     return bindings.map((binding) => ({
       scope: binding.scope,

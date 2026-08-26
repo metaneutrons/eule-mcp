@@ -26,7 +26,14 @@ export function totpCredentialRef(account: string): string {
   return `totp/${accountHash}.${revision()}`;
 }
 
+export function m365PasswordCredentialRef(account: string): string {
+  const accountHash = createHash("sha256").update(account.trim().toLowerCase()).digest("hex");
+  return `oauth/m365/password/${accountHash}.${revision()}`;
+}
+
 export const CONNECTOR_CREDENTIAL_REF_PATTERN =
   /^connector\/[A-Za-z0-9@+][A-Za-z0-9@+._-]*\/(?:mail|calendar|contacts|messenger|files|documents)\/[A-Za-z0-9@+][A-Za-z0-9@+._-]*$/;
 export const GOOGLE_CREDENTIAL_REF_PATTERN = /^oauth\/google\/client-secret(?:\.[A-Za-z0-9]+)?$/;
 export const TOTP_CREDENTIAL_REF_PATTERN = /^totp\/[A-Za-z0-9][A-Za-z0-9._-]*$/;
+export const M365_PASSWORD_CREDENTIAL_REF_PATTERN =
+  /^oauth\/m365\/password\/[A-Za-z0-9][A-Za-z0-9._-]*$/;

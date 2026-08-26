@@ -871,6 +871,7 @@ dependencies = [
  "ureq",
  "url",
  "wry",
+ "zeroize",
 ]
 
 [[package]]

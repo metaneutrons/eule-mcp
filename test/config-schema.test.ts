@@ -199,14 +199,20 @@ describe("configuration SSOT schema", () => {
     ).toThrow(/does not use a local credential/);
   });
 
-  it("accepts keychain references for Google and TOTP but not dual storage", () => {
+  it("accepts keychain references for Google and M365 auto-auth but not dual TOTP storage", () => {
     const configured = {
       ...base,
       google: {
         clientId: "google-client",
         clientSecretRef: "oauth/google/client-secret.a1b2",
       },
-      autoAuth: [{ account: "user@example.com", totpSecretRef: "totp/a1b2.c3d4" }],
+      autoAuth: [
+        {
+          account: "user@example.com",
+          totpSecretRef: "totp/a1b2.c3d4",
+          passwordSecretRef: "oauth/m365/password/a1b2.c3d4",
+        },
+      ],
     };
     expect(parseAppConfig(configured).google?.clientSecretRef).toContain("client-secret");
     expect(() =>
@@ -217,13 +223,36 @@ describe("configuration SSOT schema", () => {
     ).toThrow(/exactly one/);
     expect(() =>
       parseAppConfig({
+        ...base,
+        autoAuth: [
+          {
+            account: "user@example.com",
+            passwordSecretRef: "oauth/m365/password/a1b2.c3d4",
+          },
+        ],
+      }),
+    ).not.toThrow();
+    expect(() =>
+      parseAppConfig({
+        ...base,
+        autoAuth: [{ account: "user@example.com", passwordSecretRef: "other/password" }],
+      }),
+    ).toThrow(/passwordSecretRef/);
+    expect(() =>
+      parseAppConfig({
+        ...base,
+        autoAuth: [{ account: "user@example.com", password: "plaintext-is-not-supported" }],
+      }),
+    ).toThrow(/Unrecognized key/);
+    expect(() =>
+      parseAppConfig({
         ...configured,
         autoAuth: [{ ...configured.autoAuth[0], totpSecret: "JBSWY3DPEHPK3PXP" }],
       }),
-    ).toThrow(/exactly one/);
+    ).toThrow(/cannot be combined/);
   });
 
-  it("rejects duplicate TOTP accounts case-insensitively", () => {
+  it("rejects duplicate auto-auth accounts case-insensitively", () => {
     expect(() =>
       parseAppConfig({
         ...base,
@@ -232,7 +261,7 @@ describe("configuration SSOT schema", () => {
           { account: "user@example.com", totpSecretRef: "totp/e5f6.a7b8" },
         ],
       }),
-    ).toThrow(/duplicate TOTP account/);
+    ).toThrow(/duplicate auto-auth account/);
   });
 });
 

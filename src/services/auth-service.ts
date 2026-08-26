@@ -119,15 +119,6 @@ export class AuthService {
     });
   }
 
-  private hasTotpBinding(account: string | undefined): boolean {
-    if (!account) return false;
-    return Boolean(
-      this.config
-        .get()
-        .autoAuth?.some((entry) => entry.account.toLowerCase() === account.toLowerCase()),
-    );
-  }
-
   private requireWebviewAccount(account: string | undefined): string {
     if (!account) throw new Error("An account email is required for the native Eule webview login");
     return account;
@@ -140,6 +131,7 @@ export class AuthService {
   ): Promise<AccountToken> {
     const oauth = this.config.get().oauth;
     const authParam = tierAuthParam(oauth, tier);
+    const autoAuth = this.secrets.m365AutoAuth(account);
     const before = this.tokens.load();
     const exitCode = await this.captureM365({
       clientId: oauth.clientId,
@@ -150,7 +142,7 @@ export class AuthService {
       tenant: oauth.tenant,
       loginHint: account,
       redirectUri,
-      totpSecret: this.hasTotpBinding(account) ? this.secrets.totp(account) : undefined,
+      ...autoAuth,
       signal: currentExecutionSignal(),
     });
     if (exitCode !== 0)

@@ -20,7 +20,8 @@ within a few days.
 - **No upstream injection.** EWS SOAP, Microsoft Graph OData `$filter`, Graph
   URL path segments, and iCalendar/vCard values are escaped/encoded before use.
 - **Secrets at rest.** Connector passwords/API tokens, Google client secrets,
-  and TOTP seeds created through MCP or the CLI are stored in macOS Keychain,
+  TOTP seeds, and explicitly opted-in M365 passwords created through MCP or the
+  CLI are stored in macOS Keychain,
   Windows Credential Manager, or Linux Secret Service; YAML retains only opaque,
   scoped references. Legacy inline secrets remain supported for migration.
   `~/.eule` is `0700`, while `config.yaml` and `tokens.json` are atomically
@@ -64,14 +65,16 @@ within a few days.
   paths are local trust decisions and deliberately bypass release checksums.
   Relative overrides are rejected. The released macOS build is a Developer-ID-
   signed, notarized universal binary (hardened runtime + secure timestamp).
-- **MFA autofill is opt-in and secret-in-process.** `login --capture` fills a
-  TOTP code only if you configure `autoAuth[].totpSecretRef`. The seed is read
-  from the OS credential store and passed to the helper via an environment
-  variable (never argv), and it stays inside the helper process: the code is
-  derived there, and only the resulting six-digit one-time code is injected into
-  the page to fill the MFA form. The seed itself never reaches page JavaScript,
-  argv, stdout, or logs. Note the trade-off: storing a TOTP seed at rest still
-  weakens MFA, so this is off unless you enable it. The password is never stored.
+- **M365 autofill is explicit opt-in and helper-local.** TypeScript passes only
+  scoped OS-store references to `eule-helper`; the helper reads password/TOTP
+  values directly into zeroizing memory. They never traverse Node, a temporary
+  file, an environment variable, argv, stdout, logs, MCP, or model context.
+  Password and generated-code injection are gated twice on the exact
+  `https://login.microsoftonline.com` origin, and arbitrary password bytes are
+  JSON-encoded before the one-time fill. OAuth redirects require an exact base
+  URI, matching OAuth state, and PKCE. Stored password and TOTP each reduce the
+  security gained from independent factors, so both are disabled until
+  separately configured by the user in Eule's branded local prompt.
 - **Auth debug artifacts** (DOM/screenshots of the login flow) are written only
   when `EULE_AUTH_DEBUG` is set, and then `0600`.
 

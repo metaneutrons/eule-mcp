@@ -13,6 +13,7 @@ use tao::{
     window::WindowBuilder,
 };
 use wry::WebViewBuilder;
+use zeroize::Zeroize;
 
 const CANCEL: &str = "__EULE_CANCEL__";
 
@@ -96,7 +97,7 @@ pub fn run(args: Args) -> Result<(), String> {
     let _webview = WebViewBuilder::new()
         .with_html(page(&args.label))
         .with_ipc_handler(move |req| {
-            let value = req.into_body();
+            let mut value = req.into_body();
             if value == CANCEL {
                 eprintln!("error: cancelled");
                 std::process::exit(3);
@@ -116,6 +117,7 @@ pub fn run(args: Args) -> Result<(), String> {
             } else {
                 Err("missing credential destination".into())
             };
+            value.zeroize();
             match result {
                 Ok(()) => {
                     println!("ok");

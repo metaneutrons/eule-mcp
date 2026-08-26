@@ -2,9 +2,11 @@ export { ConfigManager } from "./config-manager.js";
 export {
   connectorCredentialRef,
   googleClientSecretRef,
+  m365PasswordCredentialRef,
   totpCredentialRef,
   CONNECTOR_CREDENTIAL_REF_PATTERN,
   GOOGLE_CREDENTIAL_REF_PATTERN,
+  M365_PASSWORD_CREDENTIAL_REF_PATTERN,
   TOTP_CREDENTIAL_REF_PATTERN,
 } from "./credential-references.js";
 export { RolePolicyService } from "./role-policy.js";

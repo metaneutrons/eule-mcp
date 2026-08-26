@@ -3,6 +3,7 @@ import type { AppConfig, ConnectorConfig } from "../types/index.js";
 import {
   CONNECTOR_CREDENTIAL_REF_PATTERN,
   GOOGLE_CREDENTIAL_REF_PATTERN,
+  M365_PASSWORD_CREDENTIAL_REF_PATTERN,
   TOTP_CREDENTIAL_REF_PATTERN,
 } from "./credential-references.js";
 import { assertConnectorCapability } from "./connector-capabilities.js";
@@ -125,14 +126,21 @@ export const appConfigSchema = z
             account,
             totpSecret: z.string().min(1).optional(),
             totpSecretRef: z.string().regex(TOTP_CREDENTIAL_REF_PATTERN).optional(),
+            passwordSecretRef: z.string().regex(M365_PASSWORD_CREDENTIAL_REF_PATTERN).optional(),
           })
           .strict()
           .superRefine((entry, ctx) => {
-            if (Boolean(entry.totpSecret) === Boolean(entry.totpSecretRef))
+            if (entry.totpSecret && entry.totpSecretRef)
               ctx.addIssue({
                 code: "custom",
                 path: ["totpSecretRef"],
-                message: "configure exactly one of totpSecret or totpSecretRef",
+                message: "totpSecret and totpSecretRef cannot be combined",
+              });
+            if (!entry.totpSecret && !entry.totpSecretRef && !entry.passwordSecretRef)
+              ctx.addIssue({
+                code: "custom",
+                path: ["passwordSecretRef"],
+                message: "configure at least one auto-auth credential reference",
               });
           }),
       )
@@ -148,7 +156,7 @@ export const appConfigSchema = z
         ctx.addIssue({
           code: "custom",
           path: ["autoAuth", entryIndex, "account"],
-          message: "duplicate TOTP account",
+          message: "duplicate auto-auth account",
         });
       autoAuthAccounts.add(normalized);
     }
