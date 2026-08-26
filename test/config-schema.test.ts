@@ -199,7 +199,7 @@ describe("configuration SSOT schema", () => {
     ).toThrow(/does not use a local credential/);
   });
 
-  it("accepts keychain references for Google and M365 auto-auth but not dual TOTP storage", () => {
+  it("accepts Google and TOTP references but rejects dual TOTP storage", () => {
     const configured = {
       ...base,
       google: {
@@ -210,7 +210,6 @@ describe("configuration SSOT schema", () => {
         {
           account: "user@example.com",
           totpSecretRef: "totp/a1b2.c3d4",
-          passwordSecretRef: "oauth/m365/password/a1b2.c3d4",
         },
       ],
     };
@@ -221,6 +220,15 @@ describe("configuration SSOT schema", () => {
         google: { ...configured.google, clientSecret: "legacy" },
       }),
     ).toThrow(/exactly one/);
+    expect(() =>
+      parseAppConfig({
+        ...configured,
+        autoAuth: [{ ...configured.autoAuth[0], totpSecret: "JBSWY3DPEHPK3PXP" }],
+      }),
+    ).toThrow(/cannot be combined/);
+  });
+
+  it("accepts only scoped references for opt-in M365 passwords", () => {
     expect(() =>
       parseAppConfig({
         ...base,
@@ -244,12 +252,6 @@ describe("configuration SSOT schema", () => {
         autoAuth: [{ account: "user@example.com", password: "plaintext-is-not-supported" }],
       }),
     ).toThrow(/Unrecognized key/);
-    expect(() =>
-      parseAppConfig({
-        ...configured,
-        autoAuth: [{ ...configured.autoAuth[0], totpSecret: "JBSWY3DPEHPK3PXP" }],
-      }),
-    ).toThrow(/cannot be combined/);
   });
 
   it("rejects duplicate auto-auth accounts case-insensitively", () => {
