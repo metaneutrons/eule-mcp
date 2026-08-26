@@ -30,9 +30,11 @@
 
 - Stdio has one operating-system principal and cannot provide multi-human or
   multi-tenant RBAC. An authenticated HTTP/OIDC transport is still required.
-- Connector passwords/API tokens, Google client secrets, and optional TOTP
-  seeds are stored in the native OS credential store through the branded local
-  helper. Legacy inline YAML secrets remain readable for migration. OAuth access
+- Connector passwords/API tokens, Google client secrets, optional TOTP seeds,
+  and explicitly opted-in M365 passwords are stored in the native OS credential
+  store through the branded local helper. M365 auto-auth values are read
+  directly by that helper and never materialized in Node. Legacy inline YAML
+  secrets remain readable for migration. OAuth access
   and refresh tokens remain in the owner-only token file.
 - IMAP library operations cannot currently be force-cancelled by the shared
   execution signal; the tool deadline stops waiting but the socket may finish

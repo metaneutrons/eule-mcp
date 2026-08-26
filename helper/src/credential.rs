@@ -3,6 +3,7 @@
 use crate::util;
 use clap::{Args as ClapArgs, Subcommand};
 use std::path::PathBuf;
+use zeroize::Zeroizing;
 
 const SERVICE: &str = "eule-mcp";
 
@@ -30,15 +31,23 @@ pub fn set(reference: &str, secret: &str) -> Result<(), String> {
         .map_err(|e| format!("storing credential: {e}"))
 }
 
+/// Read a credential into zeroizing memory for native helper use. Callers must
+/// never print or serialize the returned value.
+pub fn get(reference: &str) -> Result<Zeroizing<String>, String> {
+    validate_reference(reference)?;
+    keyring::Entry::new(SERVICE, reference)
+        .map_err(|e| format!("opening OS credential store: {e}"))?
+        .get_password()
+        .map(Zeroizing::new)
+        .map_err(|e| format!("reading credential {reference}: {e}"))
+}
+
 pub fn run(args: Args) -> Result<(), String> {
     match args.command {
         Command::Get { reference, out } => {
-            validate_reference(&reference)?;
-            let secret = keyring::Entry::new(SERVICE, &reference)
-                .map_err(|e| format!("opening OS credential store: {e}"))?
-                .get_password()
-                .map_err(|e| format!("reading credential {reference}: {e}"))?;
-            util::write_secure(&out, &secret).map_err(|e| format!("writing credential: {e}"))
+            let secret = get(&reference)?;
+            util::write_secure(&out, secret.as_str())
+                .map_err(|e| format!("writing credential: {e}"))
         }
         Command::Delete { reference } => {
             validate_reference(&reference)?;
@@ -53,7 +62,8 @@ pub fn run(args: Args) -> Result<(), String> {
                 .map_err(|e| format!("opening OS credential store: {e}"))?
                 .get_password()
             {
-                Ok(_) => {
+                Ok(secret) => {
+                    drop(Zeroizing::new(secret));
                     println!("configured");
                     Ok(())
                 }
@@ -85,6 +95,7 @@ fn validate_reference(reference: &str) -> Result<(), String> {
                                 .all(|character| character.is_ascii_alphanumeric())
                     })
         }
+        ["oauth", "m365", "password", _] => true,
         ["totp", _] => true,
         _ => false,
     };
@@ -115,6 +126,8 @@ mod tests {
         assert!(validate_reference("connector/work/mail/user@example.com").is_ok());
         assert!(validate_reference("oauth/google/client-secret.a1b2").is_ok());
         assert!(validate_reference("oauth/google/client-secretevil").is_err());
+        assert!(validate_reference("oauth/m365/password/a1b2.c3d4").is_ok());
+        assert!(validate_reference("oauth/m365/password").is_err());
         assert!(validate_reference("totp/a1b2").is_ok());
         assert!(validate_reference("other-app/secret").is_err());
         assert!(validate_reference("connector/../../escape").is_err());

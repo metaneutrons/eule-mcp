@@ -38,9 +38,10 @@ describe("AuthService inventory", () => {
 });
 
 describe("AuthService M365 webview login", () => {
-  it("routes auto login through the local helper when TOTP is configured", async () => {
+  it("passes only credential references to the local helper", async () => {
     const account = "user@example.com";
-    const totpSecret = "JBSWY3DPEHPK3PXP";
+    const totpCredentialRef = "totp/a1b2.c3d4";
+    const passwordCredentialRef = "oauth/m365/password/a1b2.c3d4";
     let store: TokenStore = { accounts: {} };
     const repository: TokenRepository = {
       load: () => store,
@@ -56,7 +57,9 @@ describe("AuthService M365 webview login", () => {
           apiVersion: "v1",
           redirectUri: "urn:ietf:wg:oauth:2.0:oob",
         },
-        autoAuth: [{ account, totpSecret }],
+        autoAuth: [
+          { account, totpSecretRef: totpCredentialRef, passwordSecretRef: passwordCredentialRef },
+        ],
         roles: [],
       }),
       euleDirPath: "/data",
@@ -74,10 +77,18 @@ describe("AuthService M365 webview login", () => {
       store = { accounts: { [account]: capturedToken } };
       return 0;
     });
+    const credentialBroker = {
+      capture: vi.fn(),
+      read: vi.fn(() => {
+        throw new Error("M365 secret must not enter Node");
+      }),
+      status: vi.fn(),
+      remove: vi.fn(),
+    };
     const auth = new AuthService(
       config,
       repository,
-      new ConfiguredCredentialResolver(config),
+      new ConfiguredCredentialResolver(config, credentialBroker),
       capture,
     );
     const execution = new AbortController();
@@ -107,10 +118,12 @@ describe("AuthService M365 webview login", () => {
         tenant: "organizations",
         loginHint: account,
         redirectUri: "urn:ietf:wg:oauth:2.0:oob",
-        totpSecret,
+        totpCredentialRef,
+        passwordCredentialRef,
         signal: execution.signal,
       }),
     );
+    expect(credentialBroker.read).not.toHaveBeenCalled();
   });
 
   it("requires an account for an explicitly selected M365 webview", async () => {

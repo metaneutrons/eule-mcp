@@ -134,7 +134,7 @@ export function registerConfigurationControlTools(
     "credential_status",
     {
       description:
-        "Report credential presence for connectors, Google OAuth, and TOTP without exposing secret values",
+        "Report credential presence for connectors, Google OAuth, TOTP, and opt-in M365 password autofill without exposing secret values",
       inputSchema: {},
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
@@ -234,6 +234,53 @@ export function registerConfigurationControlTools(
         async () => {
           await control.removeTotp(account);
           return textResult(`✅ Removed TOTP configuration for ${account.toLowerCase()}.`);
+        },
+        { signal: extra.signal },
+      ),
+  );
+
+  server.registerTool(
+    "m365_password_configure",
+    {
+      description:
+        "Opt in to Microsoft 365 password autofill. Opens a branded local Eule window and stores the password in the OS credential store; the secret never enters MCP, model context, Node, argv, environment variables, or a temporary file. Autofill is restricted to https://login.microsoftonline.com. [WRITES config/keychain]",
+      inputSchema: { account: z.email() },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async ({ account }, extra) =>
+      executeTool(
+        "m365_password_configure",
+        async () => {
+          await control.configureM365Password(account);
+          return textResult(
+            `✅ Stored the opt-in Microsoft 365 password for ${account.toLowerCase()} in the OS credential store.`,
+          );
+        },
+        { timeoutMs: INTERACTIVE_TIMEOUT_MS, signal: extra.signal },
+      ),
+  );
+
+  server.registerTool(
+    "m365_password_remove",
+    {
+      description:
+        "Remove an account's Microsoft 365 password-autofill binding and local credential. [DESTRUCTIVE]",
+      inputSchema: { account: z.email() },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false },
+    },
+    async ({ account }, extra) =>
+      executeTool(
+        "m365_password_remove",
+        async () => {
+          await control.removeM365Password(account);
+          return textResult(
+            `✅ Removed Microsoft 365 password autofill for ${account.toLowerCase()}.`,
+          );
         },
         { signal: extra.signal },
       ),

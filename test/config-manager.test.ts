@@ -88,6 +88,21 @@ describe("ConfigManager mutations (backing the MCP config tools)", () => {
     entry = new ConfigManager().get().autoAuth?.find((a) => a.account === "me@x.de");
     expect(entry?.totpSecret).toBeUndefined();
     expect(entry?.totpSecretRef).toBe("totp/a1b2.c3d4");
+
+    cm.upsertAutoAuth("me@x.de", {
+      passwordSecretRef: "oauth/m365/password/a1b2.c3d4",
+    });
+    entry = new ConfigManager().get().autoAuth?.find((a) => a.account === "me@x.de");
+    expect(entry?.totpSecretRef).toBe("totp/a1b2.c3d4");
+    expect(entry?.passwordSecretRef).toBe("oauth/m365/password/a1b2.c3d4");
+
+    cm.removeAutoAuthCredential("me@x.de", "totp");
+    entry = new ConfigManager().get().autoAuth?.find((a) => a.account === "me@x.de");
+    expect(entry?.totpSecretRef).toBeUndefined();
+    expect(entry?.passwordSecretRef).toBe("oauth/m365/password/a1b2.c3d4");
+
+    cm.removeAutoAuthCredential("me@x.de", "password");
+    expect(new ConfigManager().get().autoAuth).toBeUndefined();
   });
 
   it("rejects an interactive commit based on a stale disk revision", () => {

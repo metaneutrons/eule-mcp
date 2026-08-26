@@ -9,12 +9,17 @@
 use crate::util;
 use clap::Args as ClapArgs;
 use std::path::PathBuf;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use tao::{
     event::{Event, WindowEvent},
     event_loop::{ControlFlow, EventLoopBuilder},
     window::WindowBuilder,
 };
 use wry::{PageLoadEvent, WebViewBuilder};
+use zeroize::Zeroizing;
 
 /// Event-loop message: the injected page script found the OTP field and wants a
 /// fresh TOTP code filled in (kept off the injected JS so the secret stays in
@@ -22,6 +27,7 @@ use wry::{PageLoadEvent, WebViewBuilder};
 #[derive(Debug, Clone, Copy)]
 enum UserEvent {
     FillTotp,
+    FillPassword,
     /// A page finished loading — (re)inject the MFA poller into the new document.
     InjectPoller,
 }
@@ -55,6 +61,12 @@ pub struct Args {
     /// tokens.json path (default: ~/.eule/tokens.json).
     #[arg(long)]
     tokens_path: Option<PathBuf>,
+    /// OS credential-store reference for an opt-in TOTP seed.
+    #[arg(long)]
+    totp_credential_ref: Option<String>,
+    /// OS credential-store reference for an opt-in Microsoft 365 password.
+    #[arg(long)]
+    password_credential_ref: Option<String>,
     /// Abort after N seconds if the user never finishes.
     #[arg(long, default_value_t = 300)]
     timeout: u64,
@@ -68,13 +80,21 @@ fn base(tenant: &str, v1: bool, leaf: &str) -> String {
 /// Extract the `code` query parameter from an intercepted redirect URL. `url`
 /// crate won't reliably parse `urn:` schemes, so split the query by hand.
 fn code_from(url: &str) -> Option<String> {
-    let q = url.split_once('?')?.1;
+    query_parameter(url, "code")
+}
+
+fn query_parameter(url: &str, name: &str) -> Option<String> {
+    let q = url.split_once('?')?.1.split('#').next()?;
     for pair in q.split('&') {
-        if let Some(v) = pair.strip_prefix("code=") {
+        if let Some(v) = pair.strip_prefix(&format!("{name}=")) {
             return Some(percent_decode(v));
         }
     }
     None
+}
+
+fn matches_redirect(candidate: &str, expected: &str) -> bool {
+    candidate.split(['?', '#']).next() == expected.split(['?', '#']).next()
 }
 
 fn percent_decode(s: &str) -> String {
@@ -182,27 +202,32 @@ fn gen_totp(secret_b32: &str) -> Option<String> {
     totp_at(secret_b32, now)
 }
 
-/// Injected at document start ONLY when auto-TOTP is enabled (or debug is on).
-/// Pure JS, carries no secret: it walks the Microsoft login UI from whatever MFA
-/// method is offered first (number-match push, FIDO, …) to the verification-code
-/// step, and once the OTP field is present asks Rust for a code over IPC. With
+/// Injected after a trusted Microsoft login document loads when local autofill
+/// is enabled (or debug is on). Pure JS, carries no secret: it asks Rust for a
+/// value only when the corresponding password or OTP field is visible. With
 /// `__EULE_DEBUG__` = true it also streams a per-tick DOM snapshot (URL + visible
 /// clickable texts + input name/id/aria-label — NEVER any field VALUE) so the
 /// selectors can be tuned to a specific tenant.
-const AUTO_TOTP_INIT_JS: &str = r#"
+const AUTO_AUTH_INIT_JS: &str = r#"
 (function () {
   if (window.__eulePoller) return;   // idempotent per document (re-injected each page load)
   window.__eulePoller = true;
   var EULE_DEBUG = __EULE_DEBUG__;
-  var requested = false;
+  var totpRequested = false;
+  var passwordRequested = false;
+  function microsoftLogin() { return location.protocol === 'https:' && location.hostname.toLowerCase() === 'login.microsoftonline.com'; }
   function vis(e) { return e && e.offsetParent !== null; }
   function byText(re) {
     return [].slice.call(document.querySelectorAll('a,button,div[role=button],span'))
       .find(function (e) { return vis(e) && re.test(e.textContent || ''); });
   }
   function otp() {
-    return document.querySelector(
-      'input[name="otc"],input[autocomplete="one-time-code"],input[id="idTxtBx_SAOTCC_OTC"],input[aria-label*="ode"],input[placeholder*="ode"]');
+    return [].slice.call(document.querySelectorAll(
+      'input[name="otc"],input[autocomplete="one-time-code"],input[id="idTxtBx_SAOTCC_OTC"],input[aria-label*="ode"],input[placeholder*="ode"]')).find(vis);
+  }
+  function password() {
+    return [].slice.call(document.querySelectorAll(
+      'input[type="password"],input[name="passwd"],input[autocomplete="current-password"],#i0118')).find(vis);
   }
   function snapshot() {
     try {
@@ -215,10 +240,15 @@ const AUTO_TOTP_INIT_JS: &str = r#"
   }
   function tick() {
     try {
+      if (!microsoftLogin()) return;
       if (EULE_DEBUG) snapshot();
+      if (password()) {
+        if (!passwordRequested) { passwordRequested = true; window.ipc.postMessage('eule:need-password'); setTimeout(function () { passwordRequested = false; }, 10000); }
+        return;
+      }
       // At the code field → request a fill (once; re-arm after 35s for a fresh code).
       if (otp()) {
-        if (!requested) { requested = true; window.ipc.postMessage('eule:need-totp'); setTimeout(function () { requested = false; }, 35000); }
+        if (!totpRequested) { totpRequested = true; window.ipc.postMessage('eule:need-totp'); setTimeout(function () { totpRequested = false; }, 35000); }
         return;
       }
       // Prefer the verification-code method wherever it's offered.
@@ -238,18 +268,48 @@ const AUTO_TOTP_INIT_JS: &str = r#"
 
 /// JS (run via evaluate_script) that types `code` into the OTP field and submits.
 fn fill_totp_js(code: &str) -> String {
+    let code = serde_json::to_string(code).expect("serializing TOTP code");
     format!(
         r#"(function () {{
-  var el = document.querySelector('input[name="otc"],input[autocomplete="one-time-code"],input[id="idTxtBx_SAOTCC_OTC"],input[aria-label*="ode"],input[placeholder*="ode"]');
+  if (location.protocol !== 'https:' || location.hostname.toLowerCase() !== 'login.microsoftonline.com') return;
+  var el = [].slice.call(document.querySelectorAll('input[name="otc"],input[autocomplete="one-time-code"],input[id="idTxtBx_SAOTCC_OTC"],input[aria-label*="ode"],input[placeholder*="ode"]')).find(function (e) {{ return e.offsetParent !== null; }});
   if (!el) return;
   var set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-  set.call(el, '{code}');
+  set.call(el, {code});
   el.dispatchEvent(new Event('input', {{ bubbles: true }}));
   el.dispatchEvent(new Event('change', {{ bubbles: true }}));
   var b = document.querySelector('#idSubmit_SAOTCC_Continue,input[type=submit],button[type=submit],#idSIButton9');
   if (b) b.click();
 }})();"#
     )
+}
+
+/// JS that enters an explicitly persisted password. JSON serialization prevents
+/// arbitrary password bytes from becoming executable JavaScript.
+fn fill_password_js(password: &str) -> Zeroizing<String> {
+    let password = Zeroizing::new(serde_json::to_string(password).expect("serializing password"));
+    Zeroizing::new(format!(
+        r#"(function () {{
+  if (location.protocol !== 'https:' || location.hostname.toLowerCase() !== 'login.microsoftonline.com') return;
+  var el = [].slice.call(document.querySelectorAll('input[type="password"],input[name="passwd"],input[autocomplete="current-password"],#i0118')).find(function (e) {{ return e.offsetParent !== null; }});
+  if (!el) return;
+  var set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+  set.call(el, {password});
+  el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+  el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+  setTimeout(function () {{
+    var b = document.querySelector('#idSIButton9,button[type=submit],input[type=submit]');
+    if (b) b.click();
+  }}, 100);
+}})();"#,
+        password = password.as_str()
+    ))
+}
+
+fn is_trusted_login_url(value: &str) -> bool {
+    url::Url::parse(value).is_ok_and(|url| {
+        url.scheme() == "https" && url.host_str() == Some("login.microsoftonline.com")
+    })
 }
 
 pub fn run(args: Args) -> Result<(), String> {
@@ -298,12 +358,27 @@ pub fn run(args: Args) -> Result<(), String> {
         std::process::exit(2);
     });
 
-    // Opt-in TOTP autofill: active only when a secret is supplied (via env, so
-    // it never lands in argv/ps). The password stays manual — only the second
-    // factor is automated.
-    let totp_secret = std::env::var("EULE_TOTP_SECRET")
-        .ok()
-        .filter(|s| !s.is_empty());
+    // Arguments contain opaque references only. The native helper reads the
+    // values directly and keeps them in zeroizing memory; neither secret passes
+    // through Node, argv, environment variables, stdout, or a temporary file.
+    let totp_secret: Option<Zeroizing<String>> = match args.totp_credential_ref.as_deref() {
+        Some(reference) if reference.starts_with("totp/") => {
+            Some(crate::credential::get(reference)?)
+        }
+        Some(_) => return Err("--totp-credential-ref must use the totp/ namespace".into()),
+        None => None,
+    };
+    let password_secret: Option<Zeroizing<String>> = match args.password_credential_ref.as_deref() {
+        Some(reference) if reference.starts_with("oauth/m365/password/") => {
+            Some(crate::credential::get(reference)?)
+        }
+        Some(_) => {
+            return Err(
+                "--password-credential-ref must use the oauth/m365/password/ namespace".into(),
+            );
+        }
+        None => None,
+    };
     // EULE_AUTH_DEBUG streams a DOM snapshot of each MFA screen to
     // ~/.eule/auth-debug.log (0600) so selectors can be tuned. No secret/value.
     let debug = std::env::var_os("EULE_AUTH_DEBUG").is_some();
@@ -315,11 +390,18 @@ pub fn run(args: Args) -> Result<(), String> {
         .build(&event_loop)
         .map_err(|e| format!("window: {e}"))?;
 
+    let trusted_page = Arc::new(AtomicBool::new(false));
     let redirect = args.redirect_uri.clone();
+    let navigation_trusted_page = Arc::clone(&trusted_page);
     let mut builder = WebViewBuilder::new()
         .with_url(&auth_url)
         .with_navigation_handler(move |uri: String| {
-            if uri.starts_with(&redirect) {
+            navigation_trusted_page.store(is_trusted_login_url(&uri), Ordering::Release);
+            if matches_redirect(&uri, &redirect) {
+                if query_parameter(&uri, "state").as_deref() != Some(state.as_str()) {
+                    eprintln!("error: OAuth redirect state mismatch");
+                    std::process::exit(1);
+                }
                 match code_from(&uri) {
                     Some(code) => match redeem_and_store(&args, &verifier, &code) {
                         Ok(account) => {
@@ -340,20 +422,23 @@ pub fn run(args: Args) -> Result<(), String> {
             true
         });
 
-    let auto = totp_secret.is_some() || debug;
+    let auto = totp_secret.is_some() || password_secret.is_some() || debug;
     // The poller is (re)injected on every page load via evaluate_script — NOT
     // with_initialization_script, which in practice only ran on the first page,
     // so the MFA screens (which arrive as later navigations) were never seen.
     let poller_js = auto
-        .then(|| AUTO_TOTP_INIT_JS.replace("__EULE_DEBUG__", if debug { "true" } else { "false" }));
-
+        .then(|| AUTO_AUTH_INIT_JS.replace("__EULE_DEBUG__", if debug { "true" } else { "false" }));
     if auto {
         if debug {
             eprintln!("EULE_AUTH_DEBUG: DOM snapshots → {}", debug_log.display());
         }
         // ipc: page → Rust (need a code / a debug snapshot).
         let ipc_proxy = event_loop.create_proxy();
+        let ipc_trusted_page = Arc::clone(&trusted_page);
         builder = builder.with_ipc_handler(move |req| {
+            if !ipc_trusted_page.load(Ordering::Acquire) {
+                return;
+            }
             let body = req.into_body();
             if let Some(payload) = body.strip_prefix("eule:debug:") {
                 use std::io::Write;
@@ -374,12 +459,17 @@ pub fn run(args: Args) -> Result<(), String> {
                 }
             } else if body == "eule:need-totp" {
                 let _ = ipc_proxy.send_event(UserEvent::FillTotp);
+            } else if body == "eule:need-password" {
+                let _ = ipc_proxy.send_event(UserEvent::FillPassword);
             }
         });
         // Re-inject the poller into each new document once it finishes loading.
         let load_proxy = event_loop.create_proxy();
-        builder = builder.with_on_page_load_handler(move |event, _url| {
-            if matches!(event, PageLoadEvent::Finished) {
+        let load_trusted_page = Arc::clone(&trusted_page);
+        builder = builder.with_on_page_load_handler(move |event, url| {
+            let trusted = is_trusted_login_url(&url);
+            load_trusted_page.store(trusted, Ordering::Release);
+            if trusted && matches!(event, PageLoadEvent::Finished) {
                 let _ = load_proxy.send_event(UserEvent::InjectPoller);
             }
         });
@@ -393,20 +483,32 @@ pub fn run(args: Args) -> Result<(), String> {
         *control_flow = ControlFlow::Wait;
         match event {
             Event::UserEvent(UserEvent::InjectPoller) => {
-                if let Some(js) = &poller_js {
+                if trusted_page.load(Ordering::Acquire)
+                    && let Some(js) = &poller_js
+                {
                     let _ = webview.evaluate_script(js);
                 }
             }
             Event::UserEvent(UserEvent::FillTotp) => {
-                if let Some(secret) = totp_secret.as_deref() {
+                if trusted_page.load(Ordering::Acquire)
+                    && let Some(secret) = totp_secret.as_deref()
+                {
                     match gen_totp(secret) {
                         Some(code) => {
                             let _ = webview.evaluate_script(&fill_totp_js(&code));
                         }
                         None => eprintln!(
-                            "warning: EULE_TOTP_SECRET is not valid base32 — TOTP autofill skipped"
+                            "warning: stored TOTP seed is not valid base32 — TOTP autofill skipped"
                         ),
                     }
+                }
+            }
+            Event::UserEvent(UserEvent::FillPassword) => {
+                if trusted_page.load(Ordering::Acquire)
+                    && let Some(secret) = password_secret.as_deref()
+                {
+                    let script = fill_password_js(secret);
+                    let _ = webview.evaluate_script(script.as_str());
                 }
             }
             Event::WindowEvent {
@@ -437,7 +539,9 @@ fn urlencode(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::totp_at;
+    use super::{
+        fill_password_js, is_trusted_login_url, matches_redirect, query_parameter, totp_at,
+    };
 
     // RFC 6238 Appendix B, SHA-1 seed "12345678901234567890" (base32 below),
     // truncated to 6 digits (the reference table lists the 8-digit values).
@@ -462,5 +566,40 @@ mod tests {
     fn rejects_non_base32() {
         assert_eq!(totp_at("not!base32!", 59), None);
         assert_eq!(totp_at("", 59), None);
+    }
+
+    #[test]
+    fn restricts_secret_injection_to_the_microsoft_login_origin() {
+        assert!(is_trusted_login_url(
+            "https://login.microsoftonline.com/common/oauth2/authorize"
+        ));
+        assert!(!is_trusted_login_url("http://login.microsoftonline.com/"));
+        assert!(!is_trusted_login_url(
+            "https://login.microsoftonline.com.attacker.example/"
+        ));
+        assert!(!is_trusted_login_url("https://example.com/"));
+    }
+
+    #[test]
+    fn password_is_json_encoded_before_script_injection() {
+        let js = fill_password_js("p\"');window.pwned=true;//\n");
+        assert!(js.contains(r#"p\"');window.pwned=true;//\n"#));
+        assert!(js.contains("login.microsoftonline.com"));
+        assert!(!js.contains("set.call(el, 'p"));
+    }
+
+    #[test]
+    fn redirect_and_state_checks_are_exact() {
+        let redirect = "urn:ietf:wg:oauth:2.0:oob";
+        let candidate = "urn:ietf:wg:oauth:2.0:oob?code=abc&state=expected";
+        assert!(matches_redirect(candidate, redirect));
+        assert_eq!(
+            query_parameter(candidate, "state").as_deref(),
+            Some("expected")
+        );
+        assert!(!matches_redirect(
+            "urn:ietf:wg:oauth:2.0:oob.attacker?code=abc&state=expected",
+            redirect
+        ));
     }
 }

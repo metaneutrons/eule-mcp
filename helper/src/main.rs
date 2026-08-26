@@ -3,7 +3,9 @@
 //! Interactive, desktop-only steps that the Node MCP server shells out to.
 //! Everything here runs LOCALLY on the user's machine; secrets/codes never pass
 //! back through the LLM or MCP — the helper writes tokens locally and stores
-//! connector secrets in the operating-system credential store.
+//! connector secrets in the operating-system credential store. M365 password
+//! and TOTP autofill values are also read directly from that store by the OAuth
+//! helper; Node receives only opaque references.
 //!
 //!   eule-helper oauth-capture  — WKWebView/WebView2/WebKitGTK login window that
 //!     intercepts a broker-bound redirect (urn:ietf:wg:oauth:2.0:oob or a custom

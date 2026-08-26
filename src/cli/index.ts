@@ -181,13 +181,15 @@ async function login(): Promise<void> {
     // process. Required for clients whose only redirect URIs are broker-bound
     // (e.g. Apple Internet Accounts EWS), and the nicer path everywhere else.
     const param = tierAuthParam(oauth, tier);
-    // Opt-in MFA autofill: if this account has a TOTP secret in autoAuth, hand
-    // it to the helper (via env, not argv) so it auto-enters the code. Skipped
-    // with --no-totp. The password is always typed by the user.
-    const totpSecret = flags["no-totp"] || !account ? undefined : secrets.totp(account);
+    // Only opaque references cross this boundary. The native helper resolves
+    // TOTP/password directly from the OS store and may be disabled per login.
+    const autoAuth = account ? secrets.m365AutoAuth(account) : {};
+    const totpCredentialRef = flags["no-totp"] ? undefined : autoAuth.totpCredentialRef;
+    const passwordCredentialRef = flags["no-password"] ? undefined : autoAuth.passwordCredentialRef;
     console.log(
       `\nNative login window, tier ${tier}, client ${oauth.clientId}` +
-        `${totpSecret ? " (auto-TOTP)" : ""}\n`,
+        (passwordCredentialRef ? " (auto-password)" : "") +
+        `${totpCredentialRef ? " (auto-TOTP)" : ""}\n`,
     );
     return oauthCapture({
       clientId: oauth.clientId,
@@ -202,7 +204,8 @@ async function login(): Promise<void> {
       // broker-bound setups behave exactly as before, while the automatic path
       // targets the ordinary navigable redirect the default client registers.
       redirectUri: oauth.redirectUri ?? (explicit ? undefined : REDIRECT_URI),
-      totpSecret,
+      totpCredentialRef,
+      passwordCredentialRef,
     });
   };
 
@@ -262,8 +265,8 @@ async function login(): Promise<void> {
 async function secretCmd(): Promise<void> {
   const sub = args[1];
   const flags = parseFlags(args.slice(2));
-  if (sub !== "totp") {
-    console.log("Usage: eule-mcp secret totp --account <email>");
+  if (sub !== "totp" && sub !== "password") {
+    console.log("Usage: eule-mcp secret <totp|password> --account <email> [--remove]");
     process.exit(1);
   }
   const account = typeof flags.account === "string" ? flags.account : undefined;
@@ -272,15 +275,26 @@ async function secretCmd(): Promise<void> {
     process.exit(1);
   }
 
-  // The helper validates and stores the seed directly in the OS credential
-  // store. Node receives only success/failure; the seed never crosses argv,
+  // The helper validates and stores the value directly in the OS credential
+  // store. Node receives only success/failure; the secret never crosses argv,
   // stdout, config.yaml, or model context.
   const cfgMgr = new ConfigManager();
   const control = new ConfigurationControlService(cfgMgr, nativeCredentialBroker);
   try {
-    await control.configureTotp(account);
-    console.log(`\n✅ TOTP secret stored for ${account} in the OS credential store.`);
-    console.log(`   Use it:  eule-mcp login --capture --account ${account} …`);
+    if (flags.remove) {
+      if (sub === "totp") await control.removeTotp(account);
+      else await control.removeM365Password(account);
+      console.log(
+        `\n✅ ${sub === "totp" ? "TOTP secret" : "M365 password"} removed for ${account}.`,
+      );
+    } else {
+      if (sub === "totp") await control.configureTotp(account);
+      else await control.configureM365Password(account);
+      console.log(
+        `\n✅ ${sub === "totp" ? "TOTP secret" : "M365 password"} stored for ${account} in the OS credential store.`,
+      );
+      console.log(`   Use it:  eule-mcp login --capture --account ${account} …`);
+    }
   } catch (err) {
     console.error("\n❌ Failed:", err instanceof Error ? err.message : String(err));
     process.exit(1);
@@ -319,6 +333,10 @@ async function main(): Promise<void> {
       console.log(
         "  eule-mcp secret totp --account <email> Store a TOTP secret via a local window",
       );
+      console.log(
+        "  eule-mcp secret password --account <email> Opt in to local M365 password autofill",
+      );
+      console.log("       add --remove to delete either stored auto-auth credential");
       console.log("  eule-mcp serve                        Start MCP server (stdio)");
       console.log("  eule-mcp help                         Show this help");
   }
