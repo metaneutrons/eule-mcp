@@ -16,7 +16,7 @@ jobs:
       tag-name: ${{ steps.release.outputs.tag_name }}
     steps:
       - id: release
-        uses: googleapis/release-please-action@v5
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5
         with:
           # A fine-grained PAT lets events created by Release Please trigger CI.
           # Unlike GITHUB_TOKEN, it is not subject to Actions' recursion guard.
