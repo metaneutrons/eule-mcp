@@ -50,10 +50,14 @@ jobs:
       - run: pnpm run build
 
   helper:
-    name: Rust helper (fmt, clippy, build)
-    runs-on: macos-14 # native WKWebView — no extra system deps needed
+    name: Rust helper (fmt, clippy, test, build)
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
+      - name: Install Linux WebView dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -62,11 +66,11 @@ jobs:
           workspaces: helper -> target
       - run: cargo fmt --check
         working-directory: helper
-      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo clippy --locked --all-targets -- -D warnings
         working-directory: helper
       - run: cargo test --locked
         working-directory: helper
-      - run: cargo build --release
+      - run: cargo build --locked --release
         working-directory: helper
 
   commitlint:

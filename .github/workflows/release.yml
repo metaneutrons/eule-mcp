@@ -45,7 +45,7 @@ jobs:
       matrix:
         include:
           # macOS: one universal2 binary (arm64 + x86_64 fused with lipo).
-          - os: macos-14
+          - os: macos-15
             kind: mac
             asset: eule-helper-darwin-universal
           - os: ubuntu-24.04
@@ -87,9 +87,12 @@ jobs:
       - name: Build (macOS universal)
         if: matrix.kind == 'mac'
         working-directory: helper
+        env:
+          # Build on a supported runner without raising the binary's runtime floor.
+          MACOSX_DEPLOYMENT_TARGET: "14.0"
         run: |
-          cargo build --release --target aarch64-apple-darwin
-          cargo build --release --target x86_64-apple-darwin
+          cargo build --locked --release --target aarch64-apple-darwin
+          cargo build --locked --release --target x86_64-apple-darwin
           lipo -create -output "${{ matrix.asset }}" \
             target/aarch64-apple-darwin/release/eule-helper \
             target/x86_64-apple-darwin/release/eule-helper
@@ -172,7 +175,7 @@ jobs:
         working-directory: helper
         shell: bash
         run: |
-          cargo build --release --target "${{ matrix.target }}"
+          cargo build --locked --release --target "${{ matrix.target }}"
           bin="target/${{ matrix.target }}/release/eule-helper"
           [ "${{ matrix.kind }}" = win ] && bin="${bin}.exe"
           cp "$bin" "${{ matrix.asset }}"

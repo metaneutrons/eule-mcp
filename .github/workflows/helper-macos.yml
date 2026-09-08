@@ -1,0 +1,38 @@
+name: macOS helper compatibility
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "helper/**"
+      - ".github/workflows/helper-macos.yml"
+      - ".github/workflows/release.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "helper/**"
+      - ".github/workflows/helper-macos.yml"
+      - ".github/workflows/release.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: helper-macos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build on macOS 15
+    runs-on: macos-15
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "14.0"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: helper -> target
+      - run: cargo build --locked --release
+        working-directory: helper
