@@ -1,0 +1,6 @@
+# These are public RFC 6238 test vectors, not credentials. Keep the allowlist
+# exact so real secrets in test fixtures continue to be detected.
+[allowlist]
+description = "Public TOTP test vectors"
+paths = ["test/config-manager.test.ts"]
+regexes = ["GEZDGNBVGY3TQOJQ", "MFRGGZDFMZTWQ2LK"]
