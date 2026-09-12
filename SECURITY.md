@@ -31,7 +31,8 @@ within a few days.
   URLs must be `https://` (loopback `http://` is allowed for local tools). SMTP
   uses `requireTLS` so a stripped-STARTTLS MITM cannot downgrade to cleartext.
 - **Filesystem sandbox.** Downloads may only be written under
-  `~/.eule/<subdir>`, `~/Downloads`, `~/Documents` or `~/Desktop`, never over a
+  `~/.eule/<subdir>`, `~/Downloads`, `~/Documents`, `~/Desktop`, or the
+  platform temporary directory (`/tmp` on POSIX, `%TEMP%` on Windows), never over a
   reserved file (`config.yaml`, `tokens.json`, `eule.db`). Local files chosen for
   upload may only be read from `~/Downloads`, `~/Documents` or `~/Desktop` —
   **never** `~/.eule` or arbitrary paths — so secrets cannot be exfiltrated to

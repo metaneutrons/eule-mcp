@@ -80,20 +80,15 @@ pub fn run(args: Args) -> Result<(), String> {
 fn validate_reference(reference: &str) -> Result<(), String> {
     let segments: Vec<_> = reference.split('/').collect();
     let shape_is_valid = match segments.as_slice() {
-        ["connector", _, kind, _] => matches!(
-            *kind,
-            "mail" | "calendar" | "contacts" | "messenger" | "files" | "documents"
-        ),
+        ["connector", _, kind, _] => {
+            matches!(*kind, "mail" | "calendar" | "contacts" | "messenger" | "files" | "documents")
+        }
         ["oauth", "google", secret] => {
             *secret == "client-secret"
-                || secret
-                    .strip_prefix("client-secret.")
-                    .is_some_and(|revision| {
-                        !revision.is_empty()
-                            && revision
-                                .chars()
-                                .all(|character| character.is_ascii_alphanumeric())
-                    })
+                || secret.strip_prefix("client-secret.").is_some_and(|revision| {
+                    !revision.is_empty()
+                        && revision.chars().all(|character| character.is_ascii_alphanumeric())
+                })
         }
         ["oauth", "m365", "password", _] => true,
         ["totp", _] => true,
@@ -105,9 +100,7 @@ fn validate_reference(reference: &str) -> Result<(), String> {
             !segment.is_empty()
                 && *segment != "."
                 && *segment != ".."
-                && segment
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || "@+._-".contains(c))
+                && segment.chars().all(|c| c.is_ascii_alphanumeric() || "@+._-".contains(c))
         })
     {
         Ok(())

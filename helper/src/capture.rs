@@ -147,10 +147,8 @@ fn redeem_and_store(args: &Args, verifier: &str, code: &str) -> Result<String, S
     let mut resp = ureq::post(&token_url)
         .send_form(form)
         .map_err(|e| format!("token exchange failed: {e}"))?;
-    let text = resp
-        .body_mut()
-        .read_to_string()
-        .map_err(|e| format!("reading token response: {e}"))?;
+    let text =
+        resp.body_mut().read_to_string().map_err(|e| format!("reading token response: {e}"))?;
     let json: serde_json::Value =
         serde_json::from_str(&text).map_err(|e| format!("bad token JSON: {e}"))?;
 
@@ -160,10 +158,7 @@ fn redeem_and_store(args: &Args, verifier: &str, code: &str) -> Result<String, S
     let account = util::jwt_email(access).unwrap_or_else(|| "unknown".into());
     let expires_at = now_ms() + expires_in * 1000;
 
-    let tokens_path = args
-        .tokens_path
-        .clone()
-        .unwrap_or_else(|| util::eule_path("tokens.json"));
+    let tokens_path = args.tokens_path.clone().unwrap_or_else(|| util::eule_path("tokens.json"));
     util::merge_token(
         &tokens_path,
         &account,
@@ -180,19 +175,14 @@ fn redeem_and_store(args: &Args, verifier: &str, code: &str) -> Result<String, S
 
 fn now_ms() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
 }
 
 /// 6-digit TOTP (RFC 6238, SHA-1, 30 s window) from a base32 secret at a given
 /// unix time. Returns None if the secret isn't valid base32.
 fn totp_at(secret_b32: &str, unix_secs: u64) -> Option<String> {
     let key = util::decode_totp_seed(secret_b32)?;
-    Some(totp_lite::totp_custom::<totp_lite::Sha1>(
-        30, 6, &key, unix_secs,
-    ))
+    Some(totp_lite::totp_custom::<totp_lite::Sha1>(30, 6, &key, unix_secs))
 }
 
 /// Current TOTP code (see [`totp_at`]).
@@ -343,11 +333,8 @@ pub fn run(args: Args) -> Result<(), String> {
     if let Some(h) = &args.login_hint {
         q.push(("login_hint", h));
     }
-    let query: String = q
-        .iter()
-        .map(|(k, v)| format!("{k}={}", urlencode(v)))
-        .collect::<Vec<_>>()
-        .join("&");
+    let query: String =
+        q.iter().map(|(k, v)| format!("{k}={}", urlencode(v))).collect::<Vec<_>>().join("&");
     let auth_url = format!("{}?{}", base(&args.tenant, v1, "authorize"), query);
 
     // Hard timeout so a walked-away login can't hang forever.
@@ -374,7 +361,7 @@ pub fn run(args: Args) -> Result<(), String> {
         }
         Some(_) => {
             return Err(
-                "--password-credential-ref must use the oauth/m365/password/ namespace".into(),
+                "--password-credential-ref must use the oauth/m365/password/ namespace".into()
             );
         }
         None => None,
@@ -393,9 +380,8 @@ pub fn run(args: Args) -> Result<(), String> {
     let trusted_page = Arc::new(AtomicBool::new(false));
     let redirect = args.redirect_uri.clone();
     let navigation_trusted_page = Arc::clone(&trusted_page);
-    let mut builder = WebViewBuilder::new()
-        .with_url(&auth_url)
-        .with_navigation_handler(move |uri: String| {
+    let mut builder =
+        WebViewBuilder::new().with_url(&auth_url).with_navigation_handler(move |uri: String| {
             navigation_trusted_page.store(is_trusted_login_url(&uri), Ordering::Release);
             if matches_redirect(&uri, &redirect) {
                 if query_parameter(&uri, "state").as_deref() != Some(state.as_str()) {
@@ -442,10 +428,8 @@ pub fn run(args: Args) -> Result<(), String> {
             let body = req.into_body();
             if let Some(payload) = body.strip_prefix("eule:debug:") {
                 use std::io::Write;
-                if let Ok(mut f) = std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(&debug_log)
+                if let Ok(mut f) =
+                    std::fs::OpenOptions::new().create(true).append(true).open(&debug_log)
                 {
                     #[cfg(unix)]
                     {
@@ -475,9 +459,7 @@ pub fn run(args: Args) -> Result<(), String> {
         });
     }
 
-    let webview = builder
-        .build(&window)
-        .map_err(|e| format!("webview: {e}"))?;
+    let webview = builder.build(&window).map_err(|e| format!("webview: {e}"))?;
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
@@ -511,10 +493,7 @@ pub fn run(args: Args) -> Result<(), String> {
                     let _ = webview.evaluate_script(script.as_str());
                 }
             }
-            Event::WindowEvent {
-                event: WindowEvent::CloseRequested,
-                ..
-            } => {
+            Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {
                 eprintln!("error: window closed before sign-in completed");
                 std::process::exit(3);
             }
@@ -570,13 +549,9 @@ mod tests {
 
     #[test]
     fn restricts_secret_injection_to_the_microsoft_login_origin() {
-        assert!(is_trusted_login_url(
-            "https://login.microsoftonline.com/common/oauth2/authorize"
-        ));
+        assert!(is_trusted_login_url("https://login.microsoftonline.com/common/oauth2/authorize"));
         assert!(!is_trusted_login_url("http://login.microsoftonline.com/"));
-        assert!(!is_trusted_login_url(
-            "https://login.microsoftonline.com.attacker.example/"
-        ));
+        assert!(!is_trusted_login_url("https://login.microsoftonline.com.attacker.example/"));
         assert!(!is_trusted_login_url("https://example.com/"));
     }
 
@@ -593,10 +568,7 @@ mod tests {
         let redirect = "urn:ietf:wg:oauth:2.0:oob";
         let candidate = "urn:ietf:wg:oauth:2.0:oob?code=abc&state=expected";
         assert!(matches_redirect(candidate, redirect));
-        assert_eq!(
-            query_parameter(candidate, "state").as_deref(),
-            Some("expected")
-        );
+        assert_eq!(query_parameter(candidate, "state").as_deref(), Some("expected"));
         assert!(!matches_redirect(
             "urn:ietf:wg:oauth:2.0:oob.attacker?code=abc&state=expected",
             redirect

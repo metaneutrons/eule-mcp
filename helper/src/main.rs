@@ -23,11 +23,7 @@ mod prompt;
 mod util;
 
 #[derive(Parser)]
-#[command(
-    name = "eule-helper",
-    version,
-    about = "Cross-platform auth/secret helper for eule-mcp"
-)]
+#[command(name = "eule-helper", version, about = "Cross-platform auth/secret helper for eule-mcp")]
 struct Cli {
     #[command(subcommand)]
     command: Command,

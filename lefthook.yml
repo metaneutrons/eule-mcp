@@ -1,0 +1,33 @@
+commit-msg:
+  commands:
+    conventional-commits:
+      run: sh scripts/hooks/check-commit-message.sh {1}
+
+pre-commit:
+  parallel: true
+  commands:
+    staged-guards:
+      run: sh scripts/hooks/check-staged.sh
+    secrets:
+      run: gitleaks git --pre-commit --redact --staged --verbose
+    eslint:
+      glob: "src/**/*.{ts,tsx,mts,cts}"
+      run: pnpm exec eslint --fix --max-warnings=0 {staged_files}
+      stage_fixed: true
+    lockfile:
+      glob: "package.json"
+      run: |
+        if ! git diff --cached --name-only | grep -q '^pnpm-lock.yaml$'; then
+          echo "package.json changed, pnpm-lock.yaml did not. Run pnpm install." >&2
+          exit 1
+        fi
+
+pre-push:
+  parallel: false
+  commands:
+    secrets:
+      run: sh scripts/hooks/check-push-secrets.sh
+    typecheck:
+      run: pnpm typecheck
+    tests:
+      run: pnpm test --run
