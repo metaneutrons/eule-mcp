@@ -6,7 +6,7 @@ export default defineConfig({
     "server/index": "src/server/index.ts",
   },
   format: ["esm"],
-  target: "node22",
+  target: "node24",
   outDir: "dist",
   clean: true,
   sourcemap: true,

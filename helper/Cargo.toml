@@ -2,6 +2,8 @@
 name = "eule-helper"
 version = "0.6.0" # x-release-please-version
 edition = "2024"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/metaneutrons/eule-mcp"
 publish = ["crates-io"]
 
 [dependencies]

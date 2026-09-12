@@ -4,25 +4,12 @@ name: Release helper binaries
 # .sha256 sidecars) to the GitHub release for the pushed tag. The Node package
 # downloads the matching asset on first use (see src/helper/download.ts).
 on:
-  push:
-    tags: ["v*"]
   workflow_call:
     inputs:
       tag:
         description: "Existing release tag to attach binaries to"
         required: true
         type: string
-    secrets:
-      MACOS_CERT_P12:
-        required: false
-      MACOS_CERT_PASSWORD:
-        required: false
-      APPLE_API_KEY:
-        required: false
-      APPLE_API_ISSUER:
-        required: false
-      APPLE_API_KEY_CONTENT:
-        required: false
   workflow_dispatch:
     inputs:
       tag:
@@ -31,21 +18,71 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
+  metadata:
+    name: Validate release identity
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.identity.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.tag || github.event.inputs.tag }}
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24.x
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - id: identity
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.event.inputs.tag }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]
+          pnpm version:check
+          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+
+  preflight:
+    name: Release preflight
+    runs-on: ubuntu-24.04
+    environment: release
+    needs: metadata
+    steps:
+      - name: Require release credentials
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY_CONTENT }}
+        run: |
+          set -euo pipefail
+          for name in MACOS_CERT_P12 MACOS_CERT_PASSWORD APPLE_API_KEY APPLE_API_ISSUER APPLE_API_KEY_CONTENT; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Missing release environment secret: $name"
+              exit 1
+            fi
+          done
+
   build:
     name: ${{ matrix.asset }}
+    environment: release
+    needs: [metadata, preflight]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
           # macOS: one universal2 binary (arm64 + x86_64 fused with lipo).
-          - os: macos-14
+          - os: macos-15
             kind: mac
             asset: eule-helper-darwin-universal
           - os: ubuntu-24.04
@@ -67,14 +104,14 @@ jobs:
             target: aarch64-pc-windows-msvc
             asset: eule-helper-win32-arm64.exe
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # v1; toolchain pinned in rust-toolchain.toml
         with:
           targets: ${{ matrix.kind == 'mac' && 'aarch64-apple-darwin,x86_64-apple-darwin' || matrix.target }}
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: helper -> target
 
@@ -87,17 +124,16 @@ jobs:
       - name: Build (macOS universal)
         if: matrix.kind == 'mac'
         working-directory: helper
+        env:
+          # Build on a supported runner without raising the binary's runtime floor.
+          MACOSX_DEPLOYMENT_TARGET: "14.0"
         run: |
-          cargo build --release --target aarch64-apple-darwin
-          cargo build --release --target x86_64-apple-darwin
+          cargo build --locked --release --target aarch64-apple-darwin
+          cargo build --locked --release --target x86_64-apple-darwin
           lipo -create -output "${{ matrix.asset }}" \
             target/aarch64-apple-darwin/release/eule-helper \
             target/x86_64-apple-darwin/release/eule-helper
-          # lipo invalidates the per-arch ad-hoc signatures cargo applies, and
-          # Apple Silicon refuses to run an unsigned Mach-O — re-sign ad-hoc as a
-          # runnable baseline (replaced by Developer ID in the next step when
-          # signing secrets are configured).
-          codesign --force --sign - "${{ matrix.asset }}"
+          # The universal binary is signed and notarized in the next step.
 
       - name: Sign & notarize (macOS)
         if: matrix.kind == 'mac'
@@ -117,19 +153,12 @@ jobs:
             APPLE_API_ISSUER
             APPLE_API_KEY_CONTENT
           )
-          configured=0
           missing=()
           for secret_name in "${signing_secrets[@]}"; do
-            if [ -n "${!secret_name:-}" ]; then
-              configured=$((configured + 1))
-            else
+            if [ -z "${!secret_name:-}" ]; then
               missing+=("$secret_name")
             fi
           done
-          if [ "$configured" -eq 0 ]; then
-            echo "No signing secrets configured — shipping the ad-hoc-signed binary."
-            exit 0
-          fi
           if [ "${#missing[@]}" -gt 0 ]; then
             echo "::error::macOS signing is partially configured; missing: ${missing[*]}"
             exit 1
@@ -172,7 +201,7 @@ jobs:
         working-directory: helper
         shell: bash
         run: |
-          cargo build --release --target "${{ matrix.target }}"
+          cargo build --locked --release --target "${{ matrix.target }}"
           bin="target/${{ matrix.target }}/release/eule-helper"
           [ "${{ matrix.kind }}" = win ] && bin="${bin}.exe"
           cp "$bin" "${{ matrix.asset }}"
@@ -187,6 +216,18 @@ jobs:
             shasum -a 256 "${{ matrix.asset }}" > "${{ matrix.asset }}.sha256"
           fi
 
+      - name: Generate SPDX SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          path: helper
+          format: spdx-json
+          output-file: helper/${{ matrix.asset }}.sbom.spdx.json
+
+      - name: Attest binary provenance
+        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45 # v2
+        with:
+          subject-path: helper/${{ matrix.asset }}
+
       - name: Attach to release
         shell: bash
         env:
@@ -196,5 +237,27 @@ jobs:
           gh release upload "$RELEASE_TAG" \
             "helper/${{ matrix.asset }}" \
             "helper/${{ matrix.asset }}.sha256" \
+            "helper/${{ matrix.asset }}.sbom.spdx.json" \
             --clobber \
             --repo "$GITHUB_REPOSITORY"
+
+  completeness:
+    name: Verify release completeness
+    runs-on: ubuntu-24.04
+    needs: build
+    environment: release
+    permissions:
+      contents: read
+    steps:
+      - name: Verify every platform asset, checksum, and SBOM
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag || github.event.inputs.tag }}
+        run: |
+          set -euo pipefail
+          assets=$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
+          for base in eule-helper-darwin-universal eule-helper-linux-x64 eule-helper-linux-arm64 eule-helper-win32-x64.exe eule-helper-win32-arm64.exe; do
+            grep -Fxq "$base" <<<"$assets"
+            grep -Fxq "$base.sha256" <<<"$assets"
+            grep -Fxq "$base.sbom.spdx.json" <<<"$assets"
+          done

@@ -44,10 +44,7 @@ pub struct Args {
 
 fn page(label: &str) -> String {
     // label is our own arg (not remote content), but escape anyway.
-    let safe = label
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;");
+    let safe = label.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
     let logo = include_str!("../../assets/logo.svg");
     format!(
         r#"<!doctype html><html><head><meta charset="utf-8"><style>
@@ -134,11 +131,7 @@ pub fn run(args: Args) -> Result<(), String> {
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
-        if let Event::WindowEvent {
-            event: WindowEvent::CloseRequested,
-            ..
-        } = event
-        {
+        if let Event::WindowEvent { event: WindowEvent::CloseRequested, .. } = event {
             eprintln!("error: window closed");
             std::process::exit(3);
         }
@@ -167,10 +160,7 @@ mod tests {
     #[test]
     fn validates_totp_without_returning_it_to_node() {
         assert!(validate_secret("JBSW Y3DP-EHPK3PXP", SecretFormat::Totp));
-        assert!(validate_secret(
-            "JBSWY3DPEHPK3PXPMFRA====",
-            SecretFormat::Totp
-        ));
+        assert!(validate_secret("JBSWY3DPEHPK3PXPMFRA====", SecretFormat::Totp));
         assert!(!validate_secret("not-a-totp-secret", SecretFormat::Totp));
         assert!(validate_secret("any value", SecretFormat::Opaque));
     }

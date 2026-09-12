@@ -4,7 +4,10 @@ import type { CalendarService } from "../services/calendar-service.js";
 import type { CalendarEvent } from "../types/index.js";
 import { executeTool, textResult } from "./tool-runtime.js";
 
-const isoDateTime = z.iso.datetime({ offset: true, local: true });
+export const calendarDateTimeSchema = z.union([
+  z.iso.datetime({ offset: true, local: true }),
+  z.iso.datetime({ offset: true, local: true, precision: -1 }),
+]);
 const renderEvent = (event: CalendarEvent): string => {
   const location = event.location ? ` 📍 ${event.location}` : "";
   if (event.isAllDay) return `${event.start.slice(0, 10)} (all day) | ${event.subject}${location}`;
@@ -79,8 +82,8 @@ export function registerCalendarTools(server: McpServer, calendars: CalendarServ
   );
   const eventInput = {
     subject: z.string().trim().min(1).max(500),
-    start: isoDateTime,
-    end: isoDateTime,
+    start: calendarDateTimeSchema,
+    end: calendarDateTimeSchema,
     location: z.string().max(1000).optional(),
     body: z.string().max(100_000).optional(),
     attendees: z.array(z.email()).max(500).optional(),
@@ -108,8 +111,8 @@ export function registerCalendarTools(server: McpServer, calendars: CalendarServ
       inputSchema: {
         id: z.string(),
         subject: z.string().trim().min(1).max(500).optional(),
-        start: isoDateTime.optional(),
-        end: isoDateTime.optional(),
+        start: calendarDateTimeSchema.optional(),
+        end: calendarDateTimeSchema.optional(),
         location: z.string().max(1000).optional(),
         role: z.string().optional(),
         account: z.string().optional(),

@@ -18,11 +18,11 @@ jobs:
     name: Format, lint & typecheck
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: 22.x
+          node-version: 24.x
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm run version:check
@@ -36,56 +36,90 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node-version: [22.x, 24.x]
+        node-version: [24.x, 26.x]
     steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: ${{ matrix.node-version }}
           cache: pnpm
       # better-sqlite3 is a native module and is (re)built from source here.
       - run: pnpm install --frozen-lockfile
       - run: pnpm run test
+      - name: Coverage gate
+        if: matrix.node-version == '24.x'
+        run: pnpm exec vitest run --coverage
       - run: pnpm run build
 
   helper:
-    name: Rust helper (fmt, clippy, build)
-    runs-on: macos-14 # native WKWebView — no extra system deps needed
+    name: Rust helper (fmt, clippy, test, build)
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Install Linux WebView dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # v1; toolchain pinned in rust-toolchain.toml
         with:
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: helper -> target
       - run: cargo fmt --check
         working-directory: helper
-      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo clippy --locked --all-targets -- -D warnings
         working-directory: helper
       - run: cargo test --locked
         working-directory: helper
-      - run: cargo build --release
+      - run: cargo build --locked --release
         working-directory: helper
+      - name: Audit Rust dependencies
+        uses: EmbarkStudios/cargo-deny-action@b66acf5e9fe20f8aba065be86778a8a4c846f902 # v2
+        with:
+          manifest-path: helper/Cargo.toml
 
-  commitlint:
-    name: Conventional commits
+  commit-hygiene:
+    name: Commit hygiene
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22.x
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - name: Lint PR commits
-        run: >-
-          pnpm exec commitlint
-          --from ${{ github.event.pull_request.base.sha }}
-          --to ${{ github.event.pull_request.head.sha }}
-          --verbose
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with: { fetch-depth: 0 }
+      - name: Validate changed commit subjects
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          git log --format=%B "$BASE_SHA..$HEAD_SHA" | awk 'NF && $0 !~ /^#/ {print; exit}' >/dev/null
+          while IFS= read -r subject; do
+            case "$subject" in
+              Merge\ *|Revert\ \"*|fixup!\ *|squash!\ *|amend!\ *) continue ;;
+            esac
+            printf '%s\n' "$subject" | grep -Eq '^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-z0-9._/-]+\))?!?: .+' || { echo "Invalid commit: $subject"; exit 1; }
+          done < <(git log --format=%s "$BASE_SHA..$HEAD_SHA")
+
+  ci-success:
+    name: CI Success
+    if: always()
+    needs: [quality, test, helper, commit-hygiene, secrets]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require all CI jobs to pass
+        run: |
+          if [[ "${{ needs.quality.result }}" != "success" || "${{ needs.test.result }}" != "success" || "${{ needs.helper.result }}" != "success" || "${{ needs.secrets.result }}" != "success" || ("${{ github.event_name }}" == "pull_request" && "${{ needs.commit-hygiene.result }}" != "success") ]]; then
+            echo "One or more required CI jobs failed." >&2
+            exit 1
+          fi
+
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with: { fetch-depth: 0 }
+      - uses: gitleaks/gitleaks-action@dcedce43c6f43de0b836d1fe38946645c9c638dc # v2
+        env:
+          GITHUB_TOKEN: ${{ github.token }}

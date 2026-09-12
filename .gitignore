@@ -1,8 +1,14 @@
 node_modules/
+.pnpm-store/
 dist/
+build/
+out/
 *.tsbuildinfo
+coverage/
+
+# Rust artifacts at every workspace depth
+target/
 .env
 .DS_Store
 
 # Rust helper build output (Cargo.lock IS committed)
-helper/target/

@@ -7,8 +7,9 @@
 - Production bundles build successfully.
 - `git diff --check` reports no whitespace errors.
 - No legacy `McpServer.tool` registrations remain.
-- Production dependency audit reports no known vulnerabilities after upgrading
-  Nodemailer to 9.0.1 or newer.
+- Production dependency audit is clean (`pnpm audit --prod` reports zero
+  advisories); transitive `fast-uri`, `qs`, and `hono` versions are pinned by
+  package-manager overrides until their parent SDK ranges catch up.
 - Tool/service scans found no logging of token values or secret-bearing tool
   arguments. Configuration output reports only whether secrets are set.
 

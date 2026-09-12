@@ -86,11 +86,7 @@ pub fn merge_token(
     } else {
         serde_json::json!({ "accounts": {} })
     };
-    if !store
-        .get("accounts")
-        .map(|a| a.is_object())
-        .unwrap_or(false)
-    {
+    if !store.get("accounts").map(|a| a.is_object()).unwrap_or(false) {
         store["accounts"] = serde_json::json!({});
     }
     store["accounts"][account] = serde_json::json!({

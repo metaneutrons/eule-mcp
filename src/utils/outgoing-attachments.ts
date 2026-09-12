@@ -40,7 +40,7 @@ function sniffContentType(filename: string): string {
 /**
  * Resolve a list of user/LLM-supplied file paths into {@link OutgoingAttachment}s.
  *
- * Every path is confined to `~/Downloads`, `~/Documents`, `~/Desktop` via
+ * Every path is confined to `~/Downloads`, `~/Documents`, or `~/Desktop` via
  * {@link secureReadPath} — this deliberately excludes `~/.eule` (config +
  * tokens) so a prompt-injected model cannot attach secrets to an outgoing mail.
  * Per-file and cumulative size are capped, and the derived filename is checked

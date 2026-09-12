@@ -137,6 +137,8 @@ therefore not a substitute for multi-user RBAC.
 > `~/Desktop` only (never `~/.eule`), capped at 25 MB. `mail_attachment_get`'s
 > `mode` selects `save` (default), `text` (PDF/Office → Markdown via
 > pymupdf4llm/pandoc), or `inline` (return an image so the model can see it).
+> Saved downloads may additionally use a `~/.eule` subdirectory or the
+> platform temporary directory (`/tmp` on POSIX, `%TEMP%` on Windows).
 > Attachments on **reply/forward** are supported on Graph, Gmail and IMAP; on the
 > EWS fallback tier, attach via a new message or draft instead.
 > `mail_send` and `mail_send_draft` accept an optional `idempotency_key` to
@@ -266,7 +268,7 @@ Backends:
 
 ### Prerequisites
 
-- Node.js 22+
+- Node.js 24+
 - An M365 or Google Workspace account
 - For native M365 webview login (`auth_login` with `method: webview`, or
   `login --capture`): a desktop session (the `eule-helper` GUI is fetched on
@@ -607,6 +609,17 @@ Conventional Commits on `main` and maintains a release PR containing the SemVer
 bump, `CHANGELOG.md`, Rust helper metadata, and lockfile updates. Merging that
 PR creates the `v<version>` GitHub release and builds checksum-protected helper
 binaries for every supported platform.
+
+Release publication is gated by the `release` environment. It requires the
+Release Please GitHub App credentials and complete Apple signing/notarization
+credentials; no unsigned or ad-hoc macOS fallback is published. Build
+artefacts include SHA-256 sidecars, SPDX SBOMs, and GitHub build-provenance
+attestations.
+
+Maintainers configure `RELEASE_PLEASE_CLIENT_ID` (environment variable) and
+`RELEASE_PLEASE_APP_PRIVATE_KEY` (environment secret) for the installed GitHub
+App. Apple signing values belong to the same environment; they are never
+stored in the repository or workflow files.
 
 - `fix:` produces a patch release.
 - `feat:` produces a minor release.
