@@ -6,7 +6,9 @@ all-features = true
 [advisories]
 version = 2
 yanked = "warn"
-ignore = []
+ignore = [
+  { id = "RUSTSEC-2024-0370", reason = "Transitive GTK/WebKit dependency; upstream offers no safe upgrade yet. Revisit when gtk-rs removes proc-macro-error." },
+]
 
 [licenses]
 version = 2
