@@ -66,26 +66,26 @@
     "fast-xml-parser": "^5.11.1",
     "imapflow": "^1.7.7",
     "js-yaml": "^5.4.1",
-    "marked": "^18.0.11",
+    "marked": "^18.0.12",
     "nodemailer": "^9.1.1",
     "open": "^11.0.2",
-    "tsdav": "^2.3.1",
+    "tsdav": "^2.3.3",
     "turndown": "^7.2.4",
-    "zod": "^4.5.4"
+    "zod": "^4.6.1"
   },
   "devDependencies": {
     "@vitest/coverage-v8": "4.1.11",
     "@eslint/js": "^10.0.1",
     "@types/better-sqlite3": "^9.6.0",
-    "@types/node": "^26.4.0",
+    "@types/node": "^26.5.1",
     "@types/nodemailer": "^8.0.1",
     "@types/turndown": "^5.0.6",
-    "eslint": "^10.9.1",
+    "eslint": "^10.10.0",
     "lefthook": "2.1.12",
     "prettier": "^3.9.6",
     "tsup": "^8.5.1",
     "typescript": "~6.0.3",
-    "typescript-eslint": "^8.69.0",
+    "typescript-eslint": "^8.70.0",
     "vitest": "^4.1.11"
   }
 }
