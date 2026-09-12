@@ -18,8 +18,8 @@ fi
 
 if command -v gitleaks >/dev/null 2>&1; then
   if [ -n "$range" ]; then
-    gitleaks git --redact --verbose "$range"
+    gitleaks git --redact --verbose --log-opts="$range"
   else
-    gitleaks git --redact --verbose "$range"
+    gitleaks git --redact --verbose
   fi
 fi
