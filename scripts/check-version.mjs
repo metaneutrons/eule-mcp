@@ -22,7 +22,9 @@ const versions = new Map([
     "helper/Cargo.lock",
     capturedVersion(
       "helper/Cargo.lock",
-      /name = "eule-helper"\nversion = "([^"]+)" # x-release-please-version/,
+      // release-please updates this via a TOML jsonpath, so no marker comment is
+      // needed; cargo and Dependabot would strip one on every lockfile rewrite.
+      /name = "eule-helper"\nversion = "([^"]+)"/,
     ),
   ],
   [
