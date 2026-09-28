@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.1](https://github.com/metaneutrons/eule-mcp/compare/v0.6.0...v0.6.1) (2026-09-28)
+
+
+### Bug Fixes
+
+* **deps:** patch rustls, vite and esbuild advisories ([#70](https://github.com/metaneutrons/eule-mcp/issues/70)) ([52e4c9b](https://github.com/metaneutrons/eule-mcp/commit/52e4c9b252be4601ec41c7a2ccb431c8c7bcbd35))
+* **m365:** keep stored auth tier, normalise EWS folders, read batched summaries ([#69](https://github.com/metaneutrons/eule-mcp/issues/69)) ([b5ecad6](https://github.com/metaneutrons/eule-mcp/commit/b5ecad64c2d9cb534bbb63bde3a2c24071400407))
+
 ## [0.6.0](https://github.com/metaneutrons/eule-mcp/compare/v0.5.0...v0.6.0) (2026-08-26)
 
 
