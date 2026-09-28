@@ -530,7 +530,10 @@ export class EwsMailConnector implements MailConnector {
     const body = dig(data, "Envelope", "Body") as Record<string, unknown> | undefined;
     if (!body) return [];
 
-    // Find the response message (works for FindItem, GetItem, etc.)
+    // Find the response messages (works for FindItem, GetItem, etc.). A GetItem
+    // with several ItemIds answers with one *ResponseMessage per id, which the
+    // parser turns into an array, so every entry has to be collected.
+    const collected: Record<string, unknown>[] = [];
     for (const key of Object.keys(body)) {
       const response = body[key] as Record<string, unknown>;
       const responseMessages = dig(response, "ResponseMessages") as
@@ -538,20 +541,26 @@ export class EwsMailConnector implements MailConnector {
       if (!responseMessages) continue;
 
       for (const rmKey of Object.keys(responseMessages)) {
-        const rm = responseMessages[rmKey] as Record<string, unknown>;
-        // FindItem has RootFolder > Items > Message
-        const rootFolder = rm.RootFolder as Record<string, unknown> | undefined;
-        const items = (rootFolder ? dig(rootFolder, "Items") : dig(rm, "Items")) as
-          Record<string, unknown> | undefined;
-        if (!items) continue;
+        const entry = responseMessages[rmKey];
+        const entries: unknown[] = Array.isArray(entry) ? entry : [entry];
+        for (const candidate of entries) {
+          if (!candidate || typeof candidate !== "object") continue;
+          const rm = candidate as Record<string, unknown>;
+          // FindItem has RootFolder > Items > Message
+          const rootFolder = rm.RootFolder as Record<string, unknown> | undefined;
+          const items = (rootFolder ? dig(rootFolder, "Items") : dig(rm, "Items")) as
+            Record<string, unknown> | undefined;
+          if (!items) continue;
 
-        const messages = items.Message;
-        if (Array.isArray(messages)) return messages as Record<string, unknown>[];
-        if (messages && typeof messages === "object") return [messages as Record<string, unknown>];
+          const messages = items.Message;
+          if (Array.isArray(messages)) collected.push(...(messages as Record<string, unknown>[]));
+          else if (messages && typeof messages === "object")
+            collected.push(messages as Record<string, unknown>);
+        }
       }
     }
 
-    return [];
+    return collected;
   }
 
   private mapMessage(m: Record<string, unknown>): MailMessage {
