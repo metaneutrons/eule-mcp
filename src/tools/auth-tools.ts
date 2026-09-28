@@ -69,10 +69,13 @@ export function registerAuthTools(server: McpServer, auth: AuthService): void {
     "auth_login",
     {
       description:
-        "Authenticate an M365 or Google account. For M365, auto uses the native Eule webview when a registered redirectUri is configured and locally fills any opt-in password/TOTP bindings; otherwise it opens browser OAuth. Existing refresh tokens are renewed automatically.",
+        "Authenticate an M365 or Google account. For M365, auto uses the native Eule webview when a registered redirectUri is configured and locally fills any opt-in password/TOTP bindings; otherwise it opens browser OAuth. Without tier, the tier already stored for the account is reused (default graph). Existing refresh tokens are renewed automatically.",
       inputSchema: {
         account: z.email().optional(),
-        tier: z.enum(["graph", "ews", "imap", "google"]).optional(),
+        tier: z
+          .enum(["graph", "ews", "imap", "google"])
+          .optional()
+          .describe("Defaults to the tier already stored for the account, otherwise graph."),
         method: z
           .enum(["auto", "browser", "webview"])
           .optional()
@@ -98,7 +101,7 @@ export function registerAuthTools(server: McpServer, auth: AuthService): void {
         "auth_login",
         async () => {
           const token = await auth.login({
-            tier: tier ?? "graph",
+            tier,
             account,
             method,
             redirectUri,

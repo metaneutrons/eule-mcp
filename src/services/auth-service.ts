@@ -14,7 +14,8 @@ import { oauthCapture, type OauthCaptureOpts } from "../helper/run.js";
 export type AuthLoginMethod = "auto" | "browser" | "webview";
 
 export interface AuthLoginRequest {
-  readonly tier: ApiTier;
+  /** Defaults to the tier already stored for the account, otherwise `graph`. */
+  readonly tier?: ApiTier;
   readonly account?: string;
   readonly method?: AuthLoginMethod;
   readonly redirectUri?: string;
@@ -79,8 +80,9 @@ export class AuthService {
   }
 
   async login(request: AuthLoginRequest): Promise<AccountToken> {
-    const { tier, redirectUri } = request;
+    const { redirectUri } = request;
     const account = request.account?.trim().toLowerCase();
+    const tier = request.tier ?? this.storedTier(account) ?? "graph";
     const method = request.method ?? "auto";
     if (tier === "google" && (method === "webview" || redirectUri !== undefined))
       throw new Error("The native Eule webview login is available only for M365 accounts");
@@ -117,6 +119,14 @@ export class AuthService {
         throw new Error(`Authentication failed for ${tier}`, { cause: error });
       }
     });
+  }
+
+  /** Tier of an already stored token, so a re-login keeps the account on its working tier. */
+  private storedTier(account: string | undefined): ApiTier | undefined {
+    if (!account) return undefined;
+    return Object.entries(this.tokens.load().accounts).find(
+      ([key]) => key.toLowerCase() === account,
+    )?.[1].tier;
   }
 
   private requireWebviewAccount(account: string | undefined): string {
