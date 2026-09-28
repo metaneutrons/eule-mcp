@@ -126,6 +126,73 @@ describe("AuthService M365 webview login", () => {
     expect(credentialBroker.read).not.toHaveBeenCalled();
   });
 
+  it("reuses the stored tier when no tier is requested", async () => {
+    const account = "user@example.com";
+    let store: TokenStore = {
+      accounts: {
+        [account]: {
+          account,
+          accessToken: "old-access",
+          refreshToken: "old-refresh",
+          expiresAt: Date.now() - 1_000,
+          tier: "ews",
+        },
+      },
+    };
+    const repository: TokenRepository = {
+      load: () => store,
+      save: vi.fn(),
+      remove: vi.fn(() => false),
+    };
+    const config = {
+      get: () => ({
+        language: "en",
+        oauth: {
+          clientId: "public-client",
+          tenant: "common",
+          redirectUri: "https://login.microsoftonline.com/common/oauth2/nativeclient",
+        },
+        roles: [],
+      }),
+      euleDirPath: "/data",
+    } as unknown as ConfigManager;
+    const capture = vi.fn(async () => {
+      store = {
+        accounts: {
+          [account]: {
+            account,
+            accessToken: "new-access",
+            refreshToken: "new-refresh",
+            expiresAt: Date.now() + 60 * 60 * 1_000,
+            tier: "ews",
+          },
+        },
+      };
+      return 0;
+    });
+    const auth = new AuthService(
+      config,
+      repository,
+      new ConfiguredCredentialResolver(config),
+      capture,
+    );
+
+    const token = await runWithExecutionContext(
+      {
+        correlationId: "m365-stored-tier-login",
+        operation: "auth_login",
+        startedAt: Date.now(),
+        signal: new AbortController().signal,
+      },
+      () => auth.login({ account: "USER@example.com" }),
+    );
+
+    expect(token.tier).toBe("ews");
+    expect(capture).toHaveBeenCalledWith(
+      expect.objectContaining({ tier: "ews", loginHint: account }),
+    );
+  });
+
   it("requires an account for an explicitly selected M365 webview", async () => {
     const repository: TokenRepository = {
       load: () => ({ accounts: {} }),

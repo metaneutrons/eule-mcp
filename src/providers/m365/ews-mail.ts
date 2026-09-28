@@ -31,6 +31,49 @@ function soap(body: string): string {
 </soap:Envelope>`;
 }
 
+/**
+ * EWS DistinguishedFolderId values are case-sensitive lowercase tokens, while
+ * callers (and models) tend to pass display names such as "Archive" or
+ * "Gesendete Elemente". Map both onto the distinguished id; unknown names pass
+ * through unchanged so EWS still reports them.
+ */
+const EWS_FOLDER_ALIASES: Readonly<Record<string, string>> = {
+  inbox: "inbox",
+  posteingang: "inbox",
+  archive: "archive",
+  archiv: "archive",
+  sentitems: "sentitems",
+  sent: "sentitems",
+  gesendeteelemente: "sentitems",
+  gesendet: "sentitems",
+  drafts: "drafts",
+  draft: "drafts",
+  entwurfe: "drafts",
+  entwuerfe: "drafts",
+  deleteditems: "deleteditems",
+  deleted: "deleteditems",
+  trash: "deleteditems",
+  papierkorb: "deleteditems",
+  geloschteelemente: "deleteditems",
+  geloeschteelemente: "deleteditems",
+  junkemail: "junkemail",
+  junk: "junkemail",
+  spam: "junkemail",
+  junkemails: "junkemail",
+  outbox: "outbox",
+  postausgang: "outbox",
+};
+
+export function normalizeEwsFolder(folder: string): string {
+  const key = folder
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[\s_-]+/g, "");
+  return EWS_FOLDER_ALIASES[key] ?? folder;
+}
+
 /** Safely navigate a nested object path. */
 function dig(obj: unknown, ...keys: string[]): unknown {
   let current = obj;
@@ -62,7 +105,8 @@ export class EwsMailConnector implements MailConnector {
   ) {}
 
   /** Build DistinguishedFolderId XML, with Mailbox for shared mailboxes. */
-  private folderId(folder: string): string {
+  private folderId(name: string): string {
+    const folder = normalizeEwsFolder(name);
     if (this.shared) {
       return `<t:DistinguishedFolderId Id="${escapeXml(folder)}"><t:Mailbox><t:EmailAddress>${escapeXml(this.account)}</t:EmailAddress></t:Mailbox></t:DistinguishedFolderId>`;
     }
