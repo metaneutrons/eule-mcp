@@ -10,7 +10,11 @@
       "bump-minor-pre-major": true,
       "extra-files": [
         { "type": "generic", "path": "helper/Cargo.toml" },
-        { "type": "generic", "path": "helper/Cargo.lock" }
+        {
+          "type": "toml",
+          "path": "helper/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value=='eule-helper')].version"
+        }
       ]
     }
   }
