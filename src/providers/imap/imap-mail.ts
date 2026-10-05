@@ -95,6 +95,62 @@ export function parseImapId(
   return { mailbox, uid: Number(uid) };
 }
 
+/** The headers of a parent message that decide how a reply threads. */
+export interface ThreadSource {
+  messageId?: string;
+  inReplyTo?: string;
+  references?: string;
+}
+
+/** Upper bound on the ids a reply carries forward in References. */
+const MAX_REFERENCES = 50;
+
+/**
+ * The msg-ids in a header value, in order. These values come from someone
+ * else's message, so only well-formed `<...>` tokens survive: nothing with
+ * whitespace or line breaks that could end the header line early.
+ */
+function messageIds(value: string | undefined): string[] {
+  return value?.match(/<[^<>\s]+>/g) ?? [];
+}
+
+/** One header's value from a raw header block, with folded lines joined. */
+function headerValue(raw: Buffer | undefined, name: string): string | undefined {
+  if (!raw) return undefined;
+  const prefix = `${name.toLowerCase()}:`;
+  return raw
+    .toString("utf8")
+    .replace(/\r?\n[ \t]+/g, " ")
+    .split(/\r?\n/)
+    .find((line) => line.toLowerCase().startsWith(prefix))
+    ?.slice(prefix.length)
+    .trim();
+}
+
+/**
+ * Threading headers for a reply, as RFC 5322 (section 3.6.4) specifies them.
+ * In-Reply-To names the parent's Message-ID. References is the parent's
+ * References, or else its In-Reply-To when that holds a single id, followed by
+ * the parent's Message-ID. A very long chain keeps its root and the most
+ * recent ancestors, which is what threading clients walk.
+ */
+export function replyThreadHeaders(parent: ThreadSource): {
+  inReplyTo?: string;
+  references?: string[];
+} {
+  const own = messageIds(parent.messageId)[0];
+  const ancestors = messageIds(parent.references);
+  const repliedTo = messageIds(parent.inReplyTo);
+  const chain = ancestors.length > 0 ? ancestors : repliedTo.length === 1 ? repliedTo : [];
+  const all = own ? [...chain, own] : chain;
+  const references =
+    all.length > MAX_REFERENCES ? [...all.slice(0, 1), ...all.slice(-(MAX_REFERENCES - 1))] : all;
+  return {
+    ...(own ? { inReplyTo: own } : {}),
+    ...(references.length > 0 ? { references } : {}),
+  };
+}
+
 /** Special-use flags (RFC 6154) of the well-known folders. */
 const SPECIAL_USE: Partial<Record<WellKnownMailFolder, string>> = {
   archive: "\\Archive",
@@ -232,6 +288,11 @@ export class ImapMailConnector implements MailConnector {
   }
 
   async getMessage(id: string): Promise<MailMessageFull> {
+    return (await this.fetchFull(id)).message;
+  }
+
+  /** The full message, plus the headers a reply needs to thread, in one fetch. */
+  private async fetchFull(id: string): Promise<{ message: MailMessageFull; thread: ThreadSource }> {
     const { mailbox, uid } = parseImapId(id);
     const client = await this.connect();
     try {
@@ -239,19 +300,28 @@ export class ImapMailConnector implements MailConnector {
       try {
         const raw = await client.fetchOne(
           String(uid),
-          { envelope: true, flags: true, source: true, bodyStructure: true },
+          {
+            envelope: true,
+            flags: true,
+            source: true,
+            bodyStructure: true,
+            headers: ["references"],
+          },
           { uid: true },
         );
         if (!raw) throw new Error(`Message ${id} not found`);
         const msg = raw as {
           uid: number;
           source?: Buffer;
+          headers?: Buffer;
           bodyStructure?: BodyStructureNode;
           envelope?: {
             subject?: string;
             date?: Date;
             from?: { address?: string }[];
             to?: { address?: string }[];
+            messageId?: string;
+            inReplyTo?: string;
           };
           flags?: Set<string>;
         };
@@ -263,17 +333,24 @@ export class ImapMailConnector implements MailConnector {
         walkAttachments(msg.bodyStructure, attachments);
 
         return {
-          id: formatImapId(mailbox, msg.uid),
-          account: this.account,
-          subject: msg.envelope?.subject ?? "",
-          from: msg.envelope?.from?.[0]?.address ?? "",
-          to: (msg.envelope?.to ?? []).map((a) => a.address ?? ""),
-          receivedAt: msg.envelope?.date?.toISOString() ?? "",
-          snippet: textBody.slice(0, 200),
-          isRead: msg.flags?.has("\\Seen") ?? false,
-          body: textBody,
-          bodyType: "text",
-          attachments,
+          message: {
+            id: formatImapId(mailbox, msg.uid),
+            account: this.account,
+            subject: msg.envelope?.subject ?? "",
+            from: msg.envelope?.from?.[0]?.address ?? "",
+            to: (msg.envelope?.to ?? []).map((a) => a.address ?? ""),
+            receivedAt: msg.envelope?.date?.toISOString() ?? "",
+            snippet: textBody.slice(0, 200),
+            isRead: msg.flags?.has("\\Seen") ?? false,
+            body: textBody,
+            bodyType: "text",
+            attachments,
+          },
+          thread: {
+            messageId: msg.envelope?.messageId,
+            inReplyTo: msg.envelope?.inReplyTo,
+            references: headerValue(msg.headers, "references"),
+          },
         };
       } finally {
         lock.release();
@@ -424,7 +501,7 @@ export class ImapMailConnector implements MailConnector {
   }
 
   async replyToMessage(id: string, body: string, opts?: MailSendOpts): Promise<void> {
-    const original = await this.getMessage(id);
+    const { message: original, thread } = await this.fetchFull(id);
     const transport = await this.makeTransport();
     try {
       await transport.sendMail({
@@ -434,7 +511,7 @@ export class ImapMailConnector implements MailConnector {
         bcc: opts?.bcc && assertSafeAddresses(opts.bcc, "Bcc").join(", "),
         subject: `Re: ${original.subject}`,
         html: assembleHtml(body, this.signature),
-        inReplyTo: id,
+        ...replyThreadHeaders(thread),
         attachments: nodemailerAttachments(opts?.attachments),
       });
     } finally {
@@ -448,6 +525,8 @@ export class ImapMailConnector implements MailConnector {
     body?: string,
     opts?: MailSendOpts,
   ): Promise<void> {
+    // A forward starts a new conversation for its recipients, so unlike a reply
+    // it carries neither In-Reply-To nor References.
     const original = await this.getMessage(id);
     const transport = await this.makeTransport();
     try {

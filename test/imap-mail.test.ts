@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { formatImapId, ImapMailConnector, parseImapId } from "../src/providers/imap/imap-mail.js";
+import {
+  formatImapId,
+  ImapMailConnector,
+  parseImapId,
+  replyThreadHeaders,
+} from "../src/providers/imap/imap-mail.js";
 
 describe("ImapMailConnector search", () => {
   it("selects the newest matching UIDs instead of truncating the oldest results", async () => {
@@ -316,5 +321,127 @@ describe("ImapMailConnector follow-up actions use the id's mailbox", () => {
     const connector = connectorWith(client);
     await expect(connector.getMessage("Archive/x")).rejects.toThrow(/Invalid IMAP message id/);
     expect(client.getMailboxLock).not.toHaveBeenCalled();
+  });
+});
+
+describe("replyThreadHeaders", () => {
+  it("replies to the parent's Message-ID and extends its References", () => {
+    expect(
+      replyThreadHeaders({
+        messageId: "<m3@example.com>",
+        inReplyTo: "<m2@example.com>",
+        references: "<m1@example.com> <m2@example.com>",
+      }),
+    ).toEqual({
+      inReplyTo: "<m3@example.com>",
+      references: ["<m1@example.com>", "<m2@example.com>", "<m3@example.com>"],
+    });
+  });
+
+  it("falls back to a single-id In-Reply-To when the parent has no References", () => {
+    expect(
+      replyThreadHeaders({ messageId: "<m2@example.com>", inReplyTo: "<m1@example.com>" }),
+    ).toEqual({
+      inReplyTo: "<m2@example.com>",
+      references: ["<m1@example.com>", "<m2@example.com>"],
+    });
+  });
+
+  it("does not take an In-Reply-To with several ids as the chain", () => {
+    expect(
+      replyThreadHeaders({
+        messageId: "<m3@example.com>",
+        inReplyTo: "<m1@example.com> <m2@example.com>",
+      }),
+    ).toEqual({ inReplyTo: "<m3@example.com>", references: ["<m3@example.com>"] });
+  });
+
+  it("keeps the parent's References when the parent has no Message-ID", () => {
+    expect(replyThreadHeaders({ references: "<m1@example.com>" })).toEqual({
+      references: ["<m1@example.com>"],
+    });
+  });
+
+  it("sets nothing when the parent has none of the three", () => {
+    expect(replyThreadHeaders({})).toEqual({});
+  });
+
+  it("carries only well-formed ids, so a crafted header cannot add a line", () => {
+    const headers = replyThreadHeaders({
+      messageId: "<m2@example.com>\r\nBcc: attacker@example.com",
+      references: "<m1@example.com>\r\nX-Injected: yes <broken",
+    });
+    expect(headers).toEqual({
+      inReplyTo: "<m2@example.com>",
+      references: ["<m1@example.com>", "<m2@example.com>"],
+    });
+  });
+
+  it("keeps the root and the newest ancestors of a very long chain", () => {
+    const chain = Array.from({ length: 80 }, (_, i) => `<m${String(i)}@example.com>`);
+    const { references } = replyThreadHeaders({
+      messageId: "<own@example.com>",
+      references: chain.join(" "),
+    });
+    expect(references).toHaveLength(50);
+    expect(references?.[0]).toBe("<m0@example.com>");
+    expect(references?.at(-2)).toBe("<m79@example.com>");
+    expect(references?.at(-1)).toBe("<own@example.com>");
+  });
+});
+
+describe("ImapMailConnector reply threading", () => {
+  /** A client holding one message, and a connector whose SMTP send is recorded. */
+  function setup(headers: string) {
+    const client = {
+      getMailboxLock: vi.fn(async () => ({ release: vi.fn() })),
+      fetchOne: vi.fn(async () => ({
+        uid: 5,
+        envelope: {
+          subject: "Budget",
+          from: [{ address: "colleague@example.com" }],
+          messageId: "<m3@example.com>",
+          inReplyTo: "<m2@example.com>",
+        },
+        headers: Buffer.from(headers),
+        source: Buffer.from(""),
+      })),
+      logout: vi.fn(async () => undefined),
+    };
+    const connector = connectorWith(client);
+    const sendMail = vi.fn(async (_options: Record<string, unknown>) => ({}));
+    Object.defineProperty(connector, "makeTransport", {
+      value: vi.fn(async () => ({ sendMail, close: vi.fn() })),
+    });
+    return { client, connector, sendMail };
+  }
+
+  it("threads a reply on the parent's Message-ID rather than eule's id", async () => {
+    const { client, connector, sendMail } = setup(
+      "References: <m1@example.com>\r\n <m2@example.com>\r\n\r\n",
+    );
+    await connector.replyToMessage("Archive/5", "Danke");
+
+    expect(client.fetchOne).toHaveBeenCalledWith(
+      "5",
+      expect.objectContaining({ headers: ["references"] }),
+      { uid: true },
+    );
+    expect(sendMail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "colleague@example.com",
+        subject: "Re: Budget",
+        inReplyTo: "<m3@example.com>",
+        references: ["<m1@example.com>", "<m2@example.com>", "<m3@example.com>"],
+      }),
+    );
+  });
+
+  it("forwards without threading headers", async () => {
+    const { connector, sendMail } = setup("References: <m1@example.com>\r\n\r\n");
+    await connector.forwardMessage("INBOX/5", ["third@example.com"]);
+    const options = sendMail.mock.calls[0]?.[0] ?? {};
+    expect(options).not.toHaveProperty("inReplyTo");
+    expect(options).not.toHaveProperty("references");
   });
 });
