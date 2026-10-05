@@ -100,6 +100,12 @@ export interface MailConnector {
    * not implement it. Unknown ids are omitted rather than throwing.
    */
   getSummaries?(ids: readonly string[]): Promise<MailMessage[]>;
+  /**
+   * Newest matches first. Without a folder the search covers every mail folder
+   * of the mailbox; with one, only that folder. Implementations must honour
+   * `folder`: TypeScript accepts an override that leaves it out, which once
+   * let a provider silently search the whole mailbox.
+   */
   searchMessages(query: string, limit?: number, folder?: string): Promise<MailMessage[]>;
   sendMessage(to: string[], subject: string, body: string, opts?: MailSendOpts): Promise<void>;
   createDraft?(

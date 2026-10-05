@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { ConnectorRegistry } from "../connectors/index.js";
 import type { MailConnector, MailMessage, MailMessageFull, MailSendOpts } from "../types/index.js";
+import { hasFolder } from "../utils/mail-folders.js";
 import { resolveAttachmentPaths } from "../utils/outgoing-attachments.js";
 import { assertNoHeaderInjection } from "../utils/security.js";
 import {
@@ -334,7 +335,10 @@ export class MailService {
     opts: { role?: string; folder?: string; limit?: number } = {},
   ): Promise<BulkPreview> {
     const limit = Math.min(opts.limit ?? 100, MAX_UPDATE_BATCH);
-    const { messages, failures } = await this.search(query, opts.role, opts.folder, limit);
+    // A search without a folder covers the whole mailbox. A bulk action moves
+    // or deletes what it matches, so it stays in the inbox unless told otherwise.
+    const folder = hasFolder(opts.folder) ? opts.folder : "inbox";
+    const { messages, failures } = await this.search(query, opts.role, folder, limit);
     const targets: BulkTarget[] = messages
       .slice(0, limit)
       .map((m) => ({ id: m.id, account: m.account, subject: m.subject, from: m.from }));
@@ -344,7 +348,7 @@ export class MailService {
     this.bulkPreviews.set(token, {
       targets,
       createdAt: Date.now(),
-      fingerprint: JSON.stringify({ query, role: opts.role, folder: opts.folder }),
+      fingerprint: JSON.stringify({ query, role: opts.role, folder }),
     });
     return {
       token,

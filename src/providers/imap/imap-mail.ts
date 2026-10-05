@@ -1,5 +1,10 @@
 import { ImapFlow } from "imapflow";
 import { createTransport, type Transporter } from "nodemailer";
+import {
+  hasFolder,
+  wellKnownMailFolder,
+  type WellKnownMailFolder,
+} from "../../utils/mail-folders.js";
 import { assembleHtml } from "../../utils/mail-html.js";
 import { buildMimeMessage } from "../../utils/mime-build.js";
 import {
@@ -59,6 +64,46 @@ function walkAttachments(node: BodyStructureNode | undefined, out: MailAttachmen
   for (const child of node.childNodes ?? []) walkAttachments(child, out);
 }
 
+/**
+ * IMAP UIDs are only unique within one mailbox, so a message id carries its
+ * mailbox: `<encoded mailbox>/<uid>`. Encoding keeps a hierarchy delimiter in
+ * the mailbox name from colliding with the separator.
+ */
+export function formatImapId(mailbox: string, uid: number): string {
+  return `${encodeURIComponent(mailbox)}/${String(uid)}`;
+}
+
+/**
+ * Splits an id from {@link formatImapId}. A bare UID means `defaultMailbox`, so
+ * ids issued before ids carried their mailbox resolve where they always did.
+ */
+export function parseImapId(
+  id: string,
+  defaultMailbox = "INBOX",
+): { mailbox: string; uid: number } {
+  const slash = id.lastIndexOf("/");
+  const uid = id.slice(slash + 1);
+  let mailbox = defaultMailbox;
+  if (slash >= 0) {
+    try {
+      mailbox = decodeURIComponent(id.slice(0, slash));
+    } catch {
+      mailbox = "";
+    }
+  }
+  if (!/^\d+$/.test(uid) || mailbox === "") throw new Error(`Invalid IMAP message id: ${id}`);
+  return { mailbox, uid: Number(uid) };
+}
+
+/** Special-use flags (RFC 6154) of the well-known folders. */
+const SPECIAL_USE: Partial<Record<WellKnownMailFolder, string>> = {
+  archive: "\\Archive",
+  sentitems: "\\Sent",
+  drafts: "\\Drafts",
+  deleteditems: "\\Trash",
+  junkemail: "\\Junk",
+};
+
 export interface ImapConfig {
   account: string;
   host: string;
@@ -115,9 +160,9 @@ export class ImapMailConnector implements MailConnector {
     return token;
   }
 
-  private mapSummary(message: ImapSummary): MailMessage {
+  private mapSummary(message: ImapSummary, mailbox: string): MailMessage {
     return {
-      id: String(message.uid),
+      id: formatImapId(mailbox, message.uid),
       account: this.account,
       subject: message.envelope?.subject ?? "",
       from: message.envelope?.from?.[0]?.address ?? "",
@@ -128,10 +173,43 @@ export class ImapMailConnector implements MailConnector {
     };
   }
 
+  /**
+   * Mailbox path for a folder name. Well-known names ("Archiv", "Sent Items",
+   * "Papierkorb") resolve through the server's special-use flags, so the same
+   * name works on every provider; any other name is taken as the path.
+   */
+  private async resolveMailbox(client: ImapFlow, folder: string): Promise<string> {
+    const known = wellKnownMailFolder(folder);
+    if (known === "inbox") return "INBOX";
+    const specialUse = known && SPECIAL_USE[known];
+    if (!specialUse) return folder;
+    const mailboxes = await client.list();
+    return mailboxes.find((box) => box.specialUse === specialUse)?.path ?? folder;
+  }
+
+  /**
+   * Mailboxes a search without a folder covers: every selectable one. A `\All`
+   * mailbox (Gmail's "All Mail") already holds every other message, so where
+   * one exists only it, junk and trash are searched, which avoids duplicates.
+   */
+  private async searchableMailboxes(client: ImapFlow): Promise<string[]> {
+    const selectable = (await client.list()).filter(
+      (box) => !box.flags.has("\\Noselect") && !box.flags.has("\\NonExistent"),
+    );
+    if (selectable.some((box) => box.specialUse === "\\All")) {
+      const covering = new Set(["\\All", "\\Junk", "\\Trash"]);
+      return selectable
+        .filter((box) => box.specialUse !== undefined && covering.has(box.specialUse))
+        .map((box) => box.path);
+    }
+    return selectable.map((box) => box.path);
+  }
+
   async listMessages(folder = "INBOX", limit = 10): Promise<MailMessage[]> {
     const client = await this.connect();
     try {
-      const lock = await client.getMailboxLock(folder);
+      const path = await this.resolveMailbox(client, folder);
+      const lock = await client.getMailboxLock(path);
       try {
         const messages: MailMessage[] = [];
         const mailbox = client.mailbox;
@@ -142,7 +220,7 @@ export class ImapMailConnector implements MailConnector {
           envelope: true,
           flags: true,
         })) {
-          messages.push(this.mapSummary(raw));
+          messages.push(this.mapSummary(raw, path));
         }
         return messages.reverse();
       } finally {
@@ -154,15 +232,17 @@ export class ImapMailConnector implements MailConnector {
   }
 
   async getMessage(id: string): Promise<MailMessageFull> {
+    const { mailbox, uid } = parseImapId(id);
     const client = await this.connect();
     try {
-      const lock = await client.getMailboxLock("INBOX");
+      const lock = await client.getMailboxLock(mailbox);
       try {
         const raw = await client.fetchOne(
-          id,
+          String(uid),
           { envelope: true, flags: true, source: true, bodyStructure: true },
           { uid: true },
         );
+        if (!raw) throw new Error(`Message ${id} not found`);
         const msg = raw as {
           uid: number;
           source?: Buffer;
@@ -183,7 +263,7 @@ export class ImapMailConnector implements MailConnector {
         walkAttachments(msg.bodyStructure, attachments);
 
         return {
-          id: String(msg.uid),
+          id: formatImapId(mailbox, msg.uid),
           account: this.account,
           subject: msg.envelope?.subject ?? "",
           from: msg.envelope?.from?.[0]?.address ?? "",
@@ -204,11 +284,12 @@ export class ImapMailConnector implements MailConnector {
   }
 
   async downloadAttachment(messageId: string, attachmentId: string): Promise<Buffer> {
+    const { mailbox, uid } = parseImapId(messageId);
     const client = await this.connect();
     try {
-      const lock = await client.getMailboxLock("INBOX");
+      const lock = await client.getMailboxLock(mailbox);
       try {
-        const part = await client.download(messageId, attachmentId, { uid: true });
+        const part = await client.download(String(uid), attachmentId, { uid: true });
         const chunks: Buffer[] = [];
         let total = 0;
         for await (const chunk of part.content) {
@@ -229,37 +310,65 @@ export class ImapMailConnector implements MailConnector {
     }
   }
 
-  async searchMessages(query: string, limit = 10, folder = "INBOX"): Promise<MailMessage[]> {
+  async searchMessages(query: string, limit = 10, folder?: string): Promise<MailMessage[]> {
     const client = await this.connect();
     try {
-      const lock = await client.getMailboxLock(folder);
-      try {
-        // SEARCH returns ascending UIDs. Fetching the search expression directly
-        // and stopping at `limit` therefore returned the oldest matches and could
-        // hide current-year mail behind a full page of historical results.
-        const matches = await client.search({ text: query }, { uid: true });
-        if (!matches || matches.length === 0) return [];
-
-        const latestUids = [...matches].sort((a, b) => a - b).slice(-limit);
-        const byUid = new Map<number, MailMessage>();
-        for await (const raw of client.fetch(
-          latestUids,
-          { envelope: true, flags: true },
-          { uid: true },
-        )) {
-          const message = raw as ImapSummary;
-          byUid.set(message.uid, this.mapSummary(message));
-        }
-
-        return [...latestUids]
-          .reverse()
-          .map((uid) => byUid.get(uid))
-          .filter((message): message is MailMessage => message !== undefined);
-      } finally {
-        lock.release();
+      if (hasFolder(folder)) {
+        const mailbox = await this.resolveMailbox(client, folder);
+        return await this.searchMailbox(client, mailbox, query, limit);
       }
+      // Without a folder every searchable mailbox is searched and the newest
+      // matches win. A mailbox that cannot be opened is skipped; the search
+      // only fails when none can.
+      const mailboxes = await this.searchableMailboxes(client);
+      const found: MailMessage[] = [];
+      const errors: unknown[] = [];
+      for (const mailbox of mailboxes) {
+        try {
+          found.push(...(await this.searchMailbox(client, mailbox, query, limit)));
+        } catch (error) {
+          errors.push(error);
+        }
+      }
+      if (mailboxes.length > 0 && errors.length === mailboxes.length) throw errors[0];
+      return found.sort((a, b) => b.receivedAt.localeCompare(a.receivedAt)).slice(0, limit);
     } finally {
       await client.logout();
+    }
+  }
+
+  /** The newest `limit` matches in one mailbox, newest first. */
+  private async searchMailbox(
+    client: ImapFlow,
+    mailbox: string,
+    query: string,
+    limit: number,
+  ): Promise<MailMessage[]> {
+    const lock = await client.getMailboxLock(mailbox);
+    try {
+      // SEARCH returns ascending UIDs. Fetching the search expression directly
+      // and stopping at `limit` therefore returned the oldest matches and could
+      // hide current-year mail behind a full page of historical results.
+      const matches = await client.search({ text: query }, { uid: true });
+      if (!matches || matches.length === 0) return [];
+
+      const latestUids = [...matches].sort((a, b) => a - b).slice(-limit);
+      const byUid = new Map<number, MailMessage>();
+      for await (const raw of client.fetch(
+        latestUids,
+        { envelope: true, flags: true },
+        { uid: true },
+      )) {
+        const message = raw as ImapSummary;
+        byUid.set(message.uid, this.mapSummary(message, mailbox));
+      }
+
+      return [...latestUids]
+        .reverse()
+        .map((uid) => byUid.get(uid))
+        .filter((message): message is MailMessage => message !== undefined);
+    } finally {
+      lock.release();
     }
   }
 
@@ -382,10 +491,10 @@ export class ImapMailConnector implements MailConnector {
       const result = await client.append("Drafts", Buffer.from(mime), ["\\Draft", "\\Seen"]);
       const uid =
         result && typeof result === "object"
-          ? String(Number((result as unknown as Record<string, unknown>).uid) || 0)
-          : "";
+          ? Number((result as unknown as Record<string, unknown>).uid) || 0
+          : 0;
       return {
-        id: uid,
+        id: uid ? formatImapId("Drafts", uid) : "",
         account: this.account,
         subject,
         from: this.account,
@@ -400,10 +509,11 @@ export class ImapMailConnector implements MailConnector {
   }
 
   async sendDraft(id: string): Promise<void> {
+    const { mailbox, uid } = parseImapId(id, "Drafts");
     const client = await this.connect();
     try {
-      await client.mailboxOpen("Drafts");
-      const msg = await client.fetchOne(id, { source: true }, { uid: true });
+      await client.mailboxOpen(mailbox);
+      const msg = await client.fetchOne(String(uid), { source: true }, { uid: true });
       if (!msg || typeof msg !== "object" || !("source" in msg) || !msg.source)
         throw new Error(`Draft ${id} not found`);
       const raw = msg.source.toString();
@@ -417,67 +527,73 @@ export class ImapMailConnector implements MailConnector {
 
       // Move to Sent, delete from Drafts
       await client.append("Sent", Buffer.from(raw), ["\\Seen"]);
-      await client.messageFlagsAdd(id, ["\\Deleted"], { uid: true });
-      await client.messageDelete(id, { uid: true });
+      await client.messageFlagsAdd(String(uid), ["\\Deleted"], { uid: true });
+      await client.messageDelete(String(uid), { uid: true });
     } finally {
       await client.logout();
     }
   }
 
   /**
-   * Envelope-only lookup for a set of UIDs. IMAP batches this natively: one
-   * FETCH over a comma-separated UID set, no bodies.
+   * Envelope-only lookup for a set of ids. IMAP batches this natively: one
+   * FETCH per mailbox over its UID set, no bodies. Each summary keeps the id
+   * it was asked for, so callers can match them up; ids that are malformed or
+   * whose mailbox cannot be opened are omitted.
    */
   async getSummaries(ids: readonly string[]): Promise<MailMessage[]> {
-    const uids = ids.filter((id) => /^\d+$/.test(id)).map(Number);
-    if (uids.length === 0) return [];
+    const byMailbox = new Map<string, Map<number, string>>();
+    for (const id of ids) {
+      let parsed: { mailbox: string; uid: number };
+      try {
+        parsed = parseImapId(id);
+      } catch {
+        continue;
+      }
+      const uids = byMailbox.get(parsed.mailbox) ?? new Map<number, string>();
+      uids.set(parsed.uid, id);
+      byMailbox.set(parsed.mailbox, uids);
+    }
+    if (byMailbox.size === 0) return [];
     const client = await this.connect();
     try {
-      const lock = await client.getMailboxLock("INBOX");
-      try {
-        const results: MailMessage[] = [];
-        for await (const raw of client.fetch(
-          uids,
-          { envelope: true, flags: true },
-          { uid: true },
-        )) {
-          const msg = raw as {
-            uid: number;
-            envelope?: {
-              subject?: string;
-              date?: Date;
-              from?: { address?: string }[];
-              to?: { address?: string }[];
-            };
-            flags?: Set<string>;
-          };
-          results.push({
-            id: String(msg.uid),
-            account: this.account,
-            subject: msg.envelope?.subject ?? "",
-            from: msg.envelope?.from?.[0]?.address ?? "",
-            to: (msg.envelope?.to ?? []).map((a) => a.address ?? ""),
-            receivedAt: msg.envelope?.date?.toISOString() ?? "",
-            snippet: "",
-            isRead: msg.flags?.has("\\Seen") ?? false,
-          });
+      const results: MailMessage[] = [];
+      for (const [mailbox, uids] of byMailbox) {
+        let lock: { release: () => void };
+        try {
+          lock = await client.getMailboxLock(mailbox);
+        } catch {
+          continue;
         }
-        return results;
-      } finally {
-        lock.release();
+        try {
+          for await (const raw of client.fetch(
+            [...uids.keys()],
+            { envelope: true, flags: true },
+            { uid: true },
+          )) {
+            const message = raw as ImapSummary;
+            results.push({
+              ...this.mapSummary(message, mailbox),
+              id: uids.get(message.uid) ?? formatImapId(mailbox, message.uid),
+            });
+          }
+        } finally {
+          lock.release();
+        }
       }
+      return results;
     } finally {
       await client.logout();
     }
   }
 
   async markRead(id: string, isRead: boolean): Promise<void> {
+    const { mailbox, uid } = parseImapId(id);
     const client = await this.connect();
     try {
-      const lock = await client.getMailboxLock("INBOX");
+      const lock = await client.getMailboxLock(mailbox);
       try {
-        await client.messageFlagsAdd(id, ["\\Seen"], { uid: true });
-        if (!isRead) await client.messageFlagsRemove(id, ["\\Seen"], { uid: true });
+        await client.messageFlagsAdd(String(uid), ["\\Seen"], { uid: true });
+        if (!isRead) await client.messageFlagsRemove(String(uid), ["\\Seen"], { uid: true });
       } finally {
         lock.release();
       }
@@ -487,11 +603,13 @@ export class ImapMailConnector implements MailConnector {
   }
 
   async moveMessage(id: string, folder: string): Promise<void> {
+    const { mailbox, uid } = parseImapId(id);
     const client = await this.connect();
     try {
-      const lock = await client.getMailboxLock("INBOX");
+      const target = await this.resolveMailbox(client, folder);
+      const lock = await client.getMailboxLock(mailbox);
       try {
-        await client.messageMove(id, folder, { uid: true });
+        await client.messageMove(String(uid), target, { uid: true });
       } finally {
         lock.release();
       }
@@ -521,6 +639,7 @@ export class ImapMailConnector implements MailConnector {
   }
 
   async deleteMessage(id: string): Promise<void> {
+    const { mailbox, uid } = parseImapId(id);
     const client = await this.connect();
     try {
       // Move to the trash rather than only setting \Deleted. The flag leaves the
@@ -529,13 +648,15 @@ export class ImapMailConnector implements MailConnector {
       // recoverable. Only if the server has no trash at all do we fall back to
       // the flag, and then we say so.
       const trash = await this.trashMailbox(client);
-      const lock = await client.getMailboxLock("INBOX");
+      // Already in the trash: deleting never purges, so there is nothing to do.
+      if (trash === mailbox) return;
+      const lock = await client.getMailboxLock(mailbox);
       try {
         if (trash) {
-          await client.messageMove(id, trash, { uid: true });
+          await client.messageMove(String(uid), trash, { uid: true });
           return;
         }
-        await client.messageFlagsAdd(id, ["\\Deleted"], { uid: true });
+        await client.messageFlagsAdd(String(uid), ["\\Deleted"], { uid: true });
       } finally {
         lock.release();
       }

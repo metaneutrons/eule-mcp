@@ -6,6 +6,11 @@ import type {
   MailSendOpts,
 } from "../../types/index.js";
 import { fetchWithExecutionContext as fetch } from "../../utils/execution-context.js";
+import {
+  hasFolder,
+  wellKnownMailFolder,
+  type WellKnownMailFolder,
+} from "../../utils/mail-folders.js";
 import { assembleHtml } from "../../utils/mail-html.js";
 import { buildMimeMessage } from "../../utils/mime-build.js";
 import {
@@ -37,13 +42,37 @@ interface GmailListItem {
   threadId?: string;
 }
 
-const FOLDER_MAP: Record<string, string> = {
+/** Gmail system label ids for the well-known folders. */
+const FOLDER_LABELS: Partial<Record<WellKnownMailFolder, string>> = {
   inbox: "INBOX",
   sentitems: "SENT",
   drafts: "DRAFT",
   deleteditems: "TRASH",
   junkemail: "SPAM",
 };
+
+/** Gmail search operators for the well-known folders. Gmail has no outbox. */
+const FOLDER_QUERIES: Partial<Record<WellKnownMailFolder, string>> = {
+  inbox: "in:inbox",
+  sentitems: "in:sent",
+  drafts: "in:drafts",
+  deleteditems: "in:trash",
+  junkemail: "in:spam",
+  // Archiving in Gmail only removes the inbox label, so the archive is
+  // everything outside the system folders.
+  archive: "-in:inbox -in:sent -in:drafts -in:spam -in:trash",
+};
+
+function folderLabel(folder: string): string {
+  const known = wellKnownMailFolder(folder);
+  return (known && FOLDER_LABELS[known]) ?? folder.toUpperCase();
+}
+
+function folderQuery(folder: string): string {
+  const known = wellKnownMailFolder(folder);
+  // The label: operator writes spaces in label names as hyphens.
+  return (known && FOLDER_QUERIES[known]) ?? `label:${folder.trim().replace(/\s+/g, "-")}`;
+}
 
 export class GoogleMailConnector implements MailConnector {
   readonly tier = "google";
@@ -68,7 +97,7 @@ export class GoogleMailConnector implements MailConnector {
 
   async listMessages(folder = "inbox", limit = 10): Promise<MailMessage[]> {
     const h = await this.headers();
-    const label = FOLDER_MAP[folder] ?? folder.toUpperCase();
+    const label = folderLabel(folder);
     const res = await fetch(`${BASE}/messages?labelIds=${label}&maxResults=${String(limit)}`, {
       headers: h,
     });
@@ -95,10 +124,14 @@ export class GoogleMailConnector implements MailConnector {
     };
   }
 
-  async searchMessages(query: string, limit = 10, _folder?: string): Promise<MailMessage[]> {
+  async searchMessages(query: string, limit = 10, folder?: string): Promise<MailMessage[]> {
     const h = await this.headers();
+    // Without a folder the search covers the whole mailbox like every other
+    // provider, spam and trash included; a folder narrows it through the
+    // matching search operator.
+    const q = hasFolder(folder) ? `(${query}) ${folderQuery(folder)}` : query;
     const res = await fetch(
-      `${BASE}/messages?q=${encodeURIComponent(query)}&maxResults=${String(limit)}`,
+      `${BASE}/messages?q=${encodeURIComponent(q)}&maxResults=${String(limit)}&includeSpamTrash=true`,
       { headers: h },
     );
     if (!res.ok) throw new Error(`Gmail search: ${String(res.status)}`);
@@ -287,7 +320,7 @@ export class GoogleMailConnector implements MailConnector {
 
   async moveMessage(id: string, folder: string): Promise<void> {
     const h = await this.headers();
-    const label = FOLDER_MAP[folder] ?? folder.toUpperCase();
+    const label = folderLabel(folder);
     const res = await fetch(`${BASE}/messages/${id}/modify`, {
       method: "POST",
       headers: { ...h, "Content-Type": "application/json" },

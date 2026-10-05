@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { ImapMailConnector } from "../src/providers/imap/imap-mail.js";
+import { formatImapId, ImapMailConnector, parseImapId } from "../src/providers/imap/imap-mail.js";
 
 describe("ImapMailConnector search", () => {
   it("selects the newest matching UIDs instead of truncating the oldest results", async () => {
@@ -36,11 +36,11 @@ describe("ImapMailConnector search", () => {
     });
     Object.defineProperty(connector, "connect", { value: vi.fn(async () => client) });
 
-    const messages = await connector.searchMessages("invoice", 2);
+    const messages = await connector.searchMessages("invoice", 2, "INBOX");
 
     expect(search).toHaveBeenCalledWith({ text: "invoice" }, { uid: true });
     expect(fetch).toHaveBeenCalledWith([900, 901], { envelope: true, flags: true }, { uid: true });
-    expect(messages.map((message) => message.id)).toEqual(["901", "900"]);
+    expect(messages.map((message) => message.id)).toEqual(["INBOX/901", "INBOX/900"]);
     expect(messages.every((message) => message.receivedAt.startsWith("2026-"))).toBe(true);
     expect(release).toHaveBeenCalledOnce();
     expect(logout).toHaveBeenCalledOnce();
@@ -131,5 +131,190 @@ describe("ImapMailConnector getSummaries", () => {
     const c = { fetch: vi.fn(), getMailboxLock: vi.fn(), logout: vi.fn() };
     expect(await connectorWith(c).getSummaries(["not-a-uid"])).toEqual([]);
     expect(c.getMailboxLock).not.toHaveBeenCalled();
+  });
+});
+
+describe("IMAP message ids", () => {
+  it("carry their mailbox and round-trip, hierarchy delimiters included", () => {
+    expect(formatImapId("INBOX", 42)).toBe("INBOX/42");
+    expect(parseImapId("INBOX/42")).toEqual({ mailbox: "INBOX", uid: 42 });
+    const nested = formatImapId("Archive/2026", 7);
+    expect(nested).toBe("Archive%2F2026/7");
+    expect(parseImapId(nested)).toEqual({ mailbox: "Archive/2026", uid: 7 });
+  });
+
+  it("read a bare UID as the default mailbox", () => {
+    expect(parseImapId("42")).toEqual({ mailbox: "INBOX", uid: 42 });
+    expect(parseImapId("42", "Drafts")).toEqual({ mailbox: "Drafts", uid: 42 });
+  });
+
+  it.each(["", "abc", "INBOX/", "/42", "INBOX/4x", "%E0%A4%A/1"])("reject %j", (id) => {
+    expect(() => parseImapId(id)).toThrow(/Invalid IMAP message id/);
+  });
+});
+
+/** A fake IMAP account: mailbox path → messages, with per-mailbox locks. */
+function account(
+  boxes: Record<string, { uid: number; subject: string; date: string }[]>,
+  listing: { path: string; specialUse?: string; flags?: string[] }[] = Object.keys(boxes).map(
+    (path) => ({ path }),
+  ),
+) {
+  let open = "";
+  const locked: string[] = [];
+  const client = {
+    list: vi.fn(async () => listing.map((box) => ({ ...box, flags: new Set(box.flags ?? []) }))),
+    getMailboxLock: vi.fn(async (path: string) => {
+      if (!(path in boxes)) throw new Error(`Mailbox doesn't exist: ${path}`);
+      open = path;
+      locked.push(path);
+      return { release: vi.fn() };
+    }),
+    search: vi.fn(async () => (boxes[open] ?? []).map((m) => m.uid)),
+    fetch: vi.fn((uids: number[]) =>
+      (async function* () {
+        for (const m of boxes[open] ?? []) {
+          if (uids.includes(m.uid)) {
+            yield { uid: m.uid, envelope: { subject: m.subject, date: new Date(m.date) } };
+          }
+        }
+      })(),
+    ),
+    fetchOne: vi.fn(async (uid: string) => {
+      const m = (boxes[open] ?? []).find((entry) => String(entry.uid) === uid);
+      return m ? { uid: m.uid, envelope: { subject: m.subject }, source: Buffer.from("") } : false;
+    }),
+    messageMove: vi.fn(async () => undefined),
+    messageFlagsAdd: vi.fn(async () => undefined),
+    messageFlagsRemove: vi.fn(async () => undefined),
+    logout: vi.fn(async () => undefined),
+  };
+  return { client, locked };
+}
+
+describe("ImapMailConnector search scope", () => {
+  const boxes = {
+    INBOX: [{ uid: 5, subject: "inbox mail", date: "2026-09-01T10:00:00Z" }],
+    Archive: [{ uid: 5, subject: "archived mail", date: "2026-10-01T10:00:00Z" }],
+    "Sent Messages": [{ uid: 9, subject: "sent mail", date: "2026-08-01T10:00:00Z" }],
+    "[Gmail]": [],
+  };
+  const listing = [
+    { path: "INBOX" },
+    { path: "Archive", specialUse: "\\Archive" },
+    { path: "Sent Messages", specialUse: "\\Sent" },
+    { path: "[Gmail]", flags: ["\\Noselect"] },
+  ];
+
+  it("searches every selectable mailbox without a folder, newest first, ids per mailbox", async () => {
+    const { client, locked } = account(boxes, listing);
+    const messages = await connectorWith(client).searchMessages("mail", 10);
+    expect(locked).toEqual(["INBOX", "Archive", "Sent Messages"]);
+    expect(messages.map((m) => [m.id, m.subject])).toEqual([
+      ["Archive/5", "archived mail"],
+      ["INBOX/5", "inbox mail"],
+      ["Sent%20Messages/9", "sent mail"],
+    ]);
+  });
+
+  it("keeps only the newest matches across mailboxes", async () => {
+    const { client } = account(boxes, listing);
+    const messages = await connectorWith(client).searchMessages("mail", 1);
+    expect(messages.map((m) => m.id)).toEqual(["Archive/5"]);
+  });
+
+  it("resolves a well-known folder name through the special-use flag", async () => {
+    const { client, locked } = account(boxes, listing);
+    const messages = await connectorWith(client).searchMessages("mail", 10, "Gesendete Elemente");
+    expect(locked).toEqual(["Sent Messages"]);
+    expect(messages.map((m) => m.id)).toEqual(["Sent%20Messages/9"]);
+  });
+
+  it("searches only \\All, junk and trash where an \\All mailbox exists", async () => {
+    const { client, locked } = account({ "All Mail": [], Spam: [], Bin: [], INBOX: [] }, [
+      { path: "INBOX" },
+      { path: "All Mail", specialUse: "\\All" },
+      { path: "Spam", specialUse: "\\Junk" },
+      { path: "Bin", specialUse: "\\Trash" },
+    ]);
+    await connectorWith(client).searchMessages("x", 10);
+    expect(locked).toEqual(["All Mail", "Spam", "Bin"]);
+  });
+
+  it("skips a mailbox that cannot be opened, and fails only when none can", async () => {
+    const partial = account(boxes, [...listing, { path: "Gone" }]);
+    const messages = await connectorWith(partial.client).searchMessages("mail", 10);
+    expect(messages).toHaveLength(3);
+
+    const none = account({}, [{ path: "Gone" }]);
+    await expect(connectorWith(none.client).searchMessages("mail", 10)).rejects.toThrow(
+      /doesn't exist/,
+    );
+  });
+});
+
+describe("ImapMailConnector follow-up actions use the id's mailbox", () => {
+  const boxes = {
+    INBOX: [{ uid: 5, subject: "inbox mail", date: "2026-09-01T10:00:00Z" }],
+    Archive: [{ uid: 5, subject: "archived mail", date: "2026-10-01T10:00:00Z" }],
+    Bin: [],
+  };
+  const listing = [
+    { path: "INBOX" },
+    { path: "Archive", specialUse: "\\Archive" },
+    { path: "Bin", specialUse: "\\Trash" },
+  ];
+
+  it("reads the message from its own mailbox, not the inbox with the same UID", async () => {
+    const { client, locked } = account(boxes, listing);
+    const message = await connectorWith(client).getMessage("Archive/5");
+    expect(locked).toEqual(["Archive"]);
+    expect(message.subject).toBe("archived mail");
+    expect(message.id).toBe("Archive/5");
+  });
+
+  it("deletes from the id's mailbox into the trash", async () => {
+    const { client, locked } = account(boxes, listing);
+    await connectorWith(client).deleteMessage("Archive/5");
+    expect(locked).toEqual(["Archive"]);
+    expect(client.messageMove).toHaveBeenCalledWith("5", "Bin", { uid: true });
+  });
+
+  it("leaves a message that is already in the trash alone", async () => {
+    const { client } = account(boxes, listing);
+    await connectorWith(client).deleteMessage("Bin/3");
+    expect(client.messageMove).not.toHaveBeenCalled();
+    expect(client.messageFlagsAdd).not.toHaveBeenCalled();
+  });
+
+  it("moves from the id's mailbox to a resolved target folder", async () => {
+    const { client, locked } = account(boxes, listing);
+    await connectorWith(client).moveMessage("Archive/5", "Posteingang");
+    expect(locked).toEqual(["Archive"]);
+    expect(client.messageMove).toHaveBeenCalledWith("5", "INBOX", { uid: true });
+  });
+
+  it("flags in the id's mailbox", async () => {
+    const { client, locked } = account(boxes, listing);
+    await connectorWith(client).markRead("Archive/5", false);
+    expect(locked).toEqual(["Archive"]);
+    expect(client.messageFlagsRemove).toHaveBeenCalledWith("5", ["\\Seen"], { uid: true });
+  });
+
+  it("groups summaries by mailbox and returns the ids as requested", async () => {
+    const { client, locked } = account(boxes, listing);
+    const summaries = await connectorWith(client).getSummaries(["5", "Archive/5", "Gone/1"]);
+    expect(locked).toEqual(["INBOX", "Archive"]);
+    expect(summaries.map((s) => [s.id, s.subject])).toEqual([
+      ["5", "inbox mail"],
+      ["Archive/5", "archived mail"],
+    ]);
+  });
+
+  it("rejects a malformed id before connecting", async () => {
+    const { client } = account(boxes, listing);
+    const connector = connectorWith(client);
+    await expect(connector.getMessage("Archive/x")).rejects.toThrow(/Invalid IMAP message id/);
+    expect(client.getMailboxLock).not.toHaveBeenCalled();
   });
 });

@@ -146,7 +146,11 @@ export function registerMailTools(
       inputSchema: {
         query: z.string().trim().min(1).max(1000),
         role: z.string().optional(),
-        folder: z.string().max(256).optional(),
+        folder: z
+          .string()
+          .max(256)
+          .optional()
+          .describe("Limit the search to one folder; omit to search every folder"),
         limit: z.number().int().min(1).max(100).optional(),
       },
       annotations: { readOnlyHint: true },
@@ -293,7 +297,7 @@ export function registerMailTools(
         action: z.enum(["delete", "move"]).describe("delete moves to trash; move needs move_to"),
         move_to: z.string().min(1).max(256).optional().describe("Target folder for action=move"),
         role: z.string().optional(),
-        folder: z.string().max(256).optional().describe("Limit the search to one folder"),
+        folder: z.string().max(256).optional().describe("Folder to search; defaults to the inbox"),
         limit: z
           .number()
           .int()

@@ -125,7 +125,7 @@ therefore not a substitute for multi-user RBAC.
 |---|---|
 | `mail_list` | List emails from any folder (inbox, sentitems, archive, ...) |
 | `mail_read` | Read email as Markdown, listing real attachments and inline images separately |
-| `mail_search` | Search emails, optionally scoped to a folder |
+| `mail_search` | Search emails in every folder, or in one folder when given |
 | `mail_send` | Send, reply, or forward an email, with optional file attachments |
 | `mail_draft` | Create an email draft (with optional attachments), saved to Drafts |
 | `mail_send_draft` | Send an existing draft |
@@ -169,7 +169,9 @@ therefore not a substitute for multi-user RBAC.
 > expires after 15 minutes. Above 50 matches the call additionally requires
 > `acknowledge_large: true`. For deletes, prefer an exact sender address over
 > free-text: sender filters are far less prone to false matches than subject
-> text, and a too-broad filter fails quietly and in breadth.
+> text, and a too-broad filter fails quietly and in breadth. Unlike
+> `mail_search`, which covers every folder unless one is given, a bulk action
+> searches the inbox unless `folder` names another one.
 
 ### 💬 Messenger (3)
 

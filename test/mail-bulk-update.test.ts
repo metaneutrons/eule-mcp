@@ -148,3 +148,22 @@ describe("mail_bulk_update confirmation", () => {
     });
   });
 });
+
+describe("mail_bulk_update scope", () => {
+  it("searches the inbox when no folder is given, although a plain search covers all", async () => {
+    const a = connector("a@example.com", []);
+    const svc = service([a.mail]);
+    await svc.previewBulk("noise");
+    expect(a.mail.searchMessages).toHaveBeenLastCalledWith("noise", 100, "inbox");
+    await svc.previewBulk("noise", { folder: "  " });
+    expect(a.mail.searchMessages).toHaveBeenLastCalledWith("noise", 100, "inbox");
+    await svc.search("noise");
+    expect(a.mail.searchMessages).toHaveBeenLastCalledWith("noise", 10, undefined);
+  });
+
+  it("passes a named folder through", async () => {
+    const a = connector("a@example.com", []);
+    await service([a.mail]).previewBulk("noise", { folder: "Archive" });
+    expect(a.mail.searchMessages).toHaveBeenLastCalledWith("noise", 100, "Archive");
+  });
+});
