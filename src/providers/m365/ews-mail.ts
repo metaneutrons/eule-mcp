@@ -1,4 +1,5 @@
 import { XMLParser } from "fast-xml-parser";
+import { hasFolder, normalizeMailFolder } from "../../utils/mail-folders.js";
 import { assembleHtml } from "../../utils/mail-html.js";
 import { assertResponseSize, escapeXml, fetchWithTimeout } from "../../utils/security.js";
 import type {
@@ -31,48 +32,8 @@ function soap(body: string): string {
 </soap:Envelope>`;
 }
 
-/**
- * EWS DistinguishedFolderId values are case-sensitive lowercase tokens, while
- * callers (and models) tend to pass display names such as "Archive" or
- * "Gesendete Elemente". Map both onto the distinguished id; unknown names pass
- * through unchanged so EWS still reports them.
- */
-const EWS_FOLDER_ALIASES: Readonly<Record<string, string>> = {
-  inbox: "inbox",
-  posteingang: "inbox",
-  archive: "archive",
-  archiv: "archive",
-  sentitems: "sentitems",
-  sent: "sentitems",
-  gesendeteelemente: "sentitems",
-  gesendet: "sentitems",
-  drafts: "drafts",
-  draft: "drafts",
-  entwurfe: "drafts",
-  entwuerfe: "drafts",
-  deleteditems: "deleteditems",
-  deleted: "deleteditems",
-  trash: "deleteditems",
-  papierkorb: "deleteditems",
-  geloschteelemente: "deleteditems",
-  geloeschteelemente: "deleteditems",
-  junkemail: "junkemail",
-  junk: "junkemail",
-  spam: "junkemail",
-  junkemails: "junkemail",
-  outbox: "outbox",
-  postausgang: "outbox",
-};
-
-export function normalizeEwsFolder(folder: string): string {
-  const key = folder
-    .trim()
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[\s_-]+/g, "");
-  return EWS_FOLDER_ALIASES[key] ?? folder;
-}
+/** Concurrent FindItem requests for a mailbox-wide search. */
+const FOLDER_SEARCH_CONCURRENCY = 4;
 
 /** Safely navigate a nested object path. */
 function dig(obj: unknown, ...keys: string[]): unknown {
@@ -106,7 +67,7 @@ export class EwsMailConnector implements MailConnector {
 
   /** Build DistinguishedFolderId XML, with Mailbox for shared mailboxes. */
   private folderId(name: string): string {
-    const folder = normalizeEwsFolder(name);
+    const folder = normalizeMailFolder(name);
     if (this.shared) {
       return `<t:DistinguishedFolderId Id="${escapeXml(folder)}"><t:Mailbox><t:EmailAddress>${escapeXml(this.account)}</t:EmailAddress></t:Mailbox></t:DistinguishedFolderId>`;
     }
@@ -243,7 +204,84 @@ export class EwsMailConnector implements MailConnector {
     return this.extractMessages(data).map((m) => this.mapMessage(m));
   }
 
-  async searchMessages(query: string, limit = 10, folder = "inbox"): Promise<MailMessage[]> {
+  async searchMessages(query: string, limit = 10, folder?: string): Promise<MailMessage[]> {
+    if (hasFolder(folder)) return this.findInFolder(this.folderId(folder), query, limit);
+
+    // EWS refuses a QueryString across several ParentFolderIds ("Shared folder
+    // search cannot be performed on multiple folders"), and FindItem has no deep
+    // traversal. A mailbox-wide search therefore runs one FindItem per mail
+    // folder and keeps the newest matches. A folder that fails is skipped; the
+    // search only fails when every folder does.
+    const folderIds = await this.mailFolderIds();
+    const parents = folderIds
+      ? folderIds.map((id) => `<t:FolderId Id="${escapeXml(id)}"/>`)
+      : [this.folderId("inbox")];
+    const found: MailMessage[] = [];
+    const errors: unknown[] = [];
+    const queue = [...parents];
+    const worker = async (): Promise<void> => {
+      for (let parent = queue.shift(); parent !== undefined; parent = queue.shift()) {
+        try {
+          found.push(...(await this.findInFolder(parent, query, limit)));
+        } catch (error) {
+          errors.push(error);
+        }
+      }
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(FOLDER_SEARCH_CONCURRENCY, parents.length) }, () => worker()),
+    );
+    if (parents.length > 0 && errors.length === parents.length) throw errors[0];
+    return found.sort((a, b) => b.receivedAt.localeCompare(a.receivedAt)).slice(0, limit);
+  }
+
+  /**
+   * Ids of every mail folder below the message root (`IPF.Note` and its
+   * subclasses, Deleted Items and Junk included). Undefined when the folder
+   * tree cannot be read, as with a delegate that only has access to the inbox
+   * of a shared mailbox; the caller then searches the inbox alone, which is
+   * what it can reach.
+   */
+  private async mailFolderIds(): Promise<string[] | undefined> {
+    let data: unknown;
+    try {
+      data = await this.post(`
+    <m:FindFolder Traversal="Deep">
+      <m:FolderShape>
+        <t:BaseShape>IdOnly</t:BaseShape>
+        <t:AdditionalProperties><t:FieldURI FieldURI="folder:FolderClass"/></t:AdditionalProperties>
+      </m:FolderShape>
+      <m:ParentFolderIds>${this.folderId("msgfolderroot")}</m:ParentFolderIds>
+    </m:FindFolder>`);
+    } catch {
+      return undefined;
+    }
+    const response = dig(
+      data,
+      "Envelope",
+      "Body",
+      "FindFolderResponse",
+      "ResponseMessages",
+      "FindFolderResponseMessage",
+    ) as Record<string, unknown> | undefined;
+    if (!response || response["@_ResponseClass"] === "Error") return undefined;
+    const folders = dig(response, "RootFolder", "Folders", "Folder");
+    const list: unknown[] = Array.isArray(folders) ? folders : folders ? [folders] : [];
+    const ids = list.flatMap((entry) => {
+      const folderClass = str(dig(entry, "FolderClass"));
+      const id = dig(entry, "FolderId", "@_Id");
+      const isMail = folderClass === "IPF.Note" || folderClass.startsWith("IPF.Note.");
+      return isMail && typeof id === "string" ? [id] : [];
+    });
+    return ids.length > 0 ? ids : undefined;
+  }
+
+  /** FindItem with a content-index query in one folder, newest first. */
+  private async findInFolder(
+    parentFolderId: string,
+    query: string,
+    limit: number,
+  ): Promise<MailMessage[]> {
     const data = await this.post(`
     <m:FindItem Traversal="Shallow">
       <m:ItemShape>
@@ -260,13 +298,12 @@ export class EwsMailConnector implements MailConnector {
         <t:FieldOrder Order="Descending"><t:FieldURI FieldURI="item:DateTimeReceived"/></t:FieldOrder>
       </m:SortOrder>
       <m:ParentFolderIds>
-        ${this.folderId(folder)}
+        ${parentFolderId}
       </m:ParentFolderIds>
       <m:QueryString>${escapeXml(query)}</m:QueryString>
     </m:FindItem>`);
 
-    const messages = this.extractMessages(data);
-    return messages.map((m) => this.mapMessage(m));
+    return this.extractMessages(data).map((m) => this.mapMessage(m));
   }
 
   async sendMessage(

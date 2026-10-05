@@ -6,6 +6,7 @@ import type {
   OutgoingAttachment,
 } from "../../types/index.js";
 import { fetchWithExecutionContext as fetch } from "../../utils/execution-context.js";
+import { hasFolder, normalizeMailFolder } from "../../utils/mail-folders.js";
 import { assembleHtml } from "../../utils/mail-html.js";
 import { assertResponseSize, fetchWithTimeout } from "../../utils/security.js";
 
@@ -75,7 +76,7 @@ export class GraphMailConnector implements MailConnector {
 
   async listMessages(folder = "inbox", limit = 10): Promise<MailMessage[]> {
     const h = await this.headers();
-    const url = `${this.base}/mailFolders/${encodeURIComponent(folder)}/messages?$top=${String(limit)}&$orderby=receivedDateTime desc&$select=id,subject,from,toRecipients,receivedDateTime,bodyPreview,isRead`;
+    const url = `${this.base}/mailFolders/${encodeURIComponent(normalizeMailFolder(folder))}/messages?$top=${String(limit)}&$orderby=receivedDateTime desc&$select=id,subject,from,toRecipients,receivedDateTime,bodyPreview,isRead`;
     const res = await fetch(url, { headers: h });
     if (!res.ok) throw new Error(`Graph listMessages: ${String(res.status)} ${await res.text()}`);
     const data = (await res.json()) as { value: GraphMessage[] };
@@ -139,9 +140,14 @@ export class GraphMailConnector implements MailConnector {
     return results;
   }
 
-  async searchMessages(query: string, limit = 10): Promise<MailMessage[]> {
+  async searchMessages(query: string, limit = 10, folder?: string): Promise<MailMessage[]> {
     const h = await this.headers();
-    const url = `${this.base}/messages?$search="${encodeURIComponent(query)}"&$top=${String(limit)}&$select=id,subject,from,toRecipients,receivedDateTime,bodyPreview,isRead`;
+    // `/messages` covers the whole mailbox; a folder's own messages collection
+    // scopes `$search` to that folder.
+    const scope = hasFolder(folder)
+      ? `/mailFolders/${encodeURIComponent(normalizeMailFolder(folder))}`
+      : "";
+    const url = `${this.base}${scope}/messages?$search="${encodeURIComponent(query)}"&$top=${String(limit)}&$select=id,subject,from,toRecipients,receivedDateTime,bodyPreview,isRead`;
     const res = await fetch(url, { headers: h });
     if (!res.ok) throw new Error(`Graph searchMessages: ${String(res.status)} ${await res.text()}`);
     const data = (await res.json()) as { value: GraphMessage[] };
@@ -391,7 +397,7 @@ export class GraphMailConnector implements MailConnector {
     const res = await fetch(`${this.base}/messages/${encodeURIComponent(id)}/move`, {
       method: "POST",
       headers: h,
-      body: JSON.stringify({ destinationId: folder }),
+      body: JSON.stringify({ destinationId: normalizeMailFolder(folder) }),
     });
     if (!res.ok) throw new Error(`Graph moveMessage: ${String(res.status)} ${await res.text()}`);
   }
