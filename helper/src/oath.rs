@@ -15,6 +15,9 @@ use clap::{Args as ClapArgs, Subcommand};
 use std::fmt;
 use zeroize::Zeroizing;
 
+// Only the PC/SC session opens the applet; builds without PC/SC reach these
+// from tests alone.
+#[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
 const OATH_AID: [u8; 7] = [0xA0, 0x00, 0x00, 0x05, 0x27, 0x21, 0x01];
 
 const INS_PUT: u8 = 0x01;
@@ -22,6 +25,7 @@ const INS_DELETE: u8 = 0x02;
 const INS_LIST: u8 = 0xA1;
 const INS_CALCULATE: u8 = 0xA2;
 /// SELECT and CALCULATE ALL share the instruction byte; P1 tells them apart.
+#[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
 const INS_SELECT: u8 = 0xA4;
 const INS_CALCULATE_ALL: u8 = 0xA4;
 const INS_SEND_REMAINING: u8 = 0xA5;
@@ -61,6 +65,7 @@ pub enum OathError {
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     NoKey,
     /// The OATH applet is protected by a password, which the helper never holds.
+    #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
     Locked,
     NotFound,
     NotTotp,
@@ -119,6 +124,7 @@ pub struct Session<'t> {
 impl<'t> Session<'t> {
     /// Select the OATH application. A password-protected application answers
     /// with a challenge and is reported as [`OathError::Locked`].
+    #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
     pub fn open(transport: &'t mut dyn Transport) -> Result<Self, OathError> {
         let response = exchange(transport, &apdu(INS_SELECT, 0x04, 0x00, &OATH_AID)?)?;
         if parse_tlvs(&response)?.iter().any(|(tag, _)| *tag == TAG_CHALLENGE) {
