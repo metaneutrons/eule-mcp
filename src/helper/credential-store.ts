@@ -4,7 +4,7 @@ import { readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { currentExecutionSignal } from "../utils/execution-context.js";
 import { helperPath } from "./download.js";
-import { credentialPrompt } from "./run.js";
+import { credentialPrompt, oathPrompt } from "./run.js";
 
 export type CredentialState = "configured" | "missing" | "unavailable";
 export interface CredentialCaptureOptions {
@@ -98,6 +98,61 @@ export class NativeCredentialBroker implements CredentialBroker {
 }
 
 export const nativeCredentialBroker = new NativeCredentialBroker();
+
+/** State of a YubiKey credential; `detail` says why the key is unavailable. */
+export interface OathCredentialStatus {
+  readonly state: CredentialState;
+  readonly detail?: string;
+}
+
+/** TOTP credentials on a YubiKey. The seed goes from the helper's local window
+ *  straight to the key; Node only ever handles the credential name. */
+export interface OathCredentialBroker {
+  provision(
+    name: string,
+    label: string,
+    options: { readonly touch: boolean; readonly replace: boolean },
+  ): Promise<void>;
+  status(name: string): OathCredentialStatus;
+  remove(name: string): void;
+}
+
+export class NativeOathBroker implements OathCredentialBroker {
+  async provision(
+    name: string,
+    label: string,
+    options: { readonly touch: boolean; readonly replace: boolean },
+  ): Promise<void> {
+    const code = await oathPrompt(label, name, options, currentExecutionSignal());
+    if (code !== 0)
+      throw new Error(
+        code === 3 ? "Credential entry cancelled" : "Writing the YubiKey credential failed",
+      );
+  }
+
+  status(name: string): OathCredentialStatus {
+    try {
+      const result = execFileSync(helperPath(), ["oath", "status", name], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 30_000,
+      }).trim();
+      if (result === "configured" || result === "missing") return { state: result };
+      return { state: "unavailable", detail: result.replace(/^unavailable:\s*/, "") };
+    } catch {
+      return { state: "unavailable", detail: "the native helper could not be run" };
+    }
+  }
+
+  remove(name: string): void {
+    execFileSync(helperPath(), ["oath", "delete", name], {
+      stdio: ["ignore", "ignore", "pipe"],
+      timeout: 30_000,
+    });
+  }
+}
+
+export const nativeOathBroker = new NativeOathBroker();
 
 /** Compatibility wrappers for existing consumers. */
 export function readCredential(reference: string, euleDir: string): string {

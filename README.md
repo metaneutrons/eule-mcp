@@ -60,7 +60,7 @@ Eule is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) serve
 
 - **Multi-provider architecture** — M365, Google Workspace, CalDAV, CardDAV, IMAP, iCal, Signal
 - **Tiered API access** — Graph API → EWS → IMAP/SMTP, auto-detected per tenant
-- **Native webview login** — cross-platform helper with opt-in password/TOTP autofill
+- **Native webview login** — cross-platform helper with opt-in password/TOTP autofill, TOTP optionally from a YubiKey
 - **Role-based context** — map accounts and connectors to professional roles
 - **LLM-optimized output** — HTML emails rendered as clean Markdown with thread splitting
 
@@ -101,7 +101,7 @@ committed to `config.yaml`.
 | `credential_rotate` | Atomically rotate a connector password or token `[WRITES]` |
 | `google_oauth_configure` | Set the client id and capture the Google client secret locally `[WRITES]` |
 | `google_oauth_remove` | Remove Google OAuth config and its local secret `[DESTRUCTIVE]` |
-| `totp_configure` | Capture/rotate a validated TOTP seed locally `[WRITES]` |
+| `totp_configure` | Capture/rotate a validated TOTP seed locally or on a YubiKey `[WRITES]` |
 | `totp_remove` | Remove a TOTP binding and local secret `[DESTRUCTIVE]` |
 | `m365_password_configure` | Opt in to local M365 webview password autofill `[WRITES]` |
 | `m365_password_remove` | Remove an M365 password-autofill binding `[DESTRUCTIVE]` |
@@ -552,6 +552,48 @@ TOTP seed under the same OS principal collocates both factors. Leave either or
 both bindings unconfigured when tenant policy or your threat model requires
 independent factors. Legacy inline `totpSecret` values are migration-only and
 are not forwarded to autofill; run `totp_configure` once to migrate them.
+
+#### TOTP from a YubiKey
+
+The TOTP seed can live in a YubiKey's OATH application instead of the OS
+credential store. Eule writes it there once and afterwards only asks the key for
+the current code, so the seed no longer sits on the computer and the key stays a
+separate factor:
+
+```bash
+node dist/cli/index.js secret totp --account you@example.com --yubikey [--touch]
+```
+
+The helper checks for a connected key before its window opens, writes the seed
+straight to the key, and the config records only the credential name:
+
+```yaml
+autoAuth:
+  - account: "you@example.com"
+    totpYubikey:
+      credential: "eule:you@example.com"
+      touch: false
+```
+
+- `touch: true` makes the key require a touch for every code; the login window
+  shows a hint while the key waits. The value is applied when Eule writes the
+  credential, so run the command again after changing it. Default: off.
+- `--credential <name>` chooses another name. Eule overwrites only the
+  credential the account is bound to or its own `eule:<account>`, never another
+  credential of that name, such as one added in Yubico Authenticator.
+- An existing credential can be bound by setting `totpYubikey.credential` by
+  hand; `touch` then has no effect.
+- When no code can be had at login (no key, credential missing, OATH
+  application password-protected, touch timed out), the window stays open with a
+  notice and the code can be typed in.
+- `--remove`, or switching back to the OS credential store, leaves the
+  credential on the key, since Eule cannot tell whether it wrote it.
+- MCP: `totp_configure` with `storage: "yubikey"` and optional `credential` and
+  `touch`.
+- Supported on macOS and Windows. Linux builds of the helper have no PC/SC
+  support and fall back to manual entry.
+
+With `touch: false`, a plugged-in key answers without anyone present.
 
 After the initial interactive OAuth login, normal M365 access is unattended:
 Eule reuses the stored token and refreshes it before expiry. A new user action

@@ -4,6 +4,8 @@ export {
   googleClientSecretRef,
   m365PasswordCredentialRef,
   totpCredentialRef,
+  yubikeyCredentialName,
+  yubikeyCredentialNameProblem,
   CONNECTOR_CREDENTIAL_REF_PATTERN,
   GOOGLE_CREDENTIAL_REF_PATTERN,
   M365_PASSWORD_CREDENTIAL_REF_PATTERN,

@@ -54,7 +54,7 @@ export function registerConfigTools(server: McpServer, config: ConfigService): v
           `autoAuth (${String(current.autoAuth?.length ?? 0)}):`,
           ...(current.autoAuth ?? []).map(
             (entry) =>
-              `  ${entry.account}: totp=${entry.totpSecret || entry.totpSecretRef ? "set" : "—"} password=${entry.passwordSecretRef ? "set" : "—"}`,
+              `  ${entry.account}: totp=${entry.totpYubikey ? `yubikey(${entry.totpYubikey.credential}${entry.totpYubikey.touch ? ", touch" : ""})` : entry.totpSecret || entry.totpSecretRef ? "set" : "—"} password=${entry.passwordSecretRef ? "set" : "—"}`,
           ),
           `roles (${String(current.roles.length)}):`,
         ];

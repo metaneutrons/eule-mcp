@@ -26,6 +26,24 @@ export function totpCredentialRef(account: string): string {
   return `totp/${accountHash}.${revision()}`;
 }
 
+/** Default name of the OATH credential Eule writes to a YubiKey for an account. */
+export function yubikeyCredentialName(account: string): string {
+  return `eule:${account.trim().toLowerCase()}`;
+}
+
+/** The YKOATH applet stores names of at most 64 bytes. */
+export const YUBIKEY_CREDENTIAL_NAME_MAX_BYTES = 64;
+
+/** Problem with a YubiKey OATH credential name, or undefined when it is usable. */
+export function yubikeyCredentialNameProblem(name: string): string | undefined {
+  if (name.length === 0) return "must not be empty";
+  if (Buffer.byteLength(name, "utf8") > YUBIKEY_CREDENTIAL_NAME_MAX_BYTES)
+    return `must be at most ${String(YUBIKEY_CREDENTIAL_NAME_MAX_BYTES)} bytes`;
+  for (const char of name)
+    if (char < " " || char === "\u007f") return "must not contain control characters";
+  return undefined;
+}
+
 export function m365PasswordCredentialRef(account: string): string {
   const accountHash = createHash("sha256").update(account.trim().toLowerCase()).digest("hex");
   return `oauth/m365/password/${accountHash}.${revision()}`;

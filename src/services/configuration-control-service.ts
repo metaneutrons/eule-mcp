@@ -7,9 +7,16 @@ import {
   m365PasswordCredentialRef,
   parseConnectorConfig,
   totpCredentialRef,
+  yubikeyCredentialName,
+  yubikeyCredentialNameProblem,
 } from "../config/index.js";
 import type { ConfigManager } from "../config/index.js";
-import type { CredentialBroker, CredentialState } from "../helper/credential-store.js";
+import {
+  nativeOathBroker,
+  type CredentialBroker,
+  type CredentialState,
+  type OathCredentialBroker,
+} from "../helper/credential-store.js";
 import type { ConnectorConfig, ConnectorKind } from "../types/index.js";
 import { logger } from "../utils/logger.js";
 
@@ -28,6 +35,15 @@ export interface ConnectorConfigureInput {
   readonly signalCliUrl?: string;
 }
 
+export interface TotpConfigureOptions {
+  /** Where the seed lives: the OS credential store (default) or a YubiKey. */
+  readonly storage?: "keychain" | "yubikey";
+  /** YubiKey credential name; defaults to the bound one, else "eule:<account>". */
+  readonly credential?: string;
+  /** Require a touch for every YubiKey code; defaults to the bound value, else false. */
+  readonly touch?: boolean;
+}
+
 export interface CredentialBindingStatus {
   readonly scope: string;
   readonly state: CredentialState | "legacy-inline";
@@ -40,6 +56,7 @@ export class ConfigurationControlService {
   constructor(
     private readonly config: ConfigManager,
     private readonly credentials: CredentialBroker,
+    private readonly oath: OathCredentialBroker = nativeOathBroker,
   ) {}
 
   async configureConnector(input: ConnectorConfigureInput): Promise<{
@@ -209,10 +226,58 @@ export class ConfigurationControlService {
     this.audit("google_oauth.removed", {});
   }
 
-  async configureTotp(accountInput: string): Promise<void> {
+  async configureTotp(accountInput: string, options: TotpConfigureOptions = {}): Promise<void> {
     const account = accountInput.trim().toLowerCase();
     if (!account) throw new Error("Account is required");
-    return this.exclusive(`auto-auth:${account}`, () => this.configureTotpLocked(account));
+    return this.exclusive(`auto-auth:${account}`, () =>
+      options.storage === "yubikey"
+        ? this.configureTotpYubikeyLocked(account, options)
+        : this.configureTotpLocked(account),
+    );
+  }
+
+  /** Write the seed to a YubiKey and bind the account to that credential. A
+   *  credential of the same name is only overwritten when this account is bound
+   *  to it or it carries Eule's own name for the account ("eule:<account>");
+   *  anything else of that name was put there by someone else. */
+  private async configureTotpYubikeyLocked(
+    account: string,
+    options: TotpConfigureOptions,
+  ): Promise<void> {
+    const previous = this.config
+      .get()
+      .autoAuth?.find((entry) => entry.account.toLowerCase() === account);
+    const revision = this.config.revision;
+    const bound = previous?.totpYubikey;
+    const credential = options.credential ?? bound?.credential ?? yubikeyCredentialName(account);
+    const problem = yubikeyCredentialNameProblem(credential);
+    if (problem)
+      throw new Error(`YubiKey credential name ${problem}; choose another with "credential"`);
+    const touch = options.touch ?? bound?.touch ?? false;
+    const status = this.oath.status(credential);
+    if (status.state === "unavailable")
+      throw new Error(`YubiKey not usable: ${status.detail ?? "unknown reason"}`);
+    const ours = bound?.credential === credential || credential === yubikeyCredentialName(account);
+    if (status.state === "configured" && !ours)
+      throw new Error(
+        `The YubiKey already holds a credential named "${credential}"; choose another with "credential"`,
+      );
+    await this.oath.provision(credential, `TOTP seed for ${account}`, {
+      touch,
+      replace: status.state === "configured",
+    });
+    try {
+      this.assertRevision(revision);
+      this.config.upsertAutoAuth(account, { totpYubikey: { credential, touch } }, revision);
+    } catch (error) {
+      // Only a credential this call created is taken back; an overwritten one
+      // cannot be restored.
+      if (status.state === "missing") this.tryRemoveOath(credential);
+      throw error;
+    }
+    // The seed now lives on the key only.
+    if (previous?.totpSecretRef) this.tryRemove(previous.totpSecretRef);
+    this.audit("totp.configured", { account, storage: "yubikey", touch });
   }
 
   private async configureTotpLocked(account: string): Promise<void> {
@@ -241,6 +306,8 @@ export class ConfigurationControlService {
     });
   }
 
+  /** A YubiKey credential stays on the key: the binding alone does not show
+   *  whether Eule wrote it or it was bound to an existing credential. */
   private removeTotpLocked(account: string): void {
     const reference = this.config
       .get()
@@ -292,7 +359,7 @@ export class ConfigurationControlService {
 
   credentialStatus(): CredentialBindingStatus[] {
     const config = this.config.get();
-    const bindings: { scope: string; reference?: string; legacy?: boolean }[] = [];
+    const bindings: { scope: string; reference?: string; legacy?: boolean; oath?: string }[] = [];
     for (const role of config.roles)
       for (const [kind, connectors] of Object.entries(role.connectors) as [
         ConnectorKind,
@@ -316,6 +383,11 @@ export class ConfigurationControlService {
       if (entry.totpSecretRef)
         bindings.push({ scope: `totp/${entry.account}`, reference: entry.totpSecretRef });
       else if (entry.totpSecret) bindings.push({ scope: `totp/${entry.account}`, legacy: true });
+      else if (entry.totpYubikey)
+        bindings.push({
+          scope: `totp-yubikey/${entry.account}`,
+          oath: entry.totpYubikey.credential,
+        });
       if (entry.passwordSecretRef)
         bindings.push({
           scope: `m365-password/${entry.account}`,
@@ -328,7 +400,9 @@ export class ConfigurationControlService {
         ? "legacy-inline"
         : binding.reference
           ? this.credentials.status(binding.reference)
-          : "missing",
+          : binding.oath
+            ? this.oath.status(binding.oath).state
+            : "missing",
     }));
   }
 
@@ -373,6 +447,16 @@ export class ConfigurationControlService {
     } finally {
       release();
       if (this.locks.get(key) === tail) this.locks.delete(key);
+    }
+  }
+
+  private tryRemoveOath(name: string): void {
+    try {
+      this.oath.remove(name);
+    } catch (error) {
+      logger.warn(
+        `YubiKey cleanup failed for ${name}: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 

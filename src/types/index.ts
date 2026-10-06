@@ -5,6 +5,7 @@ export type {
   GoogleOAuthConfig,
   ResolvedGoogleOAuthConfig,
   AutoAuthConfig,
+  YubikeyTotpConfig,
   RoleConfig,
   RoleConnectors,
   RolePolicy,

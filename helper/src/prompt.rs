@@ -1,8 +1,9 @@
 //! `secret-prompt` — a local password window.
 //!
 //! Renders a tiny HTML password form in an embedded webview; the entered value
-//! is delivered over local webview IPC and written to a 0600 file or directly
-//! to the OS credential store. It never appears in argv, stdout, logs, or MCP.
+//! is delivered over local webview IPC and written to a 0600 file, directly to
+//! the OS credential store, or (a TOTP seed) to a YubiKey OATH credential. It
+//! never appears in argv, stdout, logs, or MCP.
 
 use crate::util;
 use clap::{Args as ClapArgs, ValueEnum};
@@ -34,6 +35,15 @@ pub struct Args {
     /// Opaque connector reference to store in the native OS credential store.
     #[arg(long, conflicts_with = "out")]
     credential: Option<String>,
+    /// Write the TOTP seed to this credential on a connected YubiKey instead.
+    #[arg(long, conflicts_with_all = ["out", "credential"])]
+    oath_name: Option<String>,
+    /// Make the YubiKey credential require a touch for every code.
+    #[arg(long)]
+    touch: bool,
+    /// Overwrite a YubiKey credential of the same name.
+    #[arg(long)]
+    replace: bool,
     /// Abort after N seconds if nothing is entered.
     #[arg(long, default_value_t = 180)]
     timeout: u64,
@@ -70,9 +80,26 @@ button{{padding:8px 18px;font-size:14px;border:0;border-radius:6px;cursor:pointe
     )
 }
 
+/// Argument checks that must pass before any window opens, so a wrong
+/// combination can never end in a prompt that stores the value somewhere else.
+fn check_args(args: &Args) -> Result<(), String> {
+    if args.out.is_none() && args.credential.is_none() && args.oath_name.is_none() {
+        return Err("one of --out, --credential or --oath-name is required".into());
+    }
+    if args.oath_name.is_none() && (args.touch || args.replace) {
+        return Err("--touch and --replace require --oath-name".into());
+    }
+    if args.oath_name.is_some() && !matches!(args.format, SecretFormat::Totp) {
+        return Err("--oath-name requires --format totp".into());
+    }
+    Ok(())
+}
+
 pub fn run(args: Args) -> Result<(), String> {
-    if args.out.is_none() && args.credential.is_none() {
-        return Err("either --out or --credential is required".into());
+    check_args(&args)?;
+    if let Some(name) = args.oath_name.as_deref() {
+        // Fail before anyone types a seed: no key, a locked key, or a taken name.
+        crate::oath::check_writable(name, args.replace).map_err(|e| e.to_string())?;
     }
     let timeout = args.timeout;
     std::thread::spawn(move || {
@@ -90,6 +117,8 @@ pub fn run(args: Args) -> Result<(), String> {
 
     let out = args.out.clone();
     let credential = args.credential.clone();
+    let oath_name = args.oath_name.clone();
+    let (touch, replace) = (args.touch, args.replace);
     let format = args.format;
     let _webview = WebViewBuilder::new()
         .with_html(page(&args.label))
@@ -107,7 +136,10 @@ pub fn run(args: Args) -> Result<(), String> {
                 eprintln!("error: TOTP seed must be base32 (A-Z, 2-7; at least 16 symbols)");
                 std::process::exit(1);
             }
-            let result = if let Some(reference) = credential.as_deref() {
+            let result = if let Some(name) = oath_name.as_deref() {
+                crate::oath::write_credential(name, &value, touch, replace)
+                    .map_err(|e| e.to_string())
+            } else if let Some(reference) = credential.as_deref() {
                 crate::credential::set(reference, &value)
             } else if let Some(path) = out.as_ref() {
                 util::write_secure(path, &value).map_err(|e| e.to_string())
@@ -147,7 +179,31 @@ fn validate_secret(value: &str, format: SecretFormat) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{SecretFormat, page, validate_secret};
+    use super::{Args, SecretFormat, check_args, page, validate_secret};
+    use clap::Parser;
+
+    #[derive(Parser)]
+    struct Cli {
+        #[command(flatten)]
+        args: Args,
+    }
+
+    fn check(argv: &[&str]) -> Result<(), String> {
+        let cli = Cli::try_parse_from(std::iter::once("secret-prompt").chain(argv.iter().copied()))
+            .map_err(|e| e.to_string())?;
+        check_args(&cli.args)
+    }
+
+    #[test]
+    fn refuses_yubikey_flags_without_a_yubikey_destination_before_any_window() {
+        assert!(check(&["--credential", "totp/x"]).is_ok());
+        assert!(check(&["--oath-name", "eule:x", "--format", "totp", "--touch"]).is_ok());
+        assert!(check(&["--credential", "totp/x", "--touch"]).unwrap_err().contains("--oath-name"));
+        assert!(check(&["--out", "/tmp/x", "--replace"]).unwrap_err().contains("--oath-name"));
+        assert!(check(&["--oath-name", "eule:x"]).unwrap_err().contains("--format totp"));
+        assert!(check(&[]).unwrap_err().contains("one of"));
+        assert!(check(&["--oath-name", "eule:x", "--credential", "totp/x"]).is_err());
+    }
 
     #[test]
     fn identifies_eule_without_exposing_the_secret() {

@@ -5,6 +5,7 @@ import {
   GOOGLE_CREDENTIAL_REF_PATTERN,
   M365_PASSWORD_CREDENTIAL_REF_PATTERN,
   TOTP_CREDENTIAL_REF_PATTERN,
+  yubikeyCredentialNameProblem,
 } from "./credential-references.js";
 import { assertConnectorCapability } from "./connector-capabilities.js";
 
@@ -33,6 +34,16 @@ export const CONFIG_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 const id = z.string().trim().min(1).max(128).regex(CONFIG_ID_PATTERN);
 const account = z.string().trim().min(1).max(320);
+
+const yubikeyTotp = z
+  .object({
+    credential: z.string().superRefine((name, ctx) => {
+      const problem = yubikeyCredentialNameProblem(name);
+      if (problem) ctx.addIssue({ code: "custom", message: `YubiKey credential name ${problem}` });
+    }),
+    touch: z.boolean().optional(),
+  })
+  .strict();
 
 export const connectorSchema = z
   .object({
@@ -126,6 +137,7 @@ export const appConfigSchema = z
             account,
             totpSecret: z.string().min(1).optional(),
             totpSecretRef: z.string().regex(TOTP_CREDENTIAL_REF_PATTERN).optional(),
+            totpYubikey: yubikeyTotp.optional(),
             passwordSecretRef: z.string().regex(M365_PASSWORD_CREDENTIAL_REF_PATTERN).optional(),
           })
           .strict()
@@ -136,7 +148,18 @@ export const appConfigSchema = z
                 path: ["totpSecretRef"],
                 message: "totpSecret and totpSecretRef cannot be combined",
               });
-            if (!entry.totpSecret && !entry.totpSecretRef && !entry.passwordSecretRef)
+            if (entry.totpYubikey && (entry.totpSecret || entry.totpSecretRef))
+              ctx.addIssue({
+                code: "custom",
+                path: ["totpYubikey"],
+                message: "totpYubikey cannot be combined with totpSecret or totpSecretRef",
+              });
+            if (
+              !entry.totpSecret &&
+              !entry.totpSecretRef &&
+              !entry.totpYubikey &&
+              !entry.passwordSecretRef
+            )
               ctx.addIssue({
                 code: "custom",
                 path: ["passwordSecretRef"],

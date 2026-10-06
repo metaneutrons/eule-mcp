@@ -11,7 +11,9 @@
 //!     intercepts a broker-bound redirect (urn:ietf:wg:oauth:2.0:oob or a custom
 //!     scheme) no browser can navigate to, exchanges the code, writes tokens.json.
 //!   eule-helper secret-prompt  — a local password window; writes the entered
-//!     value to a 0600 file or directly to the OS credential store.
+//!     value to a 0600 file, directly to the OS credential store, or (for a
+//!     TOTP seed) to a YubiKey OATH credential.
+//!   eule-helper oath  — status and removal of a YubiKey OATH credential.
 //!
 //! Same mechanism on all three OSes via `wry` (one webview abstraction).
 
@@ -19,6 +21,7 @@ use clap::{Parser, Subcommand};
 
 mod capture;
 mod credential;
+mod oath;
 mod prompt;
 mod util;
 
@@ -37,6 +40,8 @@ enum Command {
     SecretPrompt(prompt::Args),
     /// Read, check, or delete an Eule secret in the operating-system credential store.
     Credential(credential::Args),
+    /// Check or delete a TOTP credential on a connected YubiKey.
+    Oath(oath::Args),
 }
 
 fn main() {
@@ -45,6 +50,7 @@ fn main() {
         Command::OauthCapture(args) => capture::run(args),
         Command::SecretPrompt(args) => prompt::run(args),
         Command::Credential(args) => credential::run(args),
+        Command::Oath(args) => oath::run(args),
     };
     if let Err(e) = result {
         eprintln!("error: {e}");

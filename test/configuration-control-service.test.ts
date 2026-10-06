@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { ConfigurationControlService } from "../src/services/configuration-control-service.js";
 import type { ConfigManager } from "../src/config/index.js";
-import type { CredentialBroker, CredentialState } from "../src/helper/credential-store.js";
+import type {
+  CredentialBroker,
+  CredentialState,
+  OathCredentialBroker,
+  OathCredentialStatus,
+} from "../src/helper/credential-store.js";
 import { ConfiguredCredentialResolver } from "../src/helper/configured-credential-resolver.js";
 import type { AppConfig, ConnectorConfig, ConnectorKind } from "../src/types/index.js";
 
@@ -20,6 +25,26 @@ class FakeCredentials implements CredentialBroker {
   remove = vi.fn((reference: string) => {
     this.removed.push(reference);
     this.values.delete(reference);
+  });
+}
+
+/** A YubiKey: credential name → touch policy. */
+class FakeOath implements OathCredentialBroker {
+  readonly onKey = new Map<string, { touch: boolean }>();
+  available = true;
+  provision = vi.fn(
+    async (name: string, _label: string, options: { touch: boolean; replace: boolean }) => {
+      if (this.onKey.has(name) && !options.replace) throw new Error("exists");
+      this.onKey.set(name, { touch: options.touch });
+    },
+  );
+  status = vi.fn((name: string): OathCredentialStatus =>
+    this.available
+      ? { state: this.onKey.has(name) ? "configured" : "missing" }
+      : { state: "unavailable", detail: "no YubiKey with the OATH application is connected" },
+  );
+  remove = vi.fn((name: string) => {
+    this.onKey.delete(name);
   });
 }
 
@@ -74,9 +99,21 @@ function harness(options: { failUpsert?: boolean } = {}) {
       }
       const previous = config.autoAuth?.find((entry) => entry.account === account);
       const merged = { ...previous, account, ...patch };
-      if (patch.totpSecretRef) delete merged.totpSecret;
+      if (patch.totpSecretRef) {
+        delete merged.totpSecret;
+        delete merged.totpYubikey;
+      }
       if (patch.totpSecret) delete merged.totpSecretRef;
-      for (const key of ["totpSecret", "totpSecretRef", "passwordSecretRef"] as const)
+      if (patch.totpYubikey) {
+        delete merged.totpSecret;
+        delete merged.totpSecretRef;
+      }
+      for (const key of [
+        "totpSecret",
+        "totpSecretRef",
+        "totpYubikey",
+        "passwordSecretRef",
+      ] as const)
         if (merged[key] === null) delete merged[key];
       config = { ...config, autoAuth: [merged] };
       revision++;
@@ -88,20 +125,25 @@ function harness(options: { failUpsert?: boolean } = {}) {
       if (kind === "totp") {
         delete next.totpSecret;
         delete next.totpSecretRef;
+        delete next.totpYubikey;
       } else delete next.passwordSecretRef;
       config = {
         ...config,
         autoAuth:
-          next.totpSecret || next.totpSecretRef || next.passwordSecretRef ? [next] : undefined,
+          next.totpSecret || next.totpSecretRef || next.totpYubikey || next.passwordSecretRef
+            ? [next]
+            : undefined,
       };
       revision++;
     }),
   } as unknown as ConfigManager;
   const credentials = new FakeCredentials();
+  const oath = new FakeOath();
   return {
     manager,
     credentials,
-    service: new ConfigurationControlService(manager, credentials),
+    oath,
+    service: new ConfigurationControlService(manager, credentials, oath),
     getConfig: () => config,
     failNextUpsert: () => {
       failNextUpsert = true;
@@ -357,5 +399,121 @@ describe("ConfigurationControlService", () => {
     expect(context.service.credentialStatus()).toEqual([
       { scope: `personal/mail/${connector?.id ?? ""}`, state: "missing" },
     ]);
+  });
+});
+
+describe("ConfigurationControlService TOTP on a YubiKey", () => {
+  const account = "user@example.com";
+  const credential = "eule:user@example.com";
+
+  it("writes the seed under eule:<account> without touch and deletes the keychain seed it replaces", async () => {
+    const context = harness();
+    await context.service.configureTotp(account);
+    const keychainReference = context.getConfig().autoAuth?.[0]?.totpSecretRef;
+
+    await context.service.configureTotp("User@Example.com", { storage: "yubikey" });
+
+    expect(context.oath.provision).toHaveBeenCalledWith(credential, `TOTP seed for ${account}`, {
+      touch: false,
+      replace: false,
+    });
+    expect(context.getConfig().autoAuth?.[0]).toEqual({
+      account,
+      totpYubikey: { credential, touch: false },
+    });
+    expect(context.credentials.removed).toContain(keychainReference);
+  });
+
+  it("takes touch from the request, else from the binding, and overwrites only its own credential", async () => {
+    const context = harness();
+    await context.service.configureTotp(account, { storage: "yubikey", touch: true });
+    expect(context.oath.onKey.get(credential)).toEqual({ touch: true });
+
+    await context.service.configureTotp(account, { storage: "yubikey" });
+    expect(context.oath.provision).toHaveBeenLastCalledWith(credential, expect.any(String), {
+      touch: true,
+      replace: true,
+    });
+    expect(context.getConfig().autoAuth?.[0]?.totpYubikey).toEqual({ credential, touch: true });
+  });
+
+  it("refuses a missing key with the helper's reason and writes nothing", async () => {
+    const context = harness();
+    context.oath.available = false;
+    await expect(context.service.configureTotp(account, { storage: "yubikey" })).rejects.toThrow(
+      /YubiKey not usable: no YubiKey with the OATH application is connected/,
+    );
+    expect(context.oath.provision).not.toHaveBeenCalled();
+    expect(context.getConfig().autoAuth).toBeUndefined();
+  });
+
+  it("leaves a credential of another name that is not bound to the account alone", async () => {
+    const context = harness();
+    const foreign = "Microsoft:user@example.com";
+    context.oath.onKey.set(foreign, { touch: true });
+    await expect(
+      context.service.configureTotp(account, { storage: "yubikey", credential: foreign }),
+    ).rejects.toThrow(/already holds a credential named "Microsoft:user@example.com"/);
+    expect(context.oath.provision).not.toHaveBeenCalled();
+    expect(context.oath.onKey.get(foreign)).toEqual({ touch: true });
+  });
+
+  it("treats eule:<account> as its own and overwrites it", async () => {
+    const context = harness();
+    context.oath.onKey.set(credential, { touch: true });
+    await context.service.configureTotp(account, { storage: "yubikey" });
+    expect(context.oath.provision).toHaveBeenCalledWith(credential, expect.any(String), {
+      touch: false,
+      replace: true,
+    });
+  });
+
+  it("rejects a credential name the key cannot store before touching the key", async () => {
+    const context = harness();
+    const longAccount = `${"a".repeat(60)}@example.com`;
+    await expect(
+      context.service.configureTotp(longAccount, { storage: "yubikey" }),
+    ).rejects.toThrow(/at most 64 bytes/);
+    expect(context.oath.status).not.toHaveBeenCalled();
+  });
+
+  it("removes a freshly written credential when the binding cannot be saved", async () => {
+    const context = harness();
+    context.failNextUpsert();
+    await expect(context.service.configureTotp(account, { storage: "yubikey" })).rejects.toThrow(
+      /disk full/,
+    );
+    expect(context.oath.remove).toHaveBeenCalledWith(credential);
+    expect(context.oath.onKey.has(credential)).toBe(false);
+  });
+
+  it("keeps the key's credential when the binding is removed or replaced by the keychain", async () => {
+    const context = harness();
+    await context.service.configureTotp(account, { storage: "yubikey" });
+    await context.service.configureTotp(account);
+    expect(context.getConfig().autoAuth?.[0]?.totpYubikey).toBeUndefined();
+    expect(context.getConfig().autoAuth?.[0]?.totpSecretRef).toMatch(/^totp\//);
+
+    await context.service.configureTotp(account, { storage: "yubikey" });
+    await context.service.removeTotp(account);
+    expect(context.getConfig().autoAuth).toBeUndefined();
+    expect(context.oath.remove).not.toHaveBeenCalled();
+    expect(context.oath.onKey.has(credential)).toBe(true);
+  });
+
+  it("reports the key's state and hands the login only the credential name", async () => {
+    const context = harness();
+    await context.service.configureTotp(account, { storage: "yubikey" });
+    expect(context.service.credentialStatus()).toContainEqual({
+      scope: `totp-yubikey/${account}`,
+      state: "configured",
+    });
+    context.oath.available = false;
+    expect(context.service.credentialStatus()).toContainEqual({
+      scope: `totp-yubikey/${account}`,
+      state: "unavailable",
+    });
+    const resolver = new ConfiguredCredentialResolver(context.manager, context.credentials);
+    expect(resolver.m365AutoAuth(account)).toEqual({ totpYubikeyCredential: credential });
   });
 });
