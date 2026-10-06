@@ -10,6 +10,20 @@ on:
         description: "Existing release tag to attach binaries to"
         required: true
         type: string
+    # A called workflow sees only the secrets its caller passes, even in jobs
+    # that use the release environment. Declared as required so a caller that
+    # forgets them fails at once instead of in the preflight.
+    secrets:
+      MACOS_CERT_P12:
+        required: true
+      MACOS_CERT_PASSWORD:
+        required: true
+      APPLE_API_KEY:
+        required: true
+      APPLE_API_ISSUER:
+        required: true
+      APPLE_API_KEY_CONTENT:
+        required: true
   workflow_dispatch:
     inputs:
       tag:
