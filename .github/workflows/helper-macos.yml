@@ -5,12 +5,14 @@ on:
     branches: [main]
     paths:
       - "helper/**"
+      - "rust-toolchain.toml"
       - ".github/workflows/helper-macos.yml"
       - ".github/workflows/release.yml"
   pull_request:
     branches: [main]
     paths:
       - "helper/**"
+      - "rust-toolchain.toml"
       - ".github/workflows/helper-macos.yml"
       - ".github/workflows/release.yml"
   workflow_dispatch:
