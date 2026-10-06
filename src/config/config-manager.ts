@@ -195,6 +195,7 @@ export class ConfigManager {
       totpSecretRef?: string | null;
       totpYubikey?: YubikeyTotpConfig | null;
       passwordSecretRef?: string | null;
+      login?: "safari" | null;
     },
     expectedRevision?: string,
   ): void {
@@ -207,6 +208,7 @@ export class ConfigManager {
     let totpSecretRef = previous?.totpSecretRef;
     let totpYubikey = previous?.totpYubikey;
     let passwordSecretRef = previous?.passwordSecretRef;
+    let login = previous?.login;
     if (patch.totpSecret !== undefined) {
       totpSecret = patch.totpSecret ?? undefined;
       if (totpSecret) {
@@ -230,16 +232,22 @@ export class ConfigManager {
     }
     if (patch.passwordSecretRef !== undefined)
       passwordSecretRef = patch.passwordSecretRef ?? undefined;
+    if (patch.login !== undefined) login = patch.login ?? undefined;
     const normalized = {
       account: normalizedAccount,
       ...(totpSecret ? { totpSecret } : {}),
       ...(totpSecretRef ? { totpSecretRef } : {}),
       ...(totpYubikey ? { totpYubikey } : {}),
       ...(passwordSecretRef ? { passwordSecretRef } : {}),
+      ...(login ? { login } : {}),
     };
-    if (idx === -1) next.push(normalized);
+    // An entry without any binding left is removed rather than saved empty.
+    const empty = Object.keys(normalized).length === 1;
+    if (empty) {
+      if (idx !== -1) next.splice(idx, 1);
+    } else if (idx === -1) next.push(normalized);
     else next[idx] = normalized;
-    this.save({ ...this.config, autoAuth: next }, expectedRevision);
+    this.save({ ...this.config, autoAuth: next.length ? next : undefined }, expectedRevision);
   }
 
   /** Remove one binding without deleting the account's other auto-auth secret. */
@@ -264,13 +272,15 @@ export class ConfigManager {
       ...(kind === "password" && entry.totpSecret ? { totpSecret: entry.totpSecret } : {}),
       ...(kind === "password" && entry.totpSecretRef ? { totpSecretRef: entry.totpSecretRef } : {}),
       ...(kind === "password" && entry.totpYubikey ? { totpYubikey: entry.totpYubikey } : {}),
+      ...(entry.login ? { login: entry.login } : {}),
     };
     const next = [...existing];
     if (
       updated.totpSecret ||
       updated.totpSecretRef ||
       updated.totpYubikey ||
-      updated.passwordSecretRef
+      updated.passwordSecretRef ||
+      updated.login
     )
       next[idx] = updated;
     else next.splice(idx, 1);

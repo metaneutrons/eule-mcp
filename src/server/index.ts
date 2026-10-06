@@ -27,6 +27,7 @@ import { registerMessengerTools } from "../tools/messenger-tools.js";
 import { registerTaskTools } from "../tools/task-tools.js";
 import { ConnectorRegistry } from "../connectors/index.js";
 import { tokenRepository } from "../auth/token-repository.js";
+import { M365Reauth } from "../auth/m365-reauth.js";
 import { setLogOutput, logger } from "../utils/logger.js";
 import { EULE_VERSION } from "../version.js";
 import { nativeCredentialBroker } from "../helper/credential-store.js";
@@ -36,7 +37,10 @@ setLogOutput("stderr");
 
 const configManager = new ConfigManager();
 const credentialResolver = new ConfiguredCredentialResolver(configManager, nativeCredentialBroker);
-const registry = new ConnectorRegistry(configManager, credentialResolver);
+const authService = new AuthService(configManager, tokenRepository, credentialResolver);
+// Accounts with `login: "safari"` get a dead sign-in renewed through Safari.
+const reauth = new M365Reauth(configManager, (account) => authService.renewWithSafari(account));
+const registry = new ConnectorRegistry(configManager, credentialResolver, reauth);
 const configurationControl = new ConfigurationControlService(configManager, nativeCredentialBroker);
 
 // Database initialized at startup, used by task/idea/note tools in Phase 2+.
@@ -47,7 +51,7 @@ const server = new McpServer({
   version: EULE_VERSION,
 });
 
-registerAuthTools(server, new AuthService(configManager, tokenRepository, credentialResolver));
+registerAuthTools(server, authService);
 
 registerConfigTools(
   server,

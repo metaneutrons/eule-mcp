@@ -130,6 +130,16 @@ describe("ConfigManager mutations (backing the MCP config tools)", () => {
     expect(new ConfigManager().get().autoAuth).toBeUndefined();
   });
 
+  it("keeps login: safari when other bindings come and go", () => {
+    const cm = new ConfigManager();
+    cm.upsertAutoAuth("me@x.de", { login: "safari" });
+    cm.upsertAutoAuth("me@x.de", { totpSecretRef: "totp/a1b2.c3d4" });
+    cm.removeAutoAuthCredential("me@x.de", "totp");
+    expect(new ConfigManager().get().autoAuth).toEqual([{ account: "me@x.de", login: "safari" }]);
+    cm.upsertAutoAuth("me@x.de", { login: null });
+    expect(new ConfigManager().get().autoAuth).toBeUndefined();
+  });
+
   it("rejects an interactive commit based on a stale disk revision", () => {
     const first = new ConfigManager();
     const expectedRevision = first.revision;

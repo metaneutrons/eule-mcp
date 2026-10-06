@@ -10,6 +10,8 @@ import type {
   ConnectorConfig,
 } from "../types/index.js";
 import type { ConfigManager } from "../config/index.js";
+import type { M365Reauth } from "../auth/m365-reauth.js";
+import type { OAuthConfig } from "../types/index.js";
 import { logger } from "../utils/logger.js";
 import { loadTokens, getAccessToken } from "../providers/m365/index.js";
 import { GraphMailConnector } from "../providers/m365/graph-mail.js";
@@ -44,8 +46,15 @@ export class ConnectorRegistry {
     private readonly secrets: ConfiguredCredentialResolver = new ConfiguredCredentialResolver(
       config,
     ),
+    private readonly reauth?: M365Reauth,
   ) {
     this.policy = new RolePolicyService(() => this.config.get());
+  }
+
+  /** M365 token source; renews a dead sign-in through Safari where configured. */
+  private m365Token(account: string, oauth: OAuthConfig): () => Promise<string | null> {
+    const getToken = () => getAccessToken(account, oauth);
+    return this.reauth ? this.reauth.tokenSource(account, getToken) : getToken;
   }
 
   /** Get all mail connectors, optionally filtered by role. */
@@ -90,7 +99,7 @@ export class ConnectorRegistry {
         const token = tokens.accounts[mc.account];
         if (!token) continue;
 
-        const getToken = () => getAccessToken(mc.account, oauth);
+        const getToken = this.m365Token(mc.account, oauth);
         const target = mc.mailbox ?? mc.account;
         const isShared = !!mc.mailbox;
 
@@ -183,7 +192,7 @@ export class ConnectorRegistry {
     if (!token) return undefined;
     const target = mc.mailbox ?? mc.account;
     const isShared = !!mc.mailbox;
-    const getToken = () => getAccessToken(mc.account, oauth);
+    const getToken = this.m365Token(mc.account, oauth);
 
     switch (token.tier) {
       case "graph":
@@ -248,7 +257,7 @@ export class ConnectorRegistry {
         if (!token) continue;
         const target = cc.mailbox ?? cc.account;
         const isShared = !!cc.mailbox;
-        const getToken = () => getAccessToken(cc.account, oauth);
+        const getToken = this.m365Token(cc.account, oauth);
         switch (token.tier) {
           case "graph":
             connectors.push(new GraphCalendarConnector(target, getToken, isShared));
@@ -302,9 +311,7 @@ export class ConnectorRegistry {
           );
           continue;
         }
-        connectors.push(
-          new GraphTaskConnector(cc.account, () => getAccessToken(cc.account, oauth)),
-        );
+        connectors.push(new GraphTaskConnector(cc.account, this.m365Token(cc.account, oauth)));
       }
     }
 
@@ -351,7 +358,7 @@ export class ConnectorRegistry {
         if (!token) continue;
         const target = cc.mailbox ?? cc.account;
         const isShared = !!cc.mailbox;
-        const getToken = () => getAccessToken(cc.account, oauth);
+        const getToken = this.m365Token(cc.account, oauth);
         switch (token.tier) {
           case "graph":
             connectors.push(new GraphContactConnector(target, getToken, isShared));
@@ -392,9 +399,7 @@ export class ConnectorRegistry {
         }
         const token = tokens.accounts[mc.account];
         if (token?.tier !== "graph") continue;
-        connectors.push(
-          new GraphTeamsConnector(mc.account, () => getAccessToken(mc.account, oauth)),
-        );
+        connectors.push(new GraphTeamsConnector(mc.account, this.m365Token(mc.account, oauth)));
       }
     }
     return connectors;
@@ -431,9 +436,7 @@ export class ConnectorRegistry {
         }
         const token = tokens.accounts[fc.account];
         if (token?.tier !== "graph") continue;
-        connectors.push(
-          new GraphFileConnector(fc.account, () => getAccessToken(fc.account, oauth)),
-        );
+        connectors.push(new GraphFileConnector(fc.account, this.m365Token(fc.account, oauth)));
       }
     }
     return connectors;

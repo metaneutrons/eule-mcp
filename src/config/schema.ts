@@ -139,6 +139,7 @@ export const appConfigSchema = z
             totpSecretRef: z.string().regex(TOTP_CREDENTIAL_REF_PATTERN).optional(),
             totpYubikey: yubikeyTotp.optional(),
             passwordSecretRef: z.string().regex(M365_PASSWORD_CREDENTIAL_REF_PATTERN).optional(),
+            login: z.enum(["safari"]).optional(),
           })
           .strict()
           .superRefine((entry, ctx) => {
@@ -158,7 +159,8 @@ export const appConfigSchema = z
               !entry.totpSecret &&
               !entry.totpSecretRef &&
               !entry.totpYubikey &&
-              !entry.passwordSecretRef
+              !entry.passwordSecretRef &&
+              !entry.login
             )
               ctx.addIssue({
                 code: "custom",

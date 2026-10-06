@@ -9,9 +9,14 @@ import {
 } from "../utils/execution-context.js";
 import { logger } from "../utils/logger.js";
 import { ConfiguredCredentialResolver } from "../helper/configured-credential-resolver.js";
-import { oauthCapture, type OauthCaptureOpts } from "../helper/run.js";
+import {
+  oauthCapture,
+  oauthSafari,
+  type OauthCaptureOpts,
+  type OauthSafariOpts,
+} from "../helper/run.js";
 
-export type AuthLoginMethod = "auto" | "browser" | "webview";
+export type AuthLoginMethod = "auto" | "browser" | "webview" | "safari";
 
 export interface AuthLoginRequest {
   /** Defaults to the tier already stored for the account, otherwise `graph`. */
@@ -22,6 +27,7 @@ export interface AuthLoginRequest {
 }
 
 type M365WebviewCapture = (options: OauthCaptureOpts) => Promise<number>;
+type M365SafariSignIn = (options: OauthSafariOpts) => Promise<number>;
 
 export interface AuthAccountSummary {
   readonly account: string;
@@ -40,6 +46,7 @@ export class AuthService {
       config,
     ),
     private readonly captureM365: M365WebviewCapture = oauthCapture,
+    private readonly safariSignIn: M365SafariSignIn = oauthSafari,
   ) {}
 
   inventory(): AuthAccountSummary[] {
@@ -86,6 +93,16 @@ export class AuthService {
     const method = request.method ?? "auto";
     if (tier === "google" && (method === "webview" || redirectUri !== undefined))
       throw new Error("The native Eule webview login is available only for M365 accounts");
+    if (method === "safari") {
+      if (tier === "google")
+        throw new Error("The Safari sign-in is available only for M365 accounts");
+      if (!account) throw new Error("An account email is required for the Safari sign-in");
+      return this.exclusive(`${tier}:${account}`, async () => {
+        const token = await this.loginM365Safari(tier, account, currentExecutionSignal());
+        this.rememberSafari(token.account);
+        return token;
+      });
+    }
     const configuredRedirectUri =
       tier === "google" ? undefined : (redirectUri ?? this.config.get().oauth.redirectUri);
     const useWebview =
@@ -127,6 +144,64 @@ export class AuthService {
     return Object.entries(this.tokens.load().accounts).find(
       ([key]) => key.toLowerCase() === account,
     )?.[1].tier;
+  }
+
+  /** Renew a dead sign-in through Safari, e.g. when a refresh token was found
+   *  expired during a tool call. Nothing can cancel it from outside, so the
+   *  call's time limit cannot cut off a sign-in that is waiting for a key. */
+  async renewWithSafari(accountInput: string): Promise<void> {
+    const account = accountInput.trim().toLowerCase();
+    const tier = this.storedTier(account) ?? "graph";
+    if (tier === "google")
+      throw new Error("The Safari sign-in is available only for M365 accounts");
+    await this.exclusive(`${tier}:${account}`, () => this.loginM365Safari(tier, account));
+  }
+
+  private async loginM365Safari(
+    tier: Exclude<ApiTier, "google">,
+    account: string,
+    signal?: AbortSignal,
+  ): Promise<AccountToken> {
+    const oauth = this.config.get().oauth;
+    const authParam = tierAuthParam(oauth, tier);
+    const before = this.tokens.load();
+    // The configured redirect is for the webview; Safari lands on the helper's
+    // default nativeclient page, which it can read.
+    const exitCode = await this.safariSignIn({
+      clientId: oauth.clientId,
+      tier,
+      apiVersion: oauth.apiVersion === "v1" ? "v1" : "v2",
+      resource: "resource" in authParam ? authParam.resource : undefined,
+      scope: "scope" in authParam ? authParam.scope : undefined,
+      tenant: oauth.tenant,
+      loginHint: account,
+      ...(signal ? { signal } : {}),
+    });
+    if (exitCode !== 0)
+      throw new Error(
+        exitCode === 3
+          ? "The Safari sign-in window was closed"
+          : exitCode === 2
+            ? "The Safari sign-in timed out"
+            : `Safari sign-in failed (helper exit code ${String(exitCode)})`,
+      );
+    return this.capturedToken(account, tier, before, this.tokens.load());
+  }
+
+  /** Remember Safari as the account's way back in, so a dead sign-in is renewed that way. */
+  private rememberSafari(account: string): void {
+    const normalized = account.trim().toLowerCase();
+    const entry = this.config
+      .get()
+      .autoAuth?.find((candidate) => candidate.account.toLowerCase() === normalized);
+    if (entry?.login === "safari") return;
+    try {
+      this.config.upsertAutoAuth(normalized, { login: "safari" });
+    } catch (error) {
+      logger.warn(
+        `Could not remember the Safari sign-in for ${normalized}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
   private requireWebviewAccount(account: string | undefined): string {

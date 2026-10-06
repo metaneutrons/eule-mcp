@@ -6,7 +6,7 @@ import {
   loadTokens,
   REDIRECT_URI,
 } from "../providers/m365/index.js";
-import { oauthCapture } from "../helper/run.js";
+import { oauthCapture, oauthSafari } from "../helper/run.js";
 import { createInterface } from "node:readline/promises";
 import { nativeCredentialBroker } from "../helper/credential-store.js";
 import { ConfiguredCredentialResolver } from "../helper/configured-credential-resolver.js";
@@ -166,13 +166,15 @@ async function login(): Promise<void> {
   // machine can actually run: the native window on a desktop session, device
   // code when headless or over SSH. The browser paste-the-redirect flow is the
   // worst of the three for the user and is now only used when named directly.
-  const explicit = flags.capture
-    ? "capture"
-    : flags.device
-      ? "device"
-      : flags.browser
-        ? "browser"
-        : undefined;
+  const explicit = flags.safari
+    ? "safari"
+    : flags.capture
+      ? "capture"
+      : flags.device
+        ? "device"
+        : flags.browser
+          ? "browser"
+          : undefined;
   const mode = explicit ?? (hasDesktopSession() ? "capture" : "device");
 
   /** Native webview login. Returns the helper's exit code. */
@@ -211,6 +213,32 @@ async function login(): Promise<void> {
       totpYubikeyCredential,
       passwordCredentialRef,
     });
+  };
+
+  /** Sign-in in the user's Safari: security keys, and Safari's own Microsoft session. */
+  const safariLogin = async (): Promise<void> => {
+    if (!account) throw new Error("--account <email> is required for --safari");
+    if (process.platform !== "darwin")
+      throw new Error("The Safari sign-in is only available on macOS");
+    const param = tierAuthParam(oauth, tier);
+    console.log(`\nSafari sign-in, tier ${tier}, client ${oauth.clientId}`);
+    console.log(
+      "   Safari opens in the background. If its Microsoft session is not enough, it comes\n" +
+        "   forward so you can finish, e.g. with your security key.\n",
+    );
+    const code = await oauthSafari({
+      clientId: oauth.clientId,
+      tier,
+      apiVersion: oauth.apiVersion === "v1" ? "v1" : "v2",
+      resource: "resource" in param ? param.resource : undefined,
+      scope: "scope" in param ? param.scope : undefined,
+      tenant: oauth.tenant,
+      loginHint: account,
+    });
+    if (code !== 0) process.exit(code);
+    configManager.upsertAutoAuth(account, { login: "safari" });
+    console.log(`\n✅ Signed in through Safari: ${account}`);
+    console.log("   When this sign-in expires, Eule renews it through Safari on its own.");
   };
 
   const deviceLogin = async (): Promise<void> => {
@@ -252,6 +280,10 @@ async function login(): Promise<void> {
     }
     if (mode === "device") {
       await deviceLogin();
+      return;
+    }
+    if (mode === "safari") {
+      await safariLogin();
       return;
     }
     // Legacy browser authorization-code flow: sign in, then paste the redirect
@@ -347,6 +379,9 @@ async function main(): Promise<void> {
       );
       console.log("  eule-mcp login --device [--tier ews]  Force device code (works over SSH)");
       console.log("  eule-mcp login --browser [--tier ews] Legacy browser paste-the-redirect");
+      console.log(
+        "  eule-mcp login --safari --account <email> Sign in through Safari (security keys, macOS)",
+      );
       console.log(
         "  eule-mcp secret totp --account <email> Store a TOTP secret via a local window",
       );
