@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.1](https://github.com/metaneutrons/eule-mcp/compare/v0.7.0...v0.7.1) (2026-10-06)
+
+
+### Bug Fixes
+
+* **deps:** update nodemailer to 10 and patch vulnerable transitive packages ([#89](https://github.com/metaneutrons/eule-mcp/issues/89)) ([c62bbeb](https://github.com/metaneutrons/eule-mcp/commit/c62bbeb327b1c2b451b7e3129e317d01d435ff56))
+
 ## [0.7.0](https://github.com/metaneutrons/eule-mcp/compare/v0.6.1...v0.7.0) (2026-10-06)
 
 
