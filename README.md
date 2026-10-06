@@ -371,9 +371,15 @@ OAuth client.
   are resolved directly by the native helper and auto-filled only on Microsoft's
   HTTPS login origin. Pass `--no-password` or `--no-totp` to disable either one
   for a login.
+- **Safari (macOS, security keys):**
+  `node dist/cli/index.js login --safari --account you@example.com` — signs in
+  through your own Safari, which can use security keys and passkeys (the
+  embedded webview cannot) and keeps your Microsoft session. See
+  [Sign-in through Safari](#sign-in-through-safari).
 - **Flags:** `--account <email>`, `--client-id <id>`, `--api-version v1|v2`,
   `--tier graph|ews|imap`, `--redirect-uri <uri>`. Flow overrides: `--capture`,
-  `--device`, `--browser`; autofill overrides: `--no-password`, `--no-totp`.
+  `--device`, `--browser`, `--safari`; autofill overrides: `--no-password`,
+  `--no-totp`.
 
 The `eule-helper` binary (Rust + `wry` = WKWebView/WebView2/WebKitGTK) is
 resolved without making local development depend on an already published
@@ -594,6 +600,37 @@ autoAuth:
   support and fall back to manual entry.
 
 With `touch: false`, a plugged-in key answers without anyone present.
+
+#### Sign-in through Safari
+
+On macOS the embedded webview cannot reach security keys or passkeys: WebKit
+grants that only to browsers Apple entitles and to apps associated with the
+site. To sign in with a FIDO2 key such as a YubiKey, Eule uses your own Safari:
+
+```bash
+node dist/cli/index.js login --safari --account you@example.com
+```
+
+- The helper opens the sign-in in a Safari window of its own, in the
+  background and without forcing an account picker. If Safari's Microsoft
+  session still holds, Microsoft signs you in without any interaction and the
+  window closes again unseen.
+- Otherwise Safari comes forward after a few seconds with a notification;
+  finish there, e.g. by touching your key. The window then closes and focus
+  returns to where you were.
+- The helper reads the address of its own window over AppleScript until
+  Microsoft lands on the registered `nativeclient` page, checks `state`, and
+  redeems the code with PKCE like the webview. macOS asks once whether Safari
+  may be controlled; the request may name the app that started Eule.
+- A successful sign-in records `login: safari` for the account in `autoAuth`.
+  When Microsoft later rejects the account's refresh token, Eule renews the
+  sign-in through Safari on its own: one sign-in per account at a time, outside
+  the time limit of the tool call that hit it, and after a failure no new
+  attempt for ten minutes. Remove `login` to turn this off. MCP:
+  `auth_login` with `method: "safari"`.
+- A sign-in from Safari's session is as strong as that session: whoever can
+  use your unlocked Mac and its Safari can also sign in this way.
+
 
 After the initial interactive OAuth login, normal M365 access is unattended:
 Eule reuses the stored token and refreshes it before expiry. A new user action

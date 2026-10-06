@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { oathPrompt, oauthCapture } from "../src/helper/run.js";
+import { oathPrompt, oauthCapture, oauthSafari } from "../src/helper/run.js";
 
 /** Every helper invocation, recorded instead of spawned. */
 const spawned: string[][] = [];
@@ -66,6 +66,25 @@ describe("helper arguments for YubiKey TOTP", () => {
         "eule:u",
         "--replace",
       ],
+    ]);
+  });
+
+  it("starts the Safari sign-in with the client parameters only", async () => {
+    await oauthSafari({ ...capture, tenant: "organizations", loginHint: "user@example.com" });
+    expect(spawned[0]).toEqual([
+      "oauth-safari",
+      "--client-id",
+      "client",
+      "--tier",
+      "ews",
+      "--api-version",
+      "v1",
+      "--resource",
+      "r",
+      "--tenant",
+      "organizations",
+      "--login-hint",
+      "user@example.com",
     ]);
   });
 });

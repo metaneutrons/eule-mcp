@@ -77,10 +77,10 @@ export function registerAuthTools(server: McpServer, auth: AuthService): void {
           .optional()
           .describe("Defaults to the tier already stored for the account, otherwise graph."),
         method: z
-          .enum(["auto", "browser", "webview"])
+          .enum(["auto", "browser", "webview", "safari"])
           .optional()
           .describe(
-            "Login UI. auto (default) selects the Eule webview when a registered redirectUri is configured or supplied; webview is M365-only.",
+            "Login UI. auto (default) selects the Eule webview when a registered redirectUri is configured or supplied; webview is M365-only. safari (M365, macOS) signs in through the user's Safari, which supports security keys such as a YubiKey and reuses Safari's Microsoft session; afterwards a dead sign-in for the account is renewed through Safari automatically.",
           ),
         redirectUri: z
           .url()

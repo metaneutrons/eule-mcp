@@ -37,6 +37,13 @@ language: de # de | en
 #     totpYubikey:
 #       credential: "eule:user@example.com" # name of the OATH credential on the key
 #       touch: false # require a touch per code; applied when Eule writes the credential
+#
+# Sign in through Safari instead (macOS): security keys such as a YubiKey work
+# there, and Safari's Microsoft session often signs in without interaction.
+# `eule-mcp login --safari --account user@example.com` sets this; Eule then
+# renews a dead sign-in for the account through Safari on its own.
+#   - account: "user@example.com"
+#     login: safari
 
 # Prefer the MCP `connector_configure` tool or `eule-mcp configure` for
 # password/API-token connectors. Their secret is stored by the OS; YAML contains

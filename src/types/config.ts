@@ -42,6 +42,9 @@ export interface AutoAuthConfig {
   readonly totpYubikey?: YubikeyTotpConfig;
   /** Opt-in OS credential-store reference for the Microsoft 365 password. */
   readonly passwordSecretRef?: string;
+  /** Sign in through Safari (security keys, Safari's session); Eule then also
+   *  renews a dead sign-in that way on its own. */
+  readonly login?: "safari";
 }
 
 /** Connectors grouped by domain. */

@@ -264,6 +264,12 @@ describe("configuration SSOT schema", () => {
     ).toThrow();
   });
 
+  it("accepts login: safari on its own and nothing else as a login method", () => {
+    const entry = { account: "user@example.com", login: "safari" };
+    expect(parseAppConfig({ ...base, autoAuth: [entry] }).autoAuth?.[0]?.login).toBe("safari");
+    expect(() => parseAppConfig({ ...base, autoAuth: [{ ...entry, login: "chrome" }] })).toThrow();
+  });
+
   it("accepts only scoped references for opt-in M365 passwords", () => {
     expect(() =>
       parseAppConfig({

@@ -22,7 +22,9 @@ use clap::{Parser, Subcommand};
 mod capture;
 mod credential;
 mod oath;
+mod oauth;
 mod prompt;
+mod safari;
 mod util;
 
 #[derive(Parser)]
@@ -36,6 +38,8 @@ struct Cli {
 enum Command {
     /// Interactive OAuth login in an embedded webview; writes the token to tokens.json.
     OauthCapture(capture::Args),
+    /// OAuth sign-in in the user's Safari (security keys, passkeys, Safari's session).
+    OauthSafari(safari::Args),
     /// Prompt for a secret in a local window; writes the raw value to --out (0600).
     SecretPrompt(prompt::Args),
     /// Read, check, or delete an Eule secret in the operating-system credential store.
@@ -48,6 +52,7 @@ fn main() {
     let cli = Cli::parse();
     let result = match cli.command {
         Command::OauthCapture(args) => capture::run(args),
+        Command::OauthSafari(args) => safari::run(args),
         Command::SecretPrompt(args) => prompt::run(args),
         Command::Credential(args) => credential::run(args),
         Command::Oath(args) => oath::run(args),

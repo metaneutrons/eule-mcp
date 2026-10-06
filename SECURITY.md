@@ -85,6 +85,16 @@ within a few days.
   the same name it is not bound to, and never deletes a credential from the key
   when a binding is removed. A password-protected OATH application is not
   unlocked; login falls back to manual code entry.
+- **Safari sign-in reads only its own window.** `oauth-safari` opens the
+  authorize URL in a Safari window it created and polls that window's address
+  over AppleScript; arguments reach `osascript` as argv, never inside the
+  script. It accepts only a redirect to the configured URI with the matching
+  `state`, redeems the code with PKCE, and closes the window. A silent sign-in
+  rides on Safari's Microsoft session and is as strong as that session.
+  Automatic renewal through Safari runs only for accounts with
+  `autoAuth[].login: safari`, only after Microsoft has rejected the refresh
+  token, once at a time per account, and not again for ten minutes after a
+  failure.
 - **Auth debug artifacts** (DOM/screenshots of the login flow) are written only
   when `EULE_AUTH_DEBUG` is set, and then `0600`.
 

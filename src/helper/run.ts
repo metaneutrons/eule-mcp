@@ -71,6 +71,30 @@ export async function oauthCapture(o: OauthCaptureOpts): Promise<number> {
   return run("oauth-capture", args, undefined, o.signal);
 }
 
+export interface OauthSafariOpts {
+  clientId: string;
+  tier: string;
+  apiVersion: "v1" | "v2";
+  resource?: string;
+  scope?: string;
+  tenant?: string;
+  loginHint?: string;
+  redirectUri?: string;
+  /** Cancels the sign-in; omit for a re-authentication that should outlive a tool call. */
+  signal?: AbortSignal;
+}
+
+/** Sign in through the user's Safari; the helper writes ~/.eule/tokens.json itself. */
+export async function oauthSafari(o: OauthSafariOpts): Promise<number> {
+  const args = ["--client-id", o.clientId, "--tier", o.tier, "--api-version", o.apiVersion];
+  if (o.resource) args.push("--resource", o.resource);
+  if (o.scope) args.push("--scope", o.scope);
+  if (o.tenant) args.push("--tenant", o.tenant);
+  if (o.loginHint) args.push("--login-hint", o.loginHint);
+  if (o.redirectUri) args.push("--redirect-uri", o.redirectUri);
+  return run("oauth-safari", args, undefined, o.signal);
+}
+
 /** Prompt for a secret in a local window; the helper writes it 0600 to `out`. */
 export async function secretPrompt(label: string, out: string): Promise<number> {
   return run("secret-prompt", ["--label", label, "--out", out]);

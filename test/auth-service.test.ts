@@ -223,3 +223,131 @@ describe("AuthService M365 webview login", () => {
     expect(capture).not.toHaveBeenCalled();
   });
 });
+
+describe("AuthService Safari sign-in", () => {
+  const account = "user@example.com";
+
+  function harness(stored?: AccountToken["tier"]) {
+    let store: TokenStore = {
+      accounts: stored
+        ? {
+            [account]: {
+              account,
+              accessToken: "old",
+              refreshToken: "dead",
+              expiresAt: 0,
+              tier: stored,
+            },
+          }
+        : {},
+    };
+    const repository: TokenRepository = {
+      load: () => store,
+      save: vi.fn(),
+      remove: vi.fn(() => false),
+    };
+    const upsertAutoAuth = vi.fn();
+    const config = {
+      get: () => ({
+        language: "en",
+        oauth: {
+          clientId: "public-client",
+          tenant: "organizations",
+          apiVersion: "v1",
+          redirectUri: "urn:ietf:wg:oauth:2.0:oob",
+        },
+        roles: [],
+      }),
+      upsertAutoAuth,
+      euleDirPath: "/data",
+    } as unknown as ConfigManager;
+    let exitCode = 0;
+    const safari = vi.fn(async (options: { tier: string }) => {
+      if (exitCode === 0)
+        store = {
+          accounts: {
+            [account]: {
+              account,
+              accessToken: "fresh",
+              refreshToken: "fresh",
+              expiresAt: Date.now() + 3_600_000,
+              tier: options.tier as AccountToken["tier"],
+            },
+          },
+        };
+      return exitCode;
+    });
+    const auth = new AuthService(config, repository, undefined, undefined, safari);
+    return {
+      auth,
+      safari,
+      upsertAutoAuth,
+      exitWith: (code: number) => {
+        exitCode = code;
+      },
+    };
+  }
+
+  const context = (signal: AbortSignal) => ({
+    correlationId: "safari",
+    operation: "auth_login",
+    startedAt: Date.now(),
+    signal,
+  });
+
+  it("signs in through Safari without the webview redirect and remembers Safari for the account", async () => {
+    const { auth, safari, upsertAutoAuth } = harness();
+    const execution = new AbortController();
+    const token = await runWithExecutionContext(context(execution.signal), () =>
+      auth.login({ account: "USER@example.com", tier: "ews", method: "safari" }),
+    );
+    expect(token.accessToken).toBe("fresh");
+    expect(safari).toHaveBeenCalledWith(
+      expect.objectContaining({
+        clientId: "public-client",
+        tier: "ews",
+        apiVersion: "v1",
+        resource: "https://outlook.office.com",
+        tenant: "organizations",
+        loginHint: account,
+        signal: execution.signal,
+      }),
+    );
+    expect(safari.mock.calls[0]?.[0]).not.toHaveProperty("redirectUri");
+    expect(upsertAutoAuth).toHaveBeenCalledWith(account, { login: "safari" });
+  });
+
+  it("renews on the stored tier and cannot be cancelled by the tool call that needed it", async () => {
+    const { auth, safari, upsertAutoAuth } = harness("ews");
+    const execution = new AbortController();
+    await runWithExecutionContext(context(execution.signal), () =>
+      auth.renewWithSafari("User@Example.com"),
+    );
+    expect(safari).toHaveBeenCalledWith(
+      expect.objectContaining({ tier: "ews", loginHint: account }),
+    );
+    expect(safari.mock.calls[0]?.[0]).not.toHaveProperty("signal");
+    expect(upsertAutoAuth).not.toHaveBeenCalled();
+  });
+
+  it("reports a closed window and a timeout", async () => {
+    const closed = harness();
+    closed.exitWith(3);
+    await expect(closed.auth.login({ account, tier: "graph", method: "safari" })).rejects.toThrow(
+      /window was closed/,
+    );
+    const timedOut = harness("graph");
+    timedOut.exitWith(2);
+    await expect(timedOut.auth.renewWithSafari(account)).rejects.toThrow(/timed out/);
+    expect(closed.upsertAutoAuth).not.toHaveBeenCalled();
+  });
+
+  it("needs an M365 account", async () => {
+    const { auth, safari } = harness();
+    await expect(auth.login({ tier: "graph", method: "safari" })).rejects.toThrow(/account email/);
+    await expect(auth.login({ account, tier: "google", method: "safari" })).rejects.toThrow(
+      /only for M365/,
+    );
+    expect(safari).not.toHaveBeenCalled();
+  });
+});
