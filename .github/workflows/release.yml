@@ -10,6 +10,20 @@ on:
         description: "Existing release tag to attach binaries to"
         required: true
         type: string
+    # A called workflow sees only the secrets its caller passes, even in jobs
+    # that use the release environment. Declared as required so a caller that
+    # forgets them fails at once instead of in the preflight.
+    secrets:
+      MACOS_CERT_P12:
+        required: true
+      MACOS_CERT_PASSWORD:
+        required: true
+      APPLE_API_KEY:
+        required: true
+      APPLE_API_ISSUER:
+        required: true
+      APPLE_API_KEY_CONTENT:
+        required: true
   workflow_dispatch:
     inputs:
       tag:
@@ -128,6 +142,9 @@ jobs:
           # Build on a supported runner without raising the binary's runtime floor.
           MACOSX_DEPLOYMENT_TARGET: "14.0"
         run: |
+          # rust-toolchain.toml pins the toolchain here; the action's targets
+          # went to another one, so add both to the pinned toolchain.
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
           cargo build --locked --release --target aarch64-apple-darwin
           cargo build --locked --release --target x86_64-apple-darwin
           lipo -create -output "${{ matrix.asset }}" \
