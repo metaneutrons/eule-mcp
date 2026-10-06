@@ -690,4 +690,27 @@ mod tests {
         assert!(parse_tlvs(&[TAG_NAME, 0x05, 1, 2]).is_err());
         assert!(parse_tlvs(&[TAG_NAME]).is_err());
     }
+
+    /// Hardware self-test: `cargo test selftest -- --ignored` with a YubiKey
+    /// attached. Writes "eule:selftest" with the RFC 6238 SHA-1 seed, lets the
+    /// key compute the RFC's codes and removes the credential again. Refuses to
+    /// run if a credential of that name already exists.
+    #[test]
+    #[ignore = "writes to and deletes from a connected YubiKey"]
+    fn selftest_on_a_connected_yubikey() {
+        const NAME: &str = "eule:selftest";
+        // base32 of the ASCII seed "12345678901234567890" (RFC 6238, appendix B)
+        const SEED: &str = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
+        write_credential(NAME, SEED, false, false).expect("writing the test credential");
+        let codes = with_session(|session| {
+            let first = session.code(NAME, 59, || panic!("no touch was requested"))?;
+            let second = session.code(NAME, 1_111_111_109, || panic!("no touch was requested"))?;
+            Ok((first, second))
+        });
+        let removed = with_session(|session| session.delete(NAME));
+        let (first, second) = codes.expect("codes from the key");
+        assert_eq!(first.as_str(), "287082");
+        assert_eq!(second.as_str(), "081804");
+        removed.expect("removing the test credential");
+    }
 }
