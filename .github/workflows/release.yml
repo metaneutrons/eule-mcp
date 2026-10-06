@@ -263,8 +263,11 @@ jobs:
     runs-on: ubuntu-24.04
     needs: build
     environment: release
+    # The job only reads, but release-please creates the release as a draft,
+    # and a token without push access does not see drafts at all: gh reports
+    # "release not found" although the assets are there.
     permissions:
-      contents: read
+      contents: write
     steps:
       - name: Verify every platform asset, checksum, and SBOM
         env:
@@ -273,8 +276,13 @@ jobs:
         run: |
           set -euo pipefail
           assets=$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
+          missing=0
           for base in eule-helper-darwin-universal eule-helper-linux-x64 eule-helper-linux-arm64 eule-helper-win32-x64.exe eule-helper-win32-arm64.exe; do
-            grep -Fxq "$base" <<<"$assets"
-            grep -Fxq "$base.sha256" <<<"$assets"
-            grep -Fxq "$base.sbom.spdx.json" <<<"$assets"
+            for name in "$base" "$base.sha256" "$base.sbom.spdx.json"; do
+              if ! grep -Fxq "$name" <<<"$assets"; then
+                echo "::error::Release $RELEASE_TAG is missing $name"
+                missing=1
+              fi
+            done
           done
+          exit "$missing"
