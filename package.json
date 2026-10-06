@@ -16,7 +16,7 @@
   "pnpm": {
     "overrides": {
       "esbuild": "^0.28.1",
-      "fast-uri": "^3.1.6",
+      "fast-uri": "^3.1.8",
       "hono": "^4.13.7",
       "qs": "^6.16.0"
     }
@@ -68,7 +68,7 @@
     "imapflow": "^1.7.7",
     "js-yaml": "^5.4.1",
     "marked": "^18.0.11",
-    "nodemailer": "^9.1.1",
+    "nodemailer": "^10.0.15",
     "open": "^11.0.2",
     "tsdav": "^2.3.1",
     "turndown": "^7.2.4",
@@ -78,7 +78,6 @@
     "@eslint/js": "^10.0.1",
     "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^26.4.0",
-    "@types/nodemailer": "^8.0.1",
     "@types/turndown": "^5.0.6",
     "@vitest/coverage-v8": "4.1.11",
     "eslint": "^10.9.1",
