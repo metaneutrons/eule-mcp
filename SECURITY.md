@@ -87,8 +87,8 @@ within a few days.
   unlocked; login falls back to manual code entry.
 - **Safari sign-in reads only its own window.** `oauth-safari` opens the
   authorize URL in a Safari window it created and polls that window's address
-  over AppleScript; arguments reach `osascript` as argv, never inside the
-  script. It accepts only a redirect to the configured URI with the matching
+  over AppleScript; arguments reach `osascript` as argv instead of being
+  written into the script. It accepts only a redirect to the configured URI with the matching
   `state`, redeems the code with PKCE, and closes the window. A silent sign-in
   rides on Safari's Microsoft session and is as strong as that session.
   Automatic renewal through Safari runs only for accounts with
