@@ -19,7 +19,7 @@ tao = "0.35.3"
 totp-lite = "2.0.1"
 ureq = "3.3.0"
 url = "2.5.8"
-wry = "0.55.1"
+wry = "0.57.0"
 zeroize = "1.8.2"
 
 # YubiKey OATH over PC/SC. macOS and Windows ship PC/SC with the OS; on Linux
