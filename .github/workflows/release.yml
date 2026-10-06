@@ -49,7 +49,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ inputs.tag || github.event.inputs.tag }}
-      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 24.x
@@ -234,14 +234,14 @@ jobs:
           fi
 
       - name: Generate SPDX SBOM
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
           path: helper
           format: spdx-json
           output-file: helper/${{ matrix.asset }}.sbom.spdx.json
 
       - name: Attest binary provenance
-        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45 # v2
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: helper/${{ matrix.asset }}
 
@@ -263,8 +263,11 @@ jobs:
     runs-on: ubuntu-24.04
     needs: build
     environment: release
+    # The job only reads, but release-please creates the release as a draft,
+    # and a token without push access does not see drafts at all: gh reports
+    # "release not found" although the assets are there.
     permissions:
-      contents: read
+      contents: write
     steps:
       - name: Verify every platform asset, checksum, and SBOM
         env:
@@ -273,8 +276,13 @@ jobs:
         run: |
           set -euo pipefail
           assets=$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
+          missing=0
           for base in eule-helper-darwin-universal eule-helper-linux-x64 eule-helper-linux-arm64 eule-helper-win32-x64.exe eule-helper-win32-arm64.exe; do
-            grep -Fxq "$base" <<<"$assets"
-            grep -Fxq "$base.sha256" <<<"$assets"
-            grep -Fxq "$base.sbom.spdx.json" <<<"$assets"
+            for name in "$base" "$base.sha256" "$base.sbom.spdx.json"; do
+              if ! grep -Fxq "$name" <<<"$assets"; then
+                echo "::error::Release $RELEASE_TAG is missing $name"
+                missing=1
+              fi
+            done
           done
+          exit "$missing"
