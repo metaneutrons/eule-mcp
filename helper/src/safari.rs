@@ -23,6 +23,10 @@ use std::time::Duration;
 pub const NATIVE_CLIENT_REDIRECT: &str =
     "https://login.microsoftonline.com/common/oauth2/nativeclient";
 
+/// Where Microsoft's nativeclient page moves a browser three seconds after
+/// showing the code; arriving there means the code was missed.
+const WRONG_PLACE: &str = "https://login.microsoftonline.com/common/wrongplace";
+
 const NEEDS_YOU: &str = "Sign in to Microsoft in Safari to continue.";
 
 #[derive(ClapArgs)]
@@ -63,6 +67,9 @@ pub enum SignInError {
     StateMismatch,
     /// Microsoft redirected with an error instead of a code.
     Denied(String),
+    /// The window moved on to Microsoft's "wrong place" page before the code
+    /// was read.
+    CodeMissed,
     Browser(String),
 }
 
@@ -99,6 +106,9 @@ pub fn wait_for_code<B: Browser>(
                     .unwrap_or_else(|| "redirect without a code".into());
                 return Err(SignInError::Denied(reason));
             }
+            Some(url) if oauth::matches_redirect(&url, WRONG_PLACE) => {
+                return Err(SignInError::CodeMissed);
+            }
             Some(_) => {}
         }
         if elapsed >= timing.timeout {
@@ -124,7 +134,9 @@ pub fn run(args: Args) -> Result<(), String> {
 
     let window = browser.open(&url)?;
     let timing = Timing {
-        poll: Duration::from_millis(500),
+        // Microsoft shows the code page for three seconds, with a phishing
+        // warning; a short interval keeps it on screen only briefly.
+        poll: Duration::from_millis(250),
         silent_wait: Duration::from_secs(args.silent_wait),
         timeout: Duration::from_secs(args.timeout),
     };
@@ -155,6 +167,9 @@ pub fn run(args: Args) -> Result<(), String> {
         }
         Err(SignInError::StateMismatch) => Err("OAuth redirect state mismatch".into()),
         Err(SignInError::Denied(reason)) => Err(format!("sign-in refused: {reason}")),
+        Err(SignInError::CodeMissed) => {
+            Err("Safari left Microsoft's code page before the code was read".into())
+        }
         Err(SignInError::Browser(message)) => Err(message),
     }
 }
@@ -233,13 +248,19 @@ mod applescript {
         type Window = i64;
 
         fn open(&mut self, url: &str) -> Result<i64, String> {
+            // "front window" is not the new one while Safari is in the
+            // background, so take the window that was not there before.
             let id = osascript(
                 &[
                     "on run argv",
                     "tell application \"Safari\"",
+                    "set knownIds to id of every window",
                     "make new document with properties {URL:(item 1 of argv)}",
-                    "return id of front window",
+                    "repeat with w in windows",
+                    "if (id of w) is not in knownIds then return id of w",
+                    "end repeat",
                     "end tell",
+                    "error \"Safari did not open a new window\"",
                     "end run",
                 ],
                 &[url],
@@ -432,6 +453,13 @@ mod tests {
             wait(&mut safari, &timing(4, 60)),
             Err(SignInError::Denied("AADSTS53003: Blocked".into()))
         );
+    }
+
+    #[test]
+    fn stops_when_the_code_page_has_moved_on() {
+        let wrong = Some("https://login.microsoftonline.com/common/wrongplace");
+        let mut safari = Script::showing(&[LOGIN, wrong]);
+        assert_eq!(wait(&mut safari, &timing(4, 60)), Err(SignInError::CodeMissed));
     }
 
     #[test]
