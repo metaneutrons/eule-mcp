@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.7.0](https://github.com/metaneutrons/eule-mcp/compare/v0.6.1...v0.7.0) (2026-10-06)
+
+
+### Features
+
+* **auth:** sign in to M365 through Safari and renew dead sign-ins that way ([#85](https://github.com/metaneutrons/eule-mcp/issues/85)) ([f855a65](https://github.com/metaneutrons/eule-mcp/commit/f855a656eacaaf80354306c04b262ec3feb2ae34))
+* **auth:** take M365 TOTP codes from a YubiKey ([#84](https://github.com/metaneutrons/eule-mcp/issues/84)) ([fac1b50](https://github.com/metaneutrons/eule-mcp/commit/fac1b50003b94f27a9cac67220ac439cf85d6aa8))
+
+
+### Bug Fixes
+
+* **imap:** thread replies on the parent's Message-ID and send References ([#82](https://github.com/metaneutrons/eule-mcp/issues/82)) ([498666b](https://github.com/metaneutrons/eule-mcp/commit/498666bceae5552502a4b0542c52215944707ba6))
+* **mail:** search every folder by default and bind IMAP ids to their mailbox ([#80](https://github.com/metaneutrons/eule-mcp/issues/80)) ([677529f](https://github.com/metaneutrons/eule-mcp/commit/677529f938e1aec1af76a0dfc14dc3f2347ccb5e))
+
 ## [0.6.1](https://github.com/metaneutrons/eule-mcp/compare/v0.6.0...v0.6.1) (2026-09-28)
 
 
