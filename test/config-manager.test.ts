@@ -105,6 +105,31 @@ describe("ConfigManager mutations (backing the MCP config tools)", () => {
     expect(new ConfigManager().get().autoAuth).toBeUndefined();
   });
 
+  it("keeps one TOTP source per account and removes a YubiKey binding with the TOTP kind", () => {
+    const cm = new ConfigManager();
+    cm.upsertAutoAuth("me@x.de", {
+      totpSecretRef: "totp/a1b2.c3d4",
+      passwordSecretRef: "oauth/m365/password/a1b2.c3d4",
+    });
+    cm.upsertAutoAuth("me@x.de", { totpYubikey: { credential: "eule:me@x.de", touch: true } });
+    let entry = new ConfigManager().get().autoAuth?.find((a) => a.account === "me@x.de");
+    expect(entry?.totpSecretRef).toBeUndefined();
+    expect(entry?.totpYubikey).toEqual({ credential: "eule:me@x.de", touch: true });
+    expect(entry?.passwordSecretRef).toBe("oauth/m365/password/a1b2.c3d4");
+
+    cm.removeAutoAuthCredential("me@x.de", "password");
+    entry = new ConfigManager().get().autoAuth?.find((a) => a.account === "me@x.de");
+    expect(entry?.totpYubikey).toEqual({ credential: "eule:me@x.de", touch: true });
+
+    cm.upsertAutoAuth("me@x.de", { totpSecretRef: "totp/e5f6.a7b8" });
+    entry = new ConfigManager().get().autoAuth?.find((a) => a.account === "me@x.de");
+    expect(entry?.totpYubikey).toBeUndefined();
+
+    cm.upsertAutoAuth("me@x.de", { totpYubikey: { credential: "eule:me@x.de" } });
+    cm.removeAutoAuthCredential("me@x.de", "totp");
+    expect(new ConfigManager().get().autoAuth).toBeUndefined();
+  });
+
   it("rejects an interactive commit based on a stale disk revision", () => {
     const first = new ConfigManager();
     const expectedRevision = first.revision;

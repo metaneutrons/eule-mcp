@@ -199,8 +199,24 @@ export function registerConfigurationControlTools(
     "totp_configure",
     {
       description:
-        "Capture or rotate an account TOTP seed in a branded local Eule window. [WRITES config/keychain]",
-      inputSchema: { account: z.email() },
+        "Capture or rotate an account TOTP seed in a branded local Eule window. With storage=yubikey the seed is written to a connected YubiKey instead of the OS credential store, optionally requiring a touch per code. [WRITES config/keychain/YubiKey]",
+      inputSchema: {
+        account: z.email(),
+        storage: z
+          .enum(["keychain", "yubikey"])
+          .optional()
+          .describe("Where the seed lives; default keychain"),
+        credential: z
+          .string()
+          .min(1)
+          .max(64)
+          .optional()
+          .describe("YubiKey credential name; default eule:<account>"),
+        touch: z
+          .boolean()
+          .optional()
+          .describe("YubiKey only: require a touch for every code; default false"),
+      },
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -208,13 +224,19 @@ export function registerConfigurationControlTools(
         openWorldHint: false,
       },
     },
-    async ({ account }, extra) =>
+    async ({ account, storage, credential, touch }, extra) =>
       executeTool(
         "totp_configure",
         async () => {
-          await control.configureTotp(account);
+          await control.configureTotp(account, {
+            ...(storage ? { storage } : {}),
+            ...(credential ? { credential } : {}),
+            ...(touch !== undefined ? { touch } : {}),
+          });
           return textResult(
-            `✅ Stored TOTP seed for ${account.toLowerCase()} in the OS credential store.`,
+            storage === "yubikey"
+              ? `✅ Wrote the TOTP seed for ${account.toLowerCase()} to the YubiKey.`
+              : `✅ Stored TOTP seed for ${account.toLowerCase()} in the OS credential store.`,
           );
         },
         { timeoutMs: INTERACTIVE_TIMEOUT_MS, signal: extra.signal },

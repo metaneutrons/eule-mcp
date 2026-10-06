@@ -76,6 +76,15 @@ within a few days.
   URI, matching OAuth state, and PKCE. Stored password and TOTP each reduce the
   security gained from independent factors, so both are disabled until
   separately configured by the user in Eule's branded local prompt.
+- **A TOTP seed can stay on a YubiKey instead.** With `totpYubikey`, the seed
+  goes from the helper's local window straight into the key's OATH application;
+  config and Node hold only the credential name. At login the helper asks the
+  key for the current code over PC/SC and keeps it in zeroizing memory until
+  the gated fill. The key then remains a separate factor, and with `touch: true`
+  every code needs physical presence. Eule refuses to overwrite a credential of
+  the same name it is not bound to, and never deletes a credential from the key
+  when a binding is removed. A password-protected OATH application is not
+  unlocked; login falls back to manual code entry.
 - **Auth debug artifacts** (DOM/screenshots of the login flow) are written only
   when `EULE_AUTH_DEBUG` is set, and then `0600`.
 

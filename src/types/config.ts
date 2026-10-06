@@ -23,6 +23,14 @@ export interface ConnectorConfig {
   readonly signalCliUrl?: string;
 }
 
+/** A TOTP credential held in a YubiKey's OATH applet rather than the OS credential store. */
+export interface YubikeyTotpConfig {
+  /** Credential name on the key, e.g. "eule:you@example.com" (at most 64 bytes). */
+  readonly credential: string;
+  /** Require a touch for every code. Applied when Eule writes the credential to the key. */
+  readonly touch?: boolean;
+}
+
 /** Optional per-account autofill bindings for the native Eule webview. */
 export interface AutoAuthConfig {
   readonly account: string;
@@ -30,6 +38,8 @@ export interface AutoAuthConfig {
   readonly totpSecret?: string;
   /** Preferred OS credential-store reference for the TOTP seed. */
   readonly totpSecretRef?: string;
+  /** TOTP codes from a YubiKey instead of a stored seed. Excludes the two above. */
+  readonly totpYubikey?: YubikeyTotpConfig;
   /** Opt-in OS credential-store reference for the Microsoft 365 password. */
   readonly passwordSecretRef?: string;
 }

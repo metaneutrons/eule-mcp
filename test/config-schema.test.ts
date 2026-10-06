@@ -228,6 +228,42 @@ describe("configuration SSOT schema", () => {
     ).toThrow(/cannot be combined/);
   });
 
+  it("accepts a YubiKey TOTP binding on its own and rejects mixing or unusable names", () => {
+    const entry = {
+      account: "user@example.com",
+      totpYubikey: { credential: "eule:user@example.com", touch: false },
+    };
+    expect(parseAppConfig({ ...base, autoAuth: [entry] }).autoAuth?.[0]?.totpYubikey).toEqual({
+      credential: "eule:user@example.com",
+      touch: false,
+    });
+    expect(
+      parseAppConfig({ ...base, autoAuth: [{ ...entry, totpYubikey: { credential: "x" } }] })
+        .autoAuth?.[0]?.totpYubikey?.touch,
+    ).toBeUndefined();
+    expect(() =>
+      parseAppConfig({ ...base, autoAuth: [{ ...entry, totpSecretRef: "totp/a1b2.c3d4" }] }),
+    ).toThrow(/totpYubikey cannot be combined/);
+    expect(() =>
+      parseAppConfig({
+        ...base,
+        autoAuth: [{ ...entry, totpYubikey: { credential: "x".repeat(65) } }],
+      }),
+    ).toThrow(/at most 64 bytes/);
+    expect(() =>
+      parseAppConfig({
+        ...base,
+        autoAuth: [{ ...entry, totpYubikey: { credential: "a\nb" } }],
+      }),
+    ).toThrow(/control characters/);
+    expect(() =>
+      parseAppConfig({
+        ...base,
+        autoAuth: [{ ...entry, totpYubikey: { credential: "x", touch: "yes" } }],
+      }),
+    ).toThrow();
+  });
+
   it("accepts only scoped references for opt-in M365 passwords", () => {
     expect(() =>
       parseAppConfig({

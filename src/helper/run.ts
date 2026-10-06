@@ -13,6 +13,8 @@ export interface OauthCaptureOpts {
   redirectUri?: string;
   /** Opaque OS-store reference; the native helper resolves it directly. */
   totpCredentialRef?: string;
+  /** Name of a TOTP credential on a YubiKey; the helper asks the key for codes. */
+  totpYubikeyCredential?: string;
   /** Opaque OS-store reference for opt-in Microsoft password autofill. */
   passwordCredentialRef?: string;
   /** Cancels the local helper when the owning MCP operation is cancelled. */
@@ -64,6 +66,7 @@ export async function oauthCapture(o: OauthCaptureOpts): Promise<number> {
   if (o.loginHint) args.push("--login-hint", o.loginHint);
   if (o.redirectUri) args.push("--redirect-uri", o.redirectUri);
   if (o.totpCredentialRef) args.push("--totp-credential-ref", o.totpCredentialRef);
+  else if (o.totpYubikeyCredential) args.push("--totp-yubikey", o.totpYubikeyCredential);
   if (o.passwordCredentialRef) args.push("--password-credential-ref", o.passwordCredentialRef);
   return run("oauth-capture", args, undefined, o.signal);
 }
@@ -82,5 +85,18 @@ export async function credentialPrompt(
 ): Promise<number> {
   const args = ["--label", label, "--credential", reference];
   if (format) args.push("--format", format);
+  return run("secret-prompt", args, undefined, signal);
+}
+
+/** Prompt locally for a TOTP seed and write it straight to a YubiKey credential. */
+export async function oathPrompt(
+  label: string,
+  name: string,
+  options: { readonly touch: boolean; readonly replace: boolean },
+  signal?: AbortSignal,
+): Promise<number> {
+  const args = ["--label", label, "--format", "totp", "--oath-name", name];
+  if (options.touch) args.push("--touch");
+  if (options.replace) args.push("--replace");
   return run("secret-prompt", args, undefined, signal);
 }

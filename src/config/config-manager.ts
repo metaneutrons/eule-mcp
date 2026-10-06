@@ -19,6 +19,7 @@ import type {
   GoogleOAuthConfig,
   RoleConfig,
   ConnectorConfig,
+  YubikeyTotpConfig,
 } from "../types/index.js";
 import { parseAppConfig } from "./schema.js";
 
@@ -185,12 +186,14 @@ export class ConfigManager {
   }
 
   /** Create or update an account's native-webview credential bindings. New
-   *  flows persist OS credential-store references; inline TOTP is migration-only. */
+   *  flows persist OS credential-store references; inline TOTP is migration-only.
+   *  An account has one TOTP source, so setting one clears the others. */
   upsertAutoAuth(
     account: string,
     patch: {
       totpSecret?: string | null;
       totpSecretRef?: string | null;
+      totpYubikey?: YubikeyTotpConfig | null;
       passwordSecretRef?: string | null;
     },
     expectedRevision?: string,
@@ -202,14 +205,28 @@ export class ConfigManager {
     const previous = idx === -1 ? undefined : next[idx];
     let totpSecret = previous?.totpSecret;
     let totpSecretRef = previous?.totpSecretRef;
+    let totpYubikey = previous?.totpYubikey;
     let passwordSecretRef = previous?.passwordSecretRef;
     if (patch.totpSecret !== undefined) {
       totpSecret = patch.totpSecret ?? undefined;
-      if (totpSecret) totpSecretRef = undefined;
+      if (totpSecret) {
+        totpSecretRef = undefined;
+        totpYubikey = undefined;
+      }
     }
     if (patch.totpSecretRef !== undefined) {
       totpSecretRef = patch.totpSecretRef ?? undefined;
-      if (totpSecretRef) totpSecret = undefined;
+      if (totpSecretRef) {
+        totpSecret = undefined;
+        totpYubikey = undefined;
+      }
+    }
+    if (patch.totpYubikey !== undefined) {
+      totpYubikey = patch.totpYubikey ?? undefined;
+      if (totpYubikey) {
+        totpSecret = undefined;
+        totpSecretRef = undefined;
+      }
     }
     if (patch.passwordSecretRef !== undefined)
       passwordSecretRef = patch.passwordSecretRef ?? undefined;
@@ -217,6 +234,7 @@ export class ConfigManager {
       account: normalizedAccount,
       ...(totpSecret ? { totpSecret } : {}),
       ...(totpSecretRef ? { totpSecretRef } : {}),
+      ...(totpYubikey ? { totpYubikey } : {}),
       ...(passwordSecretRef ? { passwordSecretRef } : {}),
     };
     if (idx === -1) next.push(normalized);
@@ -232,7 +250,7 @@ export class ConfigManager {
     const entry = idx === -1 ? undefined : existing[idx];
     const configured =
       kind === "totp"
-        ? Boolean(entry?.totpSecret ?? entry?.totpSecretRef)
+        ? Boolean(entry?.totpSecret ?? entry?.totpSecretRef ?? entry?.totpYubikey)
         : Boolean(entry?.passwordSecretRef);
     if (!entry || !configured)
       throw new Error(
@@ -245,9 +263,15 @@ export class ConfigManager {
         : {}),
       ...(kind === "password" && entry.totpSecret ? { totpSecret: entry.totpSecret } : {}),
       ...(kind === "password" && entry.totpSecretRef ? { totpSecretRef: entry.totpSecretRef } : {}),
+      ...(kind === "password" && entry.totpYubikey ? { totpYubikey: entry.totpYubikey } : {}),
     };
     const next = [...existing];
-    if (updated.totpSecret || updated.totpSecretRef || updated.passwordSecretRef)
+    if (
+      updated.totpSecret ||
+      updated.totpSecretRef ||
+      updated.totpYubikey ||
+      updated.passwordSecretRef
+    )
       next[idx] = updated;
     else next.splice(idx, 1);
     this.save({ ...this.config, autoAuth: next.length ? next : undefined });

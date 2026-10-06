@@ -10,7 +10,7 @@ use crate::util;
 use clap::Args as ClapArgs;
 use std::path::PathBuf;
 use std::sync::{
-    Arc,
+    Arc, Mutex,
     atomic::{AtomicBool, Ordering},
 };
 use tao::{
@@ -30,6 +30,12 @@ enum UserEvent {
     FillPassword,
     /// A page finished loading — (re)inject the MFA poller into the new document.
     InjectPoller,
+    /// The YubiKey credential requires a touch and the key is waiting for it.
+    YubikeyTouch,
+    /// A YubiKey code is waiting in the shared slot (never in the event itself).
+    YubikeyReady,
+    /// No code from the YubiKey; the user enters it in the window instead.
+    YubikeyUnavailable,
 }
 
 #[derive(ClapArgs)]
@@ -64,6 +70,9 @@ pub struct Args {
     /// OS credential-store reference for an opt-in TOTP seed.
     #[arg(long)]
     totp_credential_ref: Option<String>,
+    /// Name of a TOTP credential on a connected YubiKey to take codes from.
+    #[arg(long, conflicts_with = "totp_credential_ref")]
+    totp_yubikey: Option<String>,
     /// OS credential-store reference for an opt-in Microsoft 365 password.
     #[arg(long)]
     password_credential_ref: Option<String>,
@@ -296,6 +305,30 @@ fn fill_password_js(password: &str) -> Zeroizing<String> {
     ))
 }
 
+/// JS that shows `text` in a small bar above the login page, or removes the bar
+/// for `None`. The text is set as text content, never parsed as HTML.
+fn notice_js(text: Option<&str>) -> String {
+    let text = serde_json::to_string(&text).expect("serializing notice");
+    format!(
+        r#"(function () {{
+  var text = {text};
+  var bar = document.getElementById('eule-notice');
+  if (text === null) {{ if (bar) bar.remove(); return; }}
+  if (!bar) {{
+    bar = document.createElement('div');
+    bar.id = 'eule-notice';
+    bar.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:2147483647;padding:10px 16px;background:#0a84ff;color:#fff;font:600 14px system-ui,-apple-system,sans-serif;text-align:center';
+    document.body.appendChild(bar);
+  }}
+  bar.textContent = text;
+}})();"#
+    )
+}
+
+const TOUCH_NOTICE: &str = "Touch your YubiKey to sign in";
+const YUBIKEY_UNAVAILABLE_NOTICE: &str =
+    "No code from the YubiKey. Enter the code from your authenticator.";
+
 fn is_trusted_login_url(value: &str) -> bool {
     url::Url::parse(value).is_ok_and(|url| {
         url.scheme() == "https" && url.host_str() == Some("login.microsoftonline.com")
@@ -366,6 +399,9 @@ pub fn run(args: Args) -> Result<(), String> {
         }
         None => None,
     };
+    // A YubiKey credential is only named; codes come from the key at the OTP
+    // screen. If none can be had, the login stays open for manual entry.
+    let totp_yubikey = args.totp_yubikey.clone();
     // EULE_AUTH_DEBUG streams a DOM snapshot of each MFA screen to
     // ~/.eule/auth-debug.log (0600) so selectors can be tuned. No secret/value.
     let debug = std::env::var_os("EULE_AUTH_DEBUG").is_some();
@@ -408,7 +444,12 @@ pub fn run(args: Args) -> Result<(), String> {
             true
         });
 
-    let auto = totp_secret.is_some() || password_secret.is_some() || debug;
+    let yubikey_code: Arc<Mutex<Option<Zeroizing<String>>>> = Arc::new(Mutex::new(None));
+    let yubikey_busy = Arc::new(AtomicBool::new(false));
+    let yubikey_proxy = event_loop.create_proxy();
+
+    let auto =
+        totp_secret.is_some() || totp_yubikey.is_some() || password_secret.is_some() || debug;
     // The poller is (re)injected on every page load via evaluate_script — NOT
     // with_initialization_script, which in practice only ran on the first page,
     // so the MFA screens (which arrive as later navigations) were never seen.
@@ -472,9 +513,10 @@ pub fn run(args: Args) -> Result<(), String> {
                 }
             }
             Event::UserEvent(UserEvent::FillTotp) => {
-                if trusted_page.load(Ordering::Acquire)
-                    && let Some(secret) = totp_secret.as_deref()
-                {
+                if !trusted_page.load(Ordering::Acquire) {
+                    return;
+                }
+                if let Some(secret) = totp_secret.as_deref() {
                     match gen_totp(secret) {
                         Some(code) => {
                             let _ = webview.evaluate_script(&fill_totp_js(&code));
@@ -483,6 +525,53 @@ pub fn run(args: Args) -> Result<(), String> {
                             "warning: stored TOTP seed is not valid base32 — TOTP autofill skipped"
                         ),
                     }
+                } else if let Some(name) = totp_yubikey.clone()
+                    && !yubikey_busy.swap(true, Ordering::AcqRel)
+                {
+                    // The key may block until it is touched, so ask it off the
+                    // event loop and report back through the proxy.
+                    let proxy = yubikey_proxy.clone();
+                    let slot = Arc::clone(&yubikey_code);
+                    let busy = Arc::clone(&yubikey_busy);
+                    std::thread::spawn(move || {
+                        let touch_proxy = proxy.clone();
+                        let result = crate::oath::current_code(&name, move || {
+                            let _ = touch_proxy.send_event(UserEvent::YubikeyTouch);
+                        });
+                        let event = match result {
+                            Ok(code) => {
+                                if let Ok(mut slot) = slot.lock() {
+                                    *slot = Some(code);
+                                }
+                                UserEvent::YubikeyReady
+                            }
+                            Err(e) => {
+                                eprintln!("warning: no TOTP code from the YubiKey ({e})");
+                                UserEvent::YubikeyUnavailable
+                            }
+                        };
+                        busy.store(false, Ordering::Release);
+                        let _ = proxy.send_event(event);
+                    });
+                }
+            }
+            Event::UserEvent(UserEvent::YubikeyTouch) => {
+                if trusted_page.load(Ordering::Acquire) {
+                    let _ = webview.evaluate_script(&notice_js(Some(TOUCH_NOTICE)));
+                }
+            }
+            Event::UserEvent(UserEvent::YubikeyReady) => {
+                let code = yubikey_code.lock().ok().and_then(|mut slot| slot.take());
+                if trusted_page.load(Ordering::Acquire)
+                    && let Some(code) = code
+                {
+                    let _ = webview.evaluate_script(&notice_js(None));
+                    let _ = webview.evaluate_script(&fill_totp_js(&code));
+                }
+            }
+            Event::UserEvent(UserEvent::YubikeyUnavailable) => {
+                if trusted_page.load(Ordering::Acquire) {
+                    let _ = webview.evaluate_script(&notice_js(Some(YUBIKEY_UNAVAILABLE_NOTICE)));
                 }
             }
             Event::UserEvent(UserEvent::FillPassword) => {

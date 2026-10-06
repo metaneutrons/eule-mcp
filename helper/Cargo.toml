@@ -21,3 +21,9 @@ ureq = "3.3.0"
 url = "2.5.8"
 wry = "0.55.1"
 zeroize = "1.8.2"
+
+# YubiKey OATH over PC/SC. macOS and Windows ship PC/SC with the OS; on Linux
+# pcsc-sys would link libpcsclite at build and run time, so the helper builds
+# without YubiKey support there and falls back to manual code entry.
+[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
+pcsc = "2.9.0"

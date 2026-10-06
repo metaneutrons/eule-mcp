@@ -185,11 +185,14 @@ async function login(): Promise<void> {
     // TOTP/password directly from the OS store and may be disabled per login.
     const autoAuth = account ? secrets.m365AutoAuth(account) : {};
     const totpCredentialRef = flags["no-totp"] ? undefined : autoAuth.totpCredentialRef;
+    const totpYubikeyCredential = flags["no-totp"] ? undefined : autoAuth.totpYubikeyCredential;
     const passwordCredentialRef = flags["no-password"] ? undefined : autoAuth.passwordCredentialRef;
     console.log(
       `\nNative login window, tier ${tier}, client ${oauth.clientId}` +
         (passwordCredentialRef ? " (auto-password)" : "") +
-        `${totpCredentialRef ? " (auto-TOTP)" : ""}\n`,
+        (totpCredentialRef ? " (auto-TOTP)" : "") +
+        (totpYubikeyCredential ? " (auto-TOTP from YubiKey)" : "") +
+        "\n",
     );
     return oauthCapture({
       clientId: oauth.clientId,
@@ -205,6 +208,7 @@ async function login(): Promise<void> {
       // targets the ordinary navigable redirect the default client registers.
       redirectUri: oauth.redirectUri ?? (explicit ? undefined : REDIRECT_URI),
       totpCredentialRef,
+      totpYubikeyCredential,
       passwordCredentialRef,
     });
   };
@@ -267,6 +271,9 @@ async function secretCmd(): Promise<void> {
   const flags = parseFlags(args.slice(2));
   if (sub !== "totp" && sub !== "password") {
     console.log("Usage: eule-mcp secret <totp|password> --account <email> [--remove]");
+    console.log(
+      "       eule-mcp secret totp --account <email> --yubikey [--credential <name>] [--touch|--no-touch]",
+    );
     process.exit(1);
   }
   const account = typeof flags.account === "string" ? flags.account : undefined;
@@ -287,6 +294,16 @@ async function secretCmd(): Promise<void> {
       console.log(
         `\n✅ ${sub === "totp" ? "TOTP secret" : "M365 password"} removed for ${account}.`,
       );
+    } else if (sub === "totp" && flags.yubikey) {
+      // The seed goes from the helper's window straight to the key. Touch comes
+      // from --touch/--no-touch, else the configured value, else off.
+      await control.configureTotp(account, {
+        storage: "yubikey",
+        ...(typeof flags.credential === "string" ? { credential: flags.credential } : {}),
+        ...(flags.touch ? { touch: true } : flags["no-touch"] ? { touch: false } : {}),
+      });
+      console.log(`\n✅ TOTP seed written to the YubiKey for ${account}.`);
+      console.log(`   Use it:  eule-mcp login --account ${account} …`);
     } else {
       if (sub === "totp") await control.configureTotp(account);
       else await control.configureM365Password(account);
@@ -332,6 +349,9 @@ async function main(): Promise<void> {
       console.log("  eule-mcp login --browser [--tier ews] Legacy browser paste-the-redirect");
       console.log(
         "  eule-mcp secret totp --account <email> Store a TOTP secret via a local window",
+      );
+      console.log(
+        "       add --yubikey [--credential <name>] [--touch] to keep it on a YubiKey instead",
       );
       console.log(
         "  eule-mcp secret password --account <email> Opt in to local M365 password autofill",

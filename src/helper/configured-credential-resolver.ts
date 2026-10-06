@@ -4,6 +4,7 @@ import { nativeCredentialBroker, type CredentialBroker } from "./credential-stor
 
 export interface M365AutoAuthReferences {
   readonly totpCredentialRef?: string;
+  readonly totpYubikeyCredential?: string;
   readonly passwordCredentialRef?: string;
 }
 
@@ -40,6 +41,7 @@ export class ConfiguredCredentialResolver {
       .autoAuth?.find((candidate) => candidate.account.toLowerCase() === account);
     return {
       ...(entry?.totpSecretRef ? { totpCredentialRef: entry.totpSecretRef } : {}),
+      ...(entry?.totpYubikey ? { totpYubikeyCredential: entry.totpYubikey.credential } : {}),
       ...(entry?.passwordSecretRef ? { passwordCredentialRef: entry.passwordSecretRef } : {}),
     };
   }
