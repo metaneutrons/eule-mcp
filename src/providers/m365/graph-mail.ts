@@ -7,7 +7,7 @@ import type {
   SendReceipt,
 } from "../../types/index.js";
 import { fetchWithExecutionContext as fetch } from "../../utils/execution-context.js";
-import { hasFolder, normalizeMailFolder } from "../../utils/mail-folders.js";
+import { hasFolder, looksLikeFolderId, wellKnownMailFolder } from "../../utils/mail-folders.js";
 import { assembleHtml } from "../../utils/mail-html.js";
 import { assertResponseSize, fetchWithTimeout } from "../../utils/security.js";
 
@@ -75,9 +75,35 @@ export class GraphMailConnector implements MailConnector {
     return { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
   }
 
+  /**
+   * Graph folder id for a name: well-known names become their distinguished
+   * token, an opaque id passes through, anything else is looked up by display
+   * name among the top-level folders. Undefined when no folder has that name.
+   */
+  private async folderRef(folder: string): Promise<string | undefined> {
+    const known = wellKnownMailFolder(folder);
+    if (known) return known;
+    const name = folder.trim();
+    if (looksLikeFolderId(name)) return name;
+    const filter = encodeURIComponent(`displayName eq '${name.replace(/'/g, "''")}'`);
+    const res = await fetch(`${this.base}/mailFolders?$filter=${filter}&$select=id&$top=1`, {
+      headers: await this.headers(),
+    });
+    if (!res.ok) throw new Error(`Graph mailFolders: ${String(res.status)} ${await res.text()}`);
+    const data = (await res.json()) as { value: { id?: string }[] };
+    return data.value[0]?.id;
+  }
+
+  private async requireFolder(folder: string): Promise<string> {
+    const ref = await this.folderRef(folder);
+    if (!ref) throw new Error(`Mail folder "${folder}" not found in ${this.account}`);
+    return ref;
+  }
+
   async listMessages(folder = "inbox", limit = 10): Promise<MailMessage[]> {
+    const ref = await this.requireFolder(folder);
     const h = await this.headers();
-    const url = `${this.base}/mailFolders/${encodeURIComponent(normalizeMailFolder(folder))}/messages?$top=${String(limit)}&$orderby=receivedDateTime desc&$select=id,subject,from,toRecipients,receivedDateTime,bodyPreview,isRead`;
+    const url = `${this.base}/mailFolders/${encodeURIComponent(ref)}/messages?$top=${String(limit)}&$orderby=receivedDateTime desc&$select=id,subject,from,toRecipients,receivedDateTime,bodyPreview,isRead`;
     const res = await fetch(url, { headers: h });
     if (!res.ok) throw new Error(`Graph listMessages: ${String(res.status)} ${await res.text()}`);
     const data = (await res.json()) as { value: GraphMessage[] };
@@ -142,12 +168,16 @@ export class GraphMailConnector implements MailConnector {
   }
 
   async searchMessages(query: string, limit = 10, folder?: string): Promise<MailMessage[]> {
-    const h = await this.headers();
     // `/messages` covers the whole mailbox; a folder's own messages collection
-    // scopes `$search` to that folder.
-    const scope = hasFolder(folder)
-      ? `/mailFolders/${encodeURIComponent(normalizeMailFolder(folder))}`
-      : "";
+    // scopes `$search` to that folder. A folder this mailbox does not have
+    // narrows the search to nothing here rather than failing it.
+    let scope = "";
+    if (hasFolder(folder)) {
+      const ref = await this.folderRef(folder);
+      if (!ref) return [];
+      scope = `/mailFolders/${encodeURIComponent(ref)}`;
+    }
+    const h = await this.headers();
     const url = `${this.base}${scope}/messages?$search="${encodeURIComponent(query)}"&$top=${String(limit)}&$select=id,subject,from,toRecipients,receivedDateTime,bodyPreview,isRead`;
     const res = await fetch(url, { headers: h });
     if (!res.ok) throw new Error(`Graph searchMessages: ${String(res.status)} ${await res.text()}`);
@@ -402,7 +432,7 @@ export class GraphMailConnector implements MailConnector {
     const res = await fetch(`${this.base}/messages/${encodeURIComponent(id)}/move`, {
       method: "POST",
       headers: h,
-      body: JSON.stringify({ destinationId: normalizeMailFolder(folder) }),
+      body: JSON.stringify({ destinationId: await this.requireFolder(folder) }),
     });
     if (!res.ok) throw new Error(`Graph moveMessage: ${String(res.status)} ${await res.text()}`);
   }
