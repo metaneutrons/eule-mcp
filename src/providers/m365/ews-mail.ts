@@ -9,6 +9,7 @@ import type {
   MailAttachment,
   MailSendOpts,
   OutgoingAttachment,
+  SendReceipt,
 } from "../../types/index.js";
 
 const EWS_URL = "https://outlook.office365.com/EWS/Exchange.asmx";
@@ -311,13 +312,13 @@ export class EwsMailConnector implements MailConnector {
     subject: string,
     body: string,
     opts?: MailSendOpts,
-  ): Promise<void> {
+  ): Promise<SendReceipt> {
     // EWS has no way to send a typed Message with attachments in one call, so
     // when attachments are present we save a draft, attach, then send it.
     if (opts?.attachments?.length) {
       const draft = await this.createDraft(to, subject, body, opts);
       await this.sendDraft(draft.id);
-      return;
+      return {};
     }
     const html = assembleHtml(body, this.signature);
     const ccXml = opts?.cc?.length
@@ -339,6 +340,7 @@ export class EwsMailConnector implements MailConnector {
         </t:Message>
       </m:Items>
     </m:CreateItem>`);
+    return {};
   }
 
   /**
@@ -431,7 +433,7 @@ export class EwsMailConnector implements MailConnector {
     return "";
   }
 
-  async sendDraft(id: string): Promise<void> {
+  async sendDraft(id: string): Promise<SendReceipt> {
     await this.post(`
     <m:SendItem SaveItemToFolder="true">
       <m:ItemIds>
@@ -439,9 +441,10 @@ export class EwsMailConnector implements MailConnector {
       </m:ItemIds>
       <m:SavedItemFolderId><t:DistinguishedFolderId Id="sentitems" /></m:SavedItemFolderId>
     </m:SendItem>`);
+    return {};
   }
 
-  async replyToMessage(id: string, body: string, opts?: MailSendOpts): Promise<void> {
+  async replyToMessage(id: string, body: string, opts?: MailSendOpts): Promise<SendReceipt> {
     if (opts?.attachments?.length)
       throw new Error(
         "EWS tier: attachments on reply are not supported — send a new message with attachments, or create a draft.",
@@ -456,6 +459,7 @@ export class EwsMailConnector implements MailConnector {
         </t:ReplyToItem>
       </m:Items>
     </m:CreateItem>`);
+    return {};
   }
 
   async forwardMessage(
@@ -463,7 +467,7 @@ export class EwsMailConnector implements MailConnector {
     to: string[],
     body?: string,
     opts?: MailSendOpts,
-  ): Promise<void> {
+  ): Promise<SendReceipt> {
     if (opts?.attachments?.length)
       throw new Error(
         "EWS tier: attachments on forward are not supported — send a new message with attachments, or create a draft.",
@@ -481,6 +485,7 @@ export class EwsMailConnector implements MailConnector {
         </t:ForwardItem>
       </m:Items>
     </m:CreateItem>`);
+    return {};
   }
 
   async markRead(id: string, isRead: boolean): Promise<void> {

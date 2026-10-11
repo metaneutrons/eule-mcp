@@ -4,6 +4,7 @@ import type {
   MailMessageFull,
   MailSendOpts,
   OutgoingAttachment,
+  SendReceipt,
 } from "../../types/index.js";
 import { fetchWithExecutionContext as fetch } from "../../utils/execution-context.js";
 import { hasFolder, normalizeMailFolder } from "../../utils/mail-folders.js";
@@ -159,13 +160,13 @@ export class GraphMailConnector implements MailConnector {
     subject: string,
     body: string,
     opts?: MailSendOpts,
-  ): Promise<void> {
+  ): Promise<SendReceipt> {
     // The sendMail action can't carry >3MB attachments (they need an upload
     // session against a saved message), so route those via a draft + send.
     if (opts?.attachments?.some(isLargeAttachment)) {
       const draft = await this.createDraft(to, subject, body, opts);
       await this.sendDraft(draft.id);
-      return;
+      return {};
     }
     const h = await this.headers();
     const html = assembleHtml(body, this.signature);
@@ -186,6 +187,7 @@ export class GraphMailConnector implements MailConnector {
       body: JSON.stringify({ message }),
     });
     if (!res.ok) throw new Error(`Graph sendMessage: ${String(res.status)} ${await res.text()}`);
+    return {};
   }
 
   async createDraft(
@@ -289,13 +291,14 @@ export class GraphMailConnector implements MailConnector {
     }
   }
 
-  async sendDraft(id: string): Promise<void> {
+  async sendDraft(id: string): Promise<SendReceipt> {
     const h = await this.headers();
     const res = await fetch(`${this.base}/messages/${encodeURIComponent(id)}/send`, {
       method: "POST",
       headers: h,
     });
     if (!res.ok) throw new Error(`Graph sendDraft: ${String(res.status)} ${await res.text()}`);
+    return {};
   }
 
   /** POST each attachment to an existing draft's attachments collection. */
@@ -319,7 +322,7 @@ export class GraphMailConnector implements MailConnector {
     }
   }
 
-  async replyToMessage(id: string, body: string, opts?: MailSendOpts): Promise<void> {
+  async replyToMessage(id: string, body: string, opts?: MailSendOpts): Promise<SendReceipt> {
     const h = await this.headers();
     // Create reply draft (Graph includes quoted original automatically)
     const r1 = await fetch(`${this.base}/messages/${encodeURIComponent(id)}/createReply`, {
@@ -344,6 +347,7 @@ export class GraphMailConnector implements MailConnector {
       headers: h,
     });
     if (!r3.ok) throw new Error(`Graph sendReply: ${String(r3.status)} ${await r3.text()}`);
+    return {};
   }
 
   async forwardMessage(
@@ -351,7 +355,7 @@ export class GraphMailConnector implements MailConnector {
     to: string[],
     body?: string,
     opts?: MailSendOpts,
-  ): Promise<void> {
+  ): Promise<SendReceipt> {
     const h = await this.headers();
     // Create forward draft (Graph includes original)
     const r1 = await fetch(`${this.base}/messages/${encodeURIComponent(id)}/createForward`, {
@@ -380,6 +384,7 @@ export class GraphMailConnector implements MailConnector {
       headers: h,
     });
     if (!r3.ok) throw new Error(`Graph sendForward: ${String(r3.status)} ${await r3.text()}`);
+    return {};
   }
 
   async markRead(id: string, isRead: boolean): Promise<void> {
