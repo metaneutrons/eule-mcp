@@ -385,6 +385,9 @@ export class ImapMailConnector implements MailConnector {
         const messages: MailMessage[] = [];
         const mailbox = client.mailbox;
         const total = mailbox && typeof mailbox === "object" ? mailbox.exists : 0;
+        // "1:*" on an empty mailbox is an error on some servers (iCloud: NO
+        // "Invalid message number"), so there is nothing to fetch.
+        if (total === 0) return messages;
         const from = Math.max(1, total - limit + 1);
 
         for await (const raw of client.fetch(`${String(from)}:*`, {

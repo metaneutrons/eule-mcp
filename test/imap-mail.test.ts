@@ -267,6 +267,12 @@ describe("ImapMailConnector search scope", () => {
     }
   });
 
+  it("lists an empty mailbox without fetching", async () => {
+    const { client } = account({ INBOX: [] });
+    expect(await connectorWith(client).listMessages("INBOX")).toEqual([]);
+    expect(client.fetch).not.toHaveBeenCalled();
+  });
+
   it("searches only \\All, junk and trash where an \\All mailbox exists", async () => {
     const { client, locked } = account({ "All Mail": [], Spam: [], Bin: [], INBOX: [] }, [
       { path: "INBOX" },
