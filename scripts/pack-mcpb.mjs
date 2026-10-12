@@ -64,7 +64,7 @@ const { values } = parseArgs({
 });
 
 if (!values.helpers) {
-  console.error("Usage: node scripts/pack-mcpb.mjs --helpers <dir> [--all] [--out <dir>]");
+  console.error("Usage: node scripts/pack-mcpb.mjs --helpers DIR [--all] [--out DIR]");
   process.exit(2);
 }
 
@@ -118,8 +118,9 @@ try {
   // The lockfile still lists the devDependencies, so they stay declared for a
   // frozen install and are removed afterwards. No scripts: "prepare" would run
   // lefthook, which is neither installed nor wanted here.
-  const { scripts: _scripts, ...installPkg } = pkg;
-  writeFileSync(join(stage, "package.json"), `${JSON.stringify(installPkg, null, 2)}\n`);
+  const stagedPkg = { ...pkg };
+  delete stagedPkg.scripts;
+  writeFileSync(join(stage, "package.json"), `${JSON.stringify(stagedPkg, null, 2)}\n`);
   run(
     "pnpm",
     [
@@ -132,8 +133,9 @@ try {
     ],
     stage,
   );
-  const { devDependencies: _dev, packageManager: _pm, ...runtimePkg } = installPkg;
-  writeFileSync(join(stage, "package.json"), `${JSON.stringify(runtimePkg, null, 2)}\n`);
+  delete stagedPkg.devDependencies;
+  delete stagedPkg.packageManager;
+  writeFileSync(join(stage, "package.json"), `${JSON.stringify(stagedPkg, null, 2)}\n`);
   rmSync(join(stage, "node_modules", ".bin"), { recursive: true, force: true });
 
   // better-sqlite3 runs from its prebuilds; its sources are only for node-gyp.

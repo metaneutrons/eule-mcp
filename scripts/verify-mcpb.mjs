@@ -20,7 +20,7 @@ const { values, positionals } = parseArgs({
 });
 const bundle = positionals[0] && resolve(positionals[0]);
 if (!bundle) {
-  console.error("Usage: node scripts/verify-mcpb.mjs <bundle.mcpb> [--all]");
+  console.error("Usage: node scripts/verify-mcpb.mjs BUNDLE.mcpb [--all]");
   process.exit(2);
 }
 const TARGETS = ["darwin-universal", "linux-x64", "linux-arm64", "win32-x64", "win32-arm64"];
