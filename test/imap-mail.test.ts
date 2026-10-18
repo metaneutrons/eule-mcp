@@ -488,7 +488,9 @@ describe("ImapMailConnector Sent copy", () => {
   function client(mailboxes: Listing, counts: Record<string, number> = {}) {
     return {
       list: vi.fn(async () => listed(mailboxes)),
-      status: vi.fn(async (path: string) => ({ messages: counts[path] ?? 0 })),
+      status: vi.fn(async (path: string): Promise<{ messages: number } | false> => ({
+        messages: counts[path] ?? 0,
+      })),
       append: vi.fn(async (_mailbox: string, _raw: Buffer, _flags: string[]) => ({ uid: 7 })),
       mailboxOpen: vi.fn(async () => undefined),
       fetchOne: vi.fn(async () => ({ source: Buffer.from("Subject: draft\r\n\r\nbody") })),
@@ -585,6 +587,14 @@ describe("ImapMailConnector Sent copy", () => {
     const { connector } = sending(imap);
     await connector.sendMessage(["to@example.com"], "Hi", "Body");
     expect(imap.append.mock.calls[0]?.[0]).toBe("Gesendet");
+  });
+
+  it("selects a known Sent count when another mailbox rejects STATUS", async () => {
+    const imap = client([{ path: "Gesendet", specialUse: "\\Sent" }, { path: "Sent" }]);
+    imap.status.mockResolvedValueOnce(false).mockResolvedValueOnce({ messages: 12 });
+    const { connector } = sending(imap);
+    await connector.sendMessage(["to@example.com"], "Hi", "Body");
+    expect(imap.append.mock.calls[0]?.[0]).toBe("Sent");
   });
 
   it("files in a configured sentMailbox even where the server flags another", async () => {
