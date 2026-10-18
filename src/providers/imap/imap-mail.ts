@@ -689,7 +689,8 @@ export class ImapMailConnector implements MailConnector {
       const client = await this.connect();
       try {
         const mailbox = await this.specialMailbox(client, "\\Sent");
-        await client.append(mailbox, raw, ["\\Seen"]);
+        const result = await client.append(mailbox, raw, ["\\Seen"]);
+        if (!result) throw new Error("IMAP APPEND did not save the sent copy");
         return {};
       } finally {
         await client.logout();
@@ -776,10 +777,8 @@ export class ImapMailConnector implements MailConnector {
     try {
       const drafts = await this.specialMailbox(client, "\\Drafts");
       const result = await client.append(drafts, Buffer.from(mime), ["\\Draft", "\\Seen"]);
-      const uid =
-        result && typeof result === "object"
-          ? Number((result as unknown as Record<string, unknown>).uid) || 0
-          : 0;
+      if (!result) throw new Error("IMAP APPEND did not create the draft");
+      const uid = Number(result.uid) || 0;
       return {
         id: uid ? formatImapId(drafts, uid) : "",
         account: this.account,

@@ -131,7 +131,7 @@ describe("ImapMailConnector reading", () => {
   it("reports a missing body and releases the mailbox and connection", async () => {
     const imap = client(
       ALTERNATIVE,
-      vi.fn(async () => ({ meta: {}, response: false })),
+      vi.fn(async () => ({})),
     );
     const release = vi.fn();
     imap.getMailboxLock.mockResolvedValue({ release });
@@ -144,7 +144,7 @@ describe("ImapMailConnector reading", () => {
   it("reports a missing attachment and releases the mailbox and connection", async () => {
     const imap = client(
       ALTERNATIVE,
-      vi.fn(async () => ({ meta: {}, response: false })),
+      vi.fn(async () => ({})),
     );
     const release = vi.fn();
     imap.getMailboxLock.mockResolvedValue({ release });

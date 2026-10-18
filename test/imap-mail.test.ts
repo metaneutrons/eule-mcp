@@ -491,7 +491,15 @@ describe("ImapMailConnector Sent copy", () => {
       status: vi.fn(async (path: string): Promise<{ messages: number } | false> => ({
         messages: counts[path] ?? 0,
       })),
-      append: vi.fn(async (_mailbox: string, _raw: Buffer, _flags: string[]) => ({ uid: 7 })),
+      append: vi.fn(
+        async (
+          _mailbox: string,
+          _raw: Buffer,
+          _flags: string[],
+        ): Promise<{ uid: number } | false> => ({
+          uid: 7,
+        }),
+      ),
       mailboxOpen: vi.fn(async () => undefined),
       fetchOne: vi.fn(async () => ({ source: Buffer.from("Subject: draft\r\n\r\nbody") })),
       messageFlagsAdd: vi.fn(async () => undefined),
@@ -632,6 +640,29 @@ describe("ImapMailConnector Sent copy", () => {
 
     expect(sendMail).toHaveBeenCalledOnce();
     expect(receipt.warning).toMatch(/Sent folder: quota exceeded/);
+  });
+
+  it("reports an unsuccessful APPEND as a Sent copy warning", async () => {
+    const imap = client([{ path: "Sent", specialUse: "\\Sent" }]);
+    imap.append.mockResolvedValueOnce(false);
+    const { connector, sendMail } = sending(imap);
+
+    const receipt = await connector.sendMessage(["to@example.com"], "Hi", "Body");
+
+    expect(sendMail).toHaveBeenCalledOnce();
+    expect(receipt.warning).toMatch(/APPEND did not save/);
+    expect(imap.logout).toHaveBeenCalledOnce();
+  });
+
+  it("rejects an unsuccessful draft APPEND instead of returning a successful draft", async () => {
+    const imap = client([{ path: "Drafts", specialUse: "\\Drafts" }]);
+    imap.append.mockResolvedValueOnce(false);
+    const { connector } = sending(imap);
+
+    await expect(connector.createDraft(["to@example.com"], "Hi", "Body")).rejects.toThrow(
+      /APPEND did not create/,
+    );
+    expect(imap.logout).toHaveBeenCalledOnce();
   });
 
   it("files a sent draft in the special-use Sent mailbox, not a literal 'Sent'", async () => {
