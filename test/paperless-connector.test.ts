@@ -280,7 +280,17 @@ describe("Paperless lookup reliability (#78)", () => {
     );
     const paperless = connector();
     await paperless.getDocument(42);
-    await paperless[method]("New");
+    switch (method) {
+      case "createTag":
+        await paperless.createTag("New");
+        break;
+      case "createCorrespondent":
+        await paperless.createCorrespondent("New");
+        break;
+      case "createDocumentType":
+        await paperless.createDocumentType("New");
+        break;
+    }
     await paperless.getDocument(42);
     for (const lookup of Object.keys(lookups)) {
       const gets = fetch.mock.calls.filter(
