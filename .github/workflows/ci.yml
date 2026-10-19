@@ -29,6 +29,8 @@ jobs:
       - run: pnpm run format:check
       - run: pnpm run lint
       - run: pnpm run typecheck
+      # Include build tooling, not just production dependencies.
+      - run: pnpm audit --audit-level=low
 
   test:
     name: Test & build (Node ${{ matrix.node-version }})

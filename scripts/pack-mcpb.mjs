@@ -28,6 +28,7 @@ import {
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
+import { packMcpb } from "./lib/mcpb-archive.mjs";
 
 // Release asset suffixes; the bundle directory names match bundledHelperDir().
 const TARGETS = ["darwin-universal", "linux-x64", "linux-arm64", "win32-x64", "win32-arm64"];
@@ -75,7 +76,6 @@ const sha256 = (path) => createHash("sha256").update(readFileSync(path)).digest(
 // pnpm is a .cmd shim on Windows, which only a shell can start.
 const run = (cmd, args, cwd) =>
   execFileSync(cmd, args, { cwd, stdio: "inherit", shell: process.platform === "win32" });
-const MCPB_CLI = join(repo, "node_modules", "@anthropic-ai", "mcpb", "dist", "cli", "cli.js");
 
 const pkg = JSON.parse(readFileSync(join(repo, "package.json"), "utf8"));
 const manifest = JSON.parse(readFileSync(join(repo, "manifest.json"), "utf8"));
@@ -153,10 +153,7 @@ try {
 
   mkdirSync(outDir, { recursive: true });
   const bundle = join(outDir, "eule-mcp.mcpb");
-  execFileSync(process.execPath, [MCPB_CLI, "pack", stage, bundle], {
-    cwd: repo,
-    stdio: "inherit",
-  });
+  packMcpb(stage, bundle);
   writeFileSync(`${bundle}.sha256`, `${sha256(bundle)}  ${basename(bundle)}\n`);
   console.log(`Packed ${bundle} with helpers for ${helpers.map((h) => h.target).join(", ")}`);
 } finally {
