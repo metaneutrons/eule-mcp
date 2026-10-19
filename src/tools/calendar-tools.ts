@@ -8,18 +8,47 @@ export const calendarDateTimeSchema = z.union([
   z.iso.datetime({ offset: true, local: true }),
   z.iso.datetime({ offset: true, local: true, precision: -1 }),
 ]);
-const renderEvent = (event: CalendarEvent): string => {
+/**
+ * `YYYY-MM-DD` and `HH:MM` in the server's local time zone. Providers report
+ * UTC ("…Z") or offset times; slicing those strings printed UTC wall-clock
+ * times without saying so. Strings without zone stay as they are.
+ */
+export function localParts(iso: string, timeZone?: string): { date: string; time: string } {
+  if (!/(?:Z|[+-]\d{2}:?\d{2})$/i.test(iso))
+    return { date: iso.slice(0, 10), time: iso.slice(11, 16) };
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date(iso));
+  const part = (type: string): string => parts.find((entry) => entry.type === type)?.value ?? "";
+  return {
+    date: `${part("year")}-${part("month")}-${part("day")}`,
+    time: `${part("hour")}:${part("minute")}`,
+  };
+}
+
+export const renderEvent = (event: CalendarEvent, timeZone?: string): string => {
   const location = event.location ? ` 📍 ${event.location}` : "";
-  if (event.isAllDay) return `${event.start.slice(0, 10)} (all day) | ${event.subject}${location}`;
+  const id = event.id ? `\n  ID: ${event.id}` : "";
+  const start = localParts(event.start, timeZone);
+  if (event.isAllDay) return `${start.date} (all day) | ${event.subject}${location}${id}`;
+  const end = localParts(event.end, timeZone);
   const attendees = event.attendees.length ? ` 👥 ${String(event.attendees.length)}` : "";
-  return `${event.start.slice(0, 16).replace("T", " ")}–${event.end.slice(11, 16)} | ${event.subject}${location}${attendees}`;
+  const endText = end.date === start.date ? end.time : `${end.date} ${end.time}`;
+  return `${start.date} ${start.time}–${endText} | ${event.subject}${location}${attendees}${id}`;
 };
 
 export function registerCalendarTools(server: McpServer, calendars: CalendarService): void {
   server.registerTool(
     "calendar_list",
     {
-      description: "List upcoming calendar events",
+      description:
+        "List upcoming calendar events in local time, each with its ID for calendar_update and calendar_delete",
       inputSchema: {
         role: z.string().optional(),
         days: z.number().int().min(1).max(365).optional(),
@@ -34,7 +63,7 @@ export function registerCalendarTools(server: McpServer, calendars: CalendarServ
         const result = await calendars.events(start.toISOString(), end.toISOString(), role);
         return textResult(
           [
-            ...result.events.map(renderEvent),
+            ...result.events.map((event) => renderEvent(event)),
             ...result.failures.map((f) => `⚠️ [${f.account}] ${f.message}`),
           ].join("\n") || "No events found.",
         );
@@ -56,7 +85,7 @@ export function registerCalendarTools(server: McpServer, calendars: CalendarServ
         if (!result.events.length && !result.failures.length)
           return textResult("📅 No events today.");
         return textResult(
-          `📅 Today (${String(result.events.length)} events):\n\n${[...result.events.map(renderEvent), ...result.failures.map((f) => `⚠️ [${f.account}] ${f.message}`)].join("\n")}`,
+          `📅 Today (${String(result.events.length)} events):\n\n${[...result.events.map((event) => renderEvent(event)), ...result.failures.map((f) => `⚠️ [${f.account}] ${f.message}`)].join("\n")}`,
         );
       }),
   );
@@ -101,7 +130,11 @@ export function registerCalendarTools(server: McpServer, calendars: CalendarServ
     async ({ role, account, ...event }) =>
       executeTool("calendar_create", async () => {
         const created = await calendars.create(event, role, account);
-        return textResult(`📅 Event created: ${created.subject} (${created.start.slice(0, 16)})`);
+        return textResult(
+          created.id
+            ? `📅 Event created: ${renderEvent(created)}`
+            : `📅 Event created: ${event.subject} (the provider returned no id)`,
+        );
       }),
   );
   server.registerTool(
