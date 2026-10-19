@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.4](https://github.com/metaneutrons/eule-mcp/compare/v0.10.3...v0.10.4) (2026-10-19)
+
+
+### Bug Fixes
+
+* **build:** remove vulnerable MCPB CLI dependency chain ([#121](https://github.com/metaneutrons/eule-mcp/issues/121)) ([9f0742e](https://github.com/metaneutrons/eule-mcp/commit/9f0742e7a1ad4d062048b20bf06a32a4132d11e0))
+* **calendar:** show local times with ids and surface EWS errors ([#122](https://github.com/metaneutrons/eule-mcp/issues/122)) ([0d1b07a](https://github.com/metaneutrons/eule-mcp/commit/0d1b07aa6cf8c5ad602f9768c001bec76d9f0a0c))
+
 ## [0.10.3](https://github.com/metaneutrons/eule-mcp/compare/v0.10.2...v0.10.3) (2026-10-19)
 
 
