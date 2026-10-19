@@ -46,6 +46,32 @@ function dig(obj: unknown, ...keys: string[]): unknown {
   return current;
 }
 
+/**
+ * EWS reports a failed operation with HTTP 200 and a response message whose
+ * ResponseClass is "Error". Find the first such message anywhere in the reply.
+ */
+export function ewsFailure(node: unknown): { code: string; message: string } | undefined {
+  if (!node || typeof node !== "object") return undefined;
+  if (Array.isArray(node)) {
+    for (const entry of node) {
+      const found = ewsFailure(entry);
+      if (found) return found;
+    }
+    return undefined;
+  }
+  const record = node as Record<string, unknown>;
+  if (record["@_ResponseClass"] === "Error")
+    return {
+      code: str(record.ResponseCode) || "Error",
+      message: str(record.MessageText) || "request failed",
+    };
+  for (const value of Object.values(record)) {
+    const found = ewsFailure(value);
+    if (found) return found;
+  }
+  return undefined;
+}
+
 export class EwsCalendarConnector implements CalendarConnector {
   readonly tier = "ews";
   readonly readOnly = false;
@@ -75,7 +101,10 @@ export class EwsCalendarConnector implements CalendarConnector {
       body: soap(body),
     });
     if (!res.ok) throw new Error(`EWS ${String(res.status)}: ${await res.text()}`);
-    return parser.parse(await res.text());
+    const data: unknown = parser.parse(await res.text());
+    const failure = ewsFailure(data);
+    if (failure) throw new Error(`EWS ${failure.code}: ${failure.message}`);
+    return data;
   }
 
   async listCalendars(): Promise<CalendarInfo[]> {
@@ -169,6 +198,35 @@ export class EwsCalendarConnector implements CalendarConnector {
     };
   }
 
+  /**
+   * Current ChangeKey of an item. Exchange refuses to update a calendar item
+   * that may send meeting messages without one
+   * (ErrorChangeKeyRequiredForWriteOperations).
+   */
+  private async changeKey(id: string): Promise<string> {
+    const data = await this.post(`
+    <m:GetItem>
+      <m:ItemShape><t:BaseShape>IdOnly</t:BaseShape></m:ItemShape>
+      <m:ItemIds><t:ItemId Id="${escapeXml(id)}"/></m:ItemIds>
+    </m:GetItem>`);
+    const items = dig(
+      data,
+      "Envelope",
+      "Body",
+      "GetItemResponse",
+      "ResponseMessages",
+      "GetItemResponseMessage",
+      "Items",
+    ) as Record<string, unknown> | undefined;
+    // The parser yields an array for CalendarItem; other item types (a meeting
+    // request in the calendar) arrive under their own element name.
+    const found = items?.CalendarItem ?? Object.values(items ?? {})[0];
+    const item = (Array.isArray(found) ? found[0] : found) as Record<string, unknown> | undefined;
+    const key = str(dig(item, "ItemId", "@_ChangeKey"));
+    if (!key) throw new Error(`Calendar item ${id} not found`);
+    return key;
+  }
+
   async updateEvent(id: string, updates: Partial<CalendarEventInput>): Promise<CalendarEvent> {
     const fields: string[] = [];
     if (updates.subject)
@@ -192,7 +250,7 @@ export class EwsCalendarConnector implements CalendarConnector {
     <m:UpdateItem ConflictResolution="AutoResolve" SendMeetingInvitationsOrCancellations="SendToAllAndSaveCopy">
       <m:ItemChanges>
         <t:ItemChange>
-          <t:ItemId Id="${escapeXml(id)}"/>
+          <t:ItemId Id="${escapeXml(id)}" ChangeKey="${escapeXml(await this.changeKey(id))}"/>
           <t:Updates>${fields.join("")}</t:Updates>
         </t:ItemChange>
       </m:ItemChanges>
