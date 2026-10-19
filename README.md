@@ -770,6 +770,12 @@ then packs `eule-mcp.mcpb` (`scripts/pack-mcpb.mjs`), starts it on each of the
 five platforms (`scripts/verify-mcpb.mjs`), and only then attaches it with its
 `.sha256` and a provenance attestation.
 
+The packer uses `fflate` for ZIP archives and validates the manifest against the
+vendored official MCPB 0.3 JSON schema with Ajv. It does not install the full
+interactive MCPB CLI or its signing dependencies. Schema provenance, license and
+update instructions are in [`scripts/vendor/mcpb/README.md`](scripts/vendor/mcpb/README.md).
+CI audits both runtime and build dependencies; no npm vulnerability exceptions are configured.
+
 To pack the extension locally, put release helpers named like the release
 assets (`eule-helper-darwin-universal`, …) into a directory; missing platforms
 are skipped:
