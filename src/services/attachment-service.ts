@@ -38,7 +38,7 @@ export class AttachmentService {
       return { kind: "image", data: data.toString("base64"), mimeType };
     }
     if (input.mode === "text") {
-      const extracted = extractAttachmentText(data, input.name);
+      const extracted = await extractAttachmentText(data, input.name);
       const text =
         extracted.text.length > MAX_TEXT_CHARS
           ? `${extracted.text.slice(0, MAX_TEXT_CHARS)}\n\n…[truncated]`

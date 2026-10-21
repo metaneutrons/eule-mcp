@@ -157,8 +157,12 @@ one writable Paperless instance.
 
 > **Attachments.** Outgoing files are read from `~/Downloads`, `~/Documents`, or
 > `~/Desktop` only (never `~/.eule`), capped at 25 MB. `mail_attachment_get`'s
-> `mode` selects `save` (default), `text` (PDF/Office → Markdown via
-> pymupdf4llm/pandoc), or `inline` (return an image so the model can see it).
+> `mode` selects `save` (default), `text`, or `inline` (return an image so the
+> model can see it). `text` needs nothing installed: PDFs are read with unpdf
+> (pdf.js) and DOCX with a built-in reader. When pandoc is installed it handles
+> DOCX and the other office formats (PPTX, ODT, EPUB, RTF, HTML) for richer
+> Markdown; without it those formats report that pandoc is missing. A scanned
+> PDF without a text layer is reported as such.
 > Saved downloads may additionally use a `~/.eule` subdirectory or the
 > platform temporary directory (`/tmp` on POSIX, `%TEMP%` on Windows).
 > Attachments on **reply/forward** are supported on Graph, Gmail and IMAP; on the
@@ -280,7 +284,7 @@ report an error, not an empty search.
 |---|---|
 | `doc_search` | Full-text search across documents (Paperless-NGX) |
 | `doc_list` | List recent documents with metadata |
-| `doc_read` | Read document metadata and content (OCR text or Markdown via pymupdf4llm) |
+| `doc_read` | Read document metadata and content (OCR text, or the PDF text via unpdf) |
 | `doc_download` | Download a document file |
 | `doc_upload` | Upload a document (with title, tags, correspondent, type) |
 | `doc_tag` | Update document metadata (title, tags, correspondent, type) |
