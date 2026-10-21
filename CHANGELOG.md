@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.0](https://github.com/metaneutrons/eule-mcp/compare/v0.11.0...v0.12.0) (2026-10-21)
+
+
+### Features
+
+* **attachments:** extract PDF and DOCX text without external programs ([#126](https://github.com/metaneutrons/eule-mcp/issues/126)) ([4b98796](https://github.com/metaneutrons/eule-mcp/commit/4b987968d3af7eddde59d6c4cff2e77d3f393a96))
+
 ## [0.11.0](https://github.com/metaneutrons/eule-mcp/compare/v0.10.4...v0.11.0) (2026-10-21)
 
 
