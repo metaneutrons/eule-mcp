@@ -19,8 +19,13 @@ vi.mock("node:fs", () => ({
   chmodSync: () => undefined,
 }));
 
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { ConfigManager } from "../src/config/config-manager.js";
+import { logger } from "../src/utils/logger.js";
 import type { ConnectorConfig } from "../src/types/index.js";
+
+const CONFIG_PATH = join(homedir(), ".eule", "config.yaml");
 
 describe("ConfigManager mutations (backing the MCP config tools)", () => {
   beforeEach(() => {
@@ -161,5 +166,118 @@ describe("ConfigManager mutations (backing the MCP config tools)", () => {
     cm.removeRole("r");
     expect(cm.get().roles).toHaveLength(0);
     expect(() => cm.removeRole("r")).toThrow(/not found/);
+  });
+});
+
+describe("ConfigManager picks up changes made outside the process", () => {
+  beforeEach(() => {
+    files = {};
+    vi.restoreAllMocks();
+  });
+
+  const work = { id: "work", name: "Work", weeklyHours: 0, contexts: [], connectors: {} };
+
+  it("reads an edit of config.yaml on the next get()", () => {
+    const cm = new ConfigManager();
+    cm.addRole(work);
+    const before = cm.revision;
+    files[CONFIG_PATH] = (files[CONFIG_PATH] ?? "").replace("name: Work", "name: Edited");
+    expect(cm.get().roles[0]?.name).toBe("Edited");
+    expect(cm.revision).not.toBe(before);
+  });
+
+  it("keeps the last good configuration for an invalid edit and reports it once", () => {
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    const cm = new ConfigManager();
+    cm.addRole(work);
+    const good = files[CONFIG_PATH] ?? "";
+    files[CONFIG_PATH] = "roles: not-a-list\n";
+    expect(cm.get().roles).toHaveLength(1);
+    expect(cm.get().roles).toHaveLength(1);
+    expect(warn).toHaveBeenCalledOnce();
+    files[CONFIG_PATH] = good.replace("name: Work", "name: Fixed");
+    expect(cm.get().roles[0]?.name).toBe("Fixed");
+  });
+
+  it("does not recreate a config file that was deleted", () => {
+    const cm = new ConfigManager();
+    cm.addRole(work);
+    delete files[CONFIG_PATH];
+    expect(cm.get().roles).toHaveLength(1);
+    expect(CONFIG_PATH in files).toBe(false);
+  });
+
+  it("does not take its own writes for outside changes", () => {
+    const cm = new ConfigManager();
+    cm.addRole(work);
+    const revision = cm.revision;
+    cm.get();
+    cm.get();
+    expect(cm.revision).toBe(revision);
+  });
+});
+
+describe("ConfigManager role signature, general settings and extra scopes", () => {
+  beforeEach(() => {
+    files = {};
+  });
+
+  it("writes a signature file reference back as the reference, not as its content", () => {
+    const cm = new ConfigManager();
+    cm.addRole({
+      id: "work",
+      name: "Work",
+      weeklyHours: 0,
+      contexts: [],
+      connectors: {},
+      signature: "~/.eule/signatures/work.html",
+      displayName: "Fabian",
+    });
+    cm.setOAuth({ tenant: "organizations" });
+    const reloaded = new ConfigManager().get().roles[0];
+    expect(reloaded?.signature).toBe("~/.eule/signatures/work.html");
+    expect(reloaded?.displayName).toBe("Fabian");
+  });
+
+  it("removes signature and display name from config.yaml when they are cleared", () => {
+    const cm = new ConfigManager();
+    cm.addRole({
+      id: "work",
+      name: "Work",
+      weeklyHours: 0,
+      contexts: [],
+      connectors: {},
+      signature: "<p>Fabian</p>",
+      displayName: "Fabian",
+    });
+    cm.updateRole("work", { signature: undefined, displayName: undefined });
+    expect(files[CONFIG_PATH]).not.toContain("signature");
+    expect(files[CONFIG_PATH]).not.toContain("displayName");
+    expect(new ConfigManager().get().roles[0]?.signature).toBeUndefined();
+  });
+
+  it("setGeneral changes language and update check independently", () => {
+    const cm = new ConfigManager();
+    cm.setGeneral({ language: "en" });
+    expect(cm.get().language).toBe("en");
+    expect(cm.get().updates).toBeUndefined();
+    cm.setGeneral({ updatesCheck: false });
+    const reloaded = new ConfigManager().get();
+    expect(reloaded.language).toBe("en");
+    expect(reloaded.updates).toEqual({ check: false });
+    cm.setGeneral({ updatesCheck: true });
+    expect(new ConfigManager().get().updates).toEqual({ check: true });
+  });
+
+  it("setOAuth sets, keeps and clears extraScopes", () => {
+    const cm = new ConfigManager();
+    cm.setOAuth({ extraScopes: ["https://graph.microsoft.com/Tasks.ReadWrite"] });
+    expect(new ConfigManager().get().oauth.extraScopes).toEqual([
+      "https://graph.microsoft.com/Tasks.ReadWrite",
+    ]);
+    cm.setOAuth({ tenant: "organizations" });
+    expect(cm.get().oauth.extraScopes).toHaveLength(1);
+    cm.setOAuth({ extraScopes: null });
+    expect(new ConfigManager().get().oauth.extraScopes).toBeUndefined();
   });
 });

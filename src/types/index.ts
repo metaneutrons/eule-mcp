@@ -2,6 +2,7 @@ export type {
   AppConfig,
   OAuthConfig,
   OAuthConfigPatch,
+  GeneralConfigPatch,
   GoogleOAuthConfig,
   ResolvedGoogleOAuthConfig,
   AutoAuthConfig,

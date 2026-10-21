@@ -10,6 +10,7 @@ import type {
   ConnectorConfig,
 } from "../types/index.js";
 import type { ConfigManager } from "../config/index.js";
+import { resolveSignature } from "../config/index.js";
 import type { M365Reauth } from "../auth/m365-reauth.js";
 import type { OAuthConfig } from "../types/index.js";
 import { logger } from "../utils/logger.js";
@@ -92,7 +93,7 @@ export class ConnectorRegistry {
     const roles = this.policy.select(role, "mail", mode);
 
     for (const r of roles) {
-      const sig = r.signature;
+      const sig = resolveSignature(r.signature);
       const startIdx = connectors.length;
       for (const mc of r.connectors.mail ?? []) {
         if (mc.type === "imap") {
@@ -217,7 +218,7 @@ export class ConnectorRegistry {
       const gcfg = this.secrets.googleOAuth();
       if (!gcfg) return undefined;
       const c = new GoogleMailConnector(mc.account, () => getGoogleAccessToken(mc.account, gcfg));
-      c.signature = r.signature;
+      c.signature = resolveSignature(r.signature);
       c.displayName = r.displayName;
       return c;
     }
