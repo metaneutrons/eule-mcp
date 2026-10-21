@@ -12,6 +12,13 @@ export {
   TOTP_CREDENTIAL_REF_PATTERN,
 } from "./credential-references.js";
 export { RolePolicyService } from "./role-policy.js";
+export {
+  SIGNATURE_MAX_LENGTH,
+  assertSignatureAllowed,
+  describeSignature,
+  isSignatureFile,
+  resolveSignature,
+} from "./signature.js";
 export type { AccessMode } from "./role-policy.js";
 export {
   CONNECTOR_KINDS,

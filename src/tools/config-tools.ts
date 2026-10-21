@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { CONNECTOR_KINDS } from "../config/index.js";
+import { CONNECTOR_KINDS, SIGNATURE_MAX_LENGTH, describeSignature } from "../config/index.js";
 import type { ConfigService } from "../services/config-service.js";
 import { executeTool, textResult } from "./tool-runtime.js";
 
@@ -25,6 +25,8 @@ export function registerConfigTools(server: McpServer, config: ConfigService): v
             `  Policy: ${role.policy?.enabled === false ? "disabled" : role.policy?.readOnly ? "read-only" : "read/write"}`,
           );
           if (role.contexts?.length) lines.push(`  Contexts: ${role.contexts.join(", ")}`);
+          if (role.displayName) lines.push(`  Display name: ${role.displayName}`);
+          lines.push(`  Signature: ${describeSignature(role.signature)}`);
           if (format === "detailed")
             for (const kind of CONNECTOR_KINDS)
               for (const connector of role.connectors[kind] ?? [])
@@ -49,7 +51,8 @@ export function registerConfigTools(server: McpServer, config: ConfigService): v
         const current = config.get();
         const lines = [
           `language: ${current.language}`,
-          `oauth: clientId=${current.oauth.clientId} tenant=${current.oauth.tenant} apiVersion=${current.oauth.apiVersion ?? "v2"} redirectUri=${current.oauth.redirectUri ?? "—"}`,
+          `updates: check=${current.updates?.check === false ? "off" : "on"}`,
+          `oauth: clientId=${current.oauth.clientId} tenant=${current.oauth.tenant} apiVersion=${current.oauth.apiVersion ?? "v2"} redirectUri=${current.oauth.redirectUri ?? "—"} extraScopes=${current.oauth.extraScopes?.join(",") ?? "—"}`,
           `google: ${current.google ? `configured (clientSecret=${current.google.clientSecret || current.google.clientSecretRef ? "set" : "—"})` : "—"}`,
           `autoAuth (${String(current.autoAuth?.length ?? 0)}):`,
           ...(current.autoAuth ?? []).map(
@@ -59,7 +62,9 @@ export function registerConfigTools(server: McpServer, config: ConfigService): v
           `roles (${String(current.roles.length)}):`,
         ];
         for (const role of current.roles) {
-          lines.push(`  ${role.id}: ${role.name} (${String(role.weeklyHours)}h)`);
+          lines.push(
+            `  ${role.id}: ${role.name} (${String(role.weeklyHours)}h) displayName=${role.displayName ?? "—"} signature=${describeSignature(role.signature)}`,
+          );
           for (const kind of CONNECTOR_KINDS)
             for (const connector of role.connectors[kind] ?? [])
               lines.push(
@@ -82,6 +87,20 @@ export function registerConfigTools(server: McpServer, config: ConfigService): v
         enabled: z.boolean().optional().describe("Enable or disable all access through this role"),
         readOnly: z.boolean().optional().describe("Deny every mutating connector operation"),
         allowedConnectorKinds: z.array(z.enum(CONNECTOR_KINDS)).optional(),
+        signature: z
+          .string()
+          .max(SIGNATURE_MAX_LENGTH)
+          .nullable()
+          .optional()
+          .describe(
+            "HTML appended to every outgoing mail of this role, or the path of a .html file below ~/.eule (read at send time). null or an empty string removes it",
+          ),
+        displayName: z
+          .string()
+          .max(200)
+          .nullable()
+          .optional()
+          .describe("Sender display name for outgoing mail of this role. null removes it"),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
     },
@@ -148,7 +167,7 @@ export function registerConfigTools(server: McpServer, config: ConfigService): v
     "config_set_oauth",
     {
       description:
-        "Set the public M365 OAuth client, tenant, endpoint generation, or registered webview redirect. [WRITES config.yaml]",
+        "Set the public M365 OAuth client, tenant, endpoint generation, registered webview redirect, or extra scopes. [WRITES config.yaml]",
       inputSchema: {
         clientId: z.string().optional(),
         tenant: z.string().optional(),
@@ -160,6 +179,13 @@ export function registerConfigTools(server: McpServer, config: ConfigService): v
           .describe(
             "Broker/custom redirect registered for this M365 public client; null removes it",
           ),
+        extraScopes: z
+          .array(z.string().trim().min(1))
+          .nullable()
+          .optional()
+          .describe(
+            "Extra v2 scopes appended to the tier defaults, e.g. https://graph.microsoft.com/Tasks.ReadWrite; replaces the list, null removes it. The client's app registration must grant them, otherwise every login fails",
+          ),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
     },
@@ -167,6 +193,29 @@ export function registerConfigTools(server: McpServer, config: ConfigService): v
       executeTool("config_set_oauth", () => {
         config.setOAuth(input);
         return textResult("✅ Updated oauth settings.");
+      }),
+  );
+
+  server.registerTool(
+    "config_set_general",
+    {
+      description:
+        "Set the interface language (de or en) and switch the daily check for a newer Eule release on or off. [WRITES config.yaml]",
+      inputSchema: {
+        language: z.enum(["de", "en"]).optional(),
+        updatesCheck: z
+          .boolean()
+          .optional()
+          .describe("Check GitHub for a newer release at most once a day"),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+    },
+    async (input) =>
+      executeTool("config_set_general", () => {
+        if (input.language === undefined && input.updatesCheck === undefined)
+          throw new Error("Give language and/or updatesCheck.");
+        config.setGeneral(input);
+        return textResult("✅ Updated general settings.");
       }),
   );
 }

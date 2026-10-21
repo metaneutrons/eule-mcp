@@ -16,12 +16,14 @@ import type {
   AppConfig,
   OAuthConfig,
   OAuthConfigPatch,
+  GeneralConfigPatch,
   GoogleOAuthConfig,
   RoleConfig,
   ConnectorConfig,
   YubikeyTotpConfig,
 } from "../types/index.js";
 import { parseAppConfig } from "./schema.js";
+import { logger } from "../utils/logger.js";
 
 const EULE_DIR = join(homedir(), ".eule");
 const CONFIG_PATH = join(EULE_DIR, "config.yaml");
@@ -68,48 +70,36 @@ function ensureDirectories(): void {
 
 /** Validates a loaded config object. Throws on invalid structure. */
 function validate(raw: unknown): AppConfig {
-  const parsed = parseAppConfig(raw);
-  return {
-    ...parsed,
-    roles: parsed.roles.map((role) => ({
-      ...role,
-      signature: role.signature ? resolveSignature(role.signature) : undefined,
-    })),
-  };
-}
-
-/** If value looks like a file path and exists, read it; otherwise treat as inline HTML. */
-function resolveSignature(value: string): string {
-  const expanded = value.startsWith("~") ? join(homedir(), value.slice(1)) : value;
-  if ((expanded.endsWith(".html") || expanded.endsWith(".htm")) && existsSync(expanded)) {
-    return readFileSync(expanded, "utf-8");
-  }
-  return value;
+  return parseAppConfig(raw);
 }
 
 export class ConfigManager {
   private config: AppConfig;
   private generation = 0;
+  /** Digest of config.yaml as last loaded or written by this process. */
+  private loadedDigest = "missing";
+  /** Digest of an invalid file already reported, so it is logged once. */
+  private rejectedDigest: string | undefined;
 
   constructor() {
     ensureDirectories();
     this.config = this.load();
   }
 
-  /** Returns the current config (immutable snapshot). */
+  /**
+   * Returns the current config (immutable snapshot). A change made to
+   * config.yaml by someone else (an editor, the CLI wizard, another Eule
+   * process) is picked up here; an invalid edit is reported once and the last
+   * good configuration stays in force.
+   */
   get(): AppConfig {
+    this.refreshFromDisk();
     return this.config;
   }
 
   /** Monotonic in-process revision used to reject stale interactive writes. */
   get revision(): string {
-    let diskDigest = "missing";
-    try {
-      diskDigest = createHash("sha256").update(readFileSync(CONFIG_PATH)).digest("hex");
-    } catch {
-      // A missing file is still a stable revision state.
-    }
-    return `${String(this.generation)}:${diskDigest}`;
+    return `${String(this.generation)}:${this.diskDigest()}`;
   }
 
   /** Returns the ~/.eule base directory path. */
@@ -144,6 +134,7 @@ export class ConfigManager {
       renameSync(temporaryPath, CONFIG_PATH);
       this.config = validated;
       this.generation++;
+      this.loadedDigest = this.diskDigest();
     } catch (error) {
       try {
         rmSync(temporaryPath, { force: true });
@@ -299,13 +290,24 @@ export class ConfigManager {
       ...(patch.tenant !== undefined ? { tenant: patch.tenant } : {}),
       ...(patch.apiVersion !== undefined ? { apiVersion: patch.apiVersion } : {}),
       ...(typeof patch.redirectUri === "string" ? { redirectUri: patch.redirectUri } : {}),
+      ...(Array.isArray(patch.extraScopes) ? { extraScopes: patch.extraScopes } : {}),
     };
     const oauth: OAuthConfig = {
       ...this.config.oauth,
       ...definedPatch,
       ...(patch.redirectUri === null ? { redirectUri: undefined } : {}),
+      ...(patch.extraScopes === null ? { extraScopes: undefined } : {}),
     };
     this.save({ ...this.config, oauth });
+  }
+
+  /** Patch the language and the daily update check. Structural only. */
+  setGeneral(patch: GeneralConfigPatch): void {
+    this.save({
+      ...this.config,
+      ...(patch.language !== undefined ? { language: patch.language } : {}),
+      ...(patch.updatesCheck !== undefined ? { updates: { check: patch.updatesCheck } } : {}),
+    });
   }
 
   /** Append a connector to a role. Rejects a duplicate id. */
@@ -352,7 +354,36 @@ export class ConfigManager {
       this.save(DEFAULT_CONFIG);
       return DEFAULT_CONFIG;
     }
-    const raw = yaml.load(readFileSync(CONFIG_PATH, "utf-8"));
-    return validate(raw);
+    const text = readFileSync(CONFIG_PATH, "utf-8");
+    const loaded = validate(yaml.load(text));
+    this.loadedDigest = createHash("sha256").update(text).digest("hex");
+    return loaded;
+  }
+
+  private diskDigest(): string {
+    try {
+      return createHash("sha256").update(readFileSync(CONFIG_PATH)).digest("hex");
+    } catch {
+      // A missing file is still a stable revision state.
+      return "missing";
+    }
+  }
+
+  private refreshFromDisk(): void {
+    const digest = this.diskDigest();
+    // A deleted file keeps the running configuration; load() would recreate defaults.
+    if (digest === this.loadedDigest || digest === "missing") return;
+    try {
+      this.config = this.load();
+      this.generation++;
+      this.rejectedDigest = undefined;
+    } catch (error) {
+      if (this.rejectedDigest !== digest) {
+        this.rejectedDigest = digest;
+        logger.warn(
+          `config.yaml changed on disk but is invalid, keeping the previous configuration: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
   }
 }

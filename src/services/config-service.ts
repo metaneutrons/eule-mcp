@@ -1,8 +1,17 @@
 import { CONNECTOR_KINDS } from "../config/schema.js";
+import { assertSignatureAllowed } from "../config/signature.js";
 import type { ConfigManager } from "../config/config-manager.js";
-import type { AppConfig, ConnectorKind, OAuthConfigPatch, RoleConfig } from "../types/index.js";
+import type {
+  AppConfig,
+  ConnectorKind,
+  GeneralConfigPatch,
+  OAuthConfigPatch,
+  RoleConfig,
+} from "../types/index.js";
 import { deleteCredential } from "../helper/credential-store.js";
 import { logger } from "../utils/logger.js";
+
+const isBlank = (value: string | null): value is null | "" => value === null || value.trim() === "";
 
 export interface RoleUpsertInput {
   readonly id: string;
@@ -12,6 +21,10 @@ export interface RoleUpsertInput {
   readonly enabled?: boolean;
   readonly readOnly?: boolean;
   readonly allowedConnectorKinds?: readonly ConnectorKind[];
+  /** HTML appended to outgoing mail, or a `.html` file below ~/.eule. `null` removes it. */
+  readonly signature?: string | null;
+  /** Sender display name for outgoing mail. `null` removes it. */
+  readonly displayName?: string | null;
 }
 
 export interface AccountBinding {
@@ -47,12 +60,26 @@ export class ConfigService {
           }
         : undefined;
 
+    // An empty value clears like null does: a model rarely tells them apart.
+    const signature =
+      input.signature === undefined ? undefined : isBlank(input.signature) ? null : input.signature;
+    const displayName =
+      input.displayName === undefined
+        ? undefined
+        : isBlank(input.displayName)
+          ? null
+          : input.displayName.trim();
+    if (typeof signature === "string") assertSignatureAllowed(signature);
+
     if (existing) {
       this.config.updateRole(input.id, {
         ...(input.name !== undefined ? { name: input.name } : {}),
         ...(input.weeklyHours !== undefined ? { weeklyHours: input.weeklyHours } : {}),
         ...(input.contexts !== undefined ? { contexts: input.contexts } : {}),
         ...(policy ? { policy } : {}),
+        // Explicit undefined replaces the stored value, so the key leaves config.yaml.
+        ...(signature !== undefined ? { signature: signature ?? undefined } : {}),
+        ...(displayName !== undefined ? { displayName: displayName ?? undefined } : {}),
       });
       return "updated";
     }
@@ -64,6 +91,8 @@ export class ConfigService {
       contexts: input.contexts ?? [],
       connectors: {},
       ...(policy ? { policy } : {}),
+      ...(typeof signature === "string" ? { signature } : {}),
+      ...(typeof displayName === "string" ? { displayName } : {}),
     };
     this.config.addRole(role);
     return "created";
@@ -114,6 +143,10 @@ export class ConfigService {
 
   setOAuth(patch: OAuthConfigPatch): void {
     this.config.setOAuth(patch);
+  }
+
+  setGeneral(patch: GeneralConfigPatch): void {
+    this.config.setGeneral(patch);
   }
 
   private tryRemoveCredential(reference: string): void {

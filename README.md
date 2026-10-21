@@ -76,7 +76,7 @@ Eule is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) serve
 | `auth_accounts` | List token health without exposing credentials |
 | `auth_logout` | Remove locally stored tokens for an account |
 
-### 👤 Roles, accounts & configuration (19)
+### 👤 Roles, accounts & configuration (20)
 
 Eule can be configured end-to-end by an LLM without the user editing YAML.
 **No MCP tool accepts a secret**: a write that needs a password, API token,
@@ -89,14 +89,15 @@ committed to `config.yaml`.
 |---|---|
 | `role_list` | List all configured roles with connectors and weekly hours |
 | `account_list` | SSOT inventory of accounts and every role/connector binding |
-| `config_get` | Full config (roles, connectors, oauth, autoAuth) — secrets redacted |
-| `role_upsert` | Create/update a role's metadata `[WRITES]` |
+| `config_get` | Full config (roles, connectors, oauth, autoAuth, updates, signatures) — secrets redacted |
+| `role_upsert` | Create/update a role's metadata, policy, mail signature and sender display name `[WRITES]` |
 | `role_remove` | Remove a role and its connectors `[WRITES]` |
 | `connector_capabilities` | Discover valid connector/domain combinations, fields, credential mode, and next step |
 | `connector_configure` | Create/update a connector; capture any required secret locally `[WRITES]` |
 | `account_add` | Deprecated compatibility alias for `connector_configure` `[WRITES]` |
 | `account_remove` | Remove a connector from a role `[WRITES]` |
-| `config_set_oauth` | Set the M365 client id / tenant / API version / webview redirect `[WRITES]` |
+| `config_set_oauth` | Set the M365 client id / tenant / API version / webview redirect / extra scopes `[WRITES]` |
+| `config_set_general` | Set the language (`de`/`en`) and the daily update check `[WRITES]` |
 | `credential_status` | Report configured/missing/unavailable bindings without exposing values |
 | `credential_rotate` | Atomically rotate a connector password or token `[WRITES]` |
 | `google_oauth_configure` | Set the client id and capture the Google client secret locally `[WRITES]` |
@@ -113,6 +114,18 @@ registry, including account-specific routing, so a disabled/read-only context
 cannot be bypassed by selecting an account directly. These are work-context
 policies; stdio transport does not authenticate distinct human callers and is
 therefore not a substitute for multi-user RBAC.
+
+A role can carry a `signature` (HTML appended to every mail written through
+that role) and a `displayName` for the sender. `role_upsert` sets both and
+`null` removes them. The signature is inline HTML or the path of a `.html` file
+below `~/.eule/` (symbolic links are resolved before that check, at most 20,000
+characters). A file is read whenever a mail is built, so editing it needs no
+restart. `config_get` and `role_list` show where a signature comes from, never
+its content. Inline images are not embedded; use text or a link to an image you
+host.
+
+Manual edits of `config.yaml` are picked up on the next tool call. An invalid
+edit is logged once and the previous configuration stays in force.
 
 Writes never pick an account on their own. `mail_send`, `mail_draft`,
 `calendar_create`, `calendar_update`, `calendar_delete`, `task_add` and

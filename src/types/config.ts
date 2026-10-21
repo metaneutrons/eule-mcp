@@ -123,6 +123,14 @@ export interface OAuthConfigPatch {
   readonly apiVersion?: "v1" | "v2";
   /** `null` removes a previously configured webview redirect. */
   readonly redirectUri?: string | null;
+  /** Replaces the extra v2 scopes; `null` removes them. */
+  readonly extraScopes?: readonly string[] | null;
+}
+
+/** Partial update of the language and the update check. */
+export interface GeneralConfigPatch {
+  readonly language?: "de" | "en";
+  readonly updatesCheck?: boolean;
 }
 
 export interface GoogleOAuthConfig {
