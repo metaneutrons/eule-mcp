@@ -1,10 +1,9 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
-import { tmpdir } from "node:os";
-import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { basename } from "node:path";
 import type { AccessMode } from "../config/index.js";
 import type { ConnectorRegistry } from "../connectors/index.js";
 import type { DocBulkMethod, DocDocument, DocumentConnector } from "../types/index.js";
+import { pdfToText } from "../utils/document-text.js";
 import { securePath, secureReadPath } from "../utils/path-sandbox.js";
 import { collectProviderResults } from "./provider-orchestration.js";
 
@@ -51,18 +50,7 @@ export class DocumentService {
   }
   async readMarkdown(id: number, role?: string): Promise<string> {
     const connector = this.connectors(role)[0];
-    const directory = mkdtempSync(join(tmpdir(), "eule-doc-"));
-    const source = join(directory, `${String(id)}.pdf`);
-    try {
-      writeFileSync(source, await connector.downloadDocument(id));
-      return execFileSync(
-        "python3",
-        ["-c", "import pymupdf4llm,sys; print(pymupdf4llm.to_markdown(sys.argv[1]))", source],
-        { maxBuffer: 10 * 1024 * 1024 },
-      ).toString();
-    } finally {
-      rmSync(directory, { recursive: true, force: true });
-    }
+    return pdfToText(await connector.downloadDocument(id));
   }
   async download(id: number, role?: string, original?: boolean, savePath?: string) {
     const c = this.connectors(role)[0];
