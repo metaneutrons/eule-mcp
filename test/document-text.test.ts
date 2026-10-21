@@ -65,14 +65,14 @@ describe("pdfToText", () => {
 
 describe("docxToText", () => {
   it("keeps headings, list items, paragraphs and tables", () => {
-    const body = [
-      `<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr>${run("Angebot")}</w:p>`,
-      `<w:p>${run("Sehr geehrte ")}${run("Damen &amp; Herren,")}</w:p>`,
-      `<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/></w:numPr></w:pPr>${run("Punkt eins")}</w:p>`,
-      `<w:tbl><w:tr><w:tc><w:p>${run("Pos.")}</w:p></w:tc><w:tc><w:p>${run("Betrag")}</w:p></w:tc></w:tr>`,
-      `<w:tr><w:tc><w:p>${run("1")}</w:p></w:tc><w:tc><w:p>${run("500,00 €")}</w:p></w:tc></w:tr></w:tbl>`,
-      `<w:p>${run("Zeile")}<w:r><w:br/></w:r>${run("Umbruch")}<w:r><w:tab/></w:r>${run("Tab")}</w:p>`,
-    ].join("");
+    // A fixed WordprocessingML body: heading, paragraph runs, list item, table, break and tab.
+    const body =
+      '<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t xml:space="preserve">Angebot</w:t></w:r></w:p>' +
+      '<w:p><w:r><w:t xml:space="preserve">Sehr geehrte </w:t></w:r><w:r><w:t xml:space="preserve">Damen &amp; Herren,</w:t></w:r></w:p>' +
+      '<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/></w:numPr></w:pPr><w:r><w:t xml:space="preserve">Punkt eins</w:t></w:r></w:p>' +
+      '<w:tbl><w:tr><w:tc><w:p><w:r><w:t xml:space="preserve">Pos.</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t xml:space="preserve">Betrag</w:t></w:r></w:p></w:tc></w:tr>' +
+      '<w:tr><w:tc><w:p><w:r><w:t xml:space="preserve">1</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t xml:space="preserve">500,00 €</w:t></w:r></w:p></w:tc></w:tr></w:tbl>' +
+      '<w:p><w:r><w:t xml:space="preserve">Zeile</w:t></w:r><w:r><w:br/></w:r><w:r><w:t xml:space="preserve">Umbruch</w:t></w:r><w:r><w:tab/></w:r><w:r><w:t xml:space="preserve">Tab</w:t></w:r></w:p>';
     expect(docxToText(docx(body))).toBe(
       [
         "# Angebot",
