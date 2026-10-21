@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.11.0](https://github.com/metaneutrons/eule-mcp/compare/v0.10.4...v0.11.0) (2026-10-21)
+
+
+### Features
+
+* **config:** set role signature, display name and general settings through tools ([065189e](https://github.com/metaneutrons/eule-mcp/commit/065189e237a5224094d99c501072307020d68f6d))
+
+
+### Bug Fixes
+
+* **deps:** update webpki-roots and rustls-webpki in the helper ([065189e](https://github.com/metaneutrons/eule-mcp/commit/065189e237a5224094d99c501072307020d68f6d))
+
 ## [0.10.4](https://github.com/metaneutrons/eule-mcp/compare/v0.10.3...v0.10.4) (2026-10-19)
 
 
