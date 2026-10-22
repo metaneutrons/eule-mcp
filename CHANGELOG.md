@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.0](https://github.com/metaneutrons/eule-mcp/compare/v0.12.0...v0.13.0) (2026-10-22)
+
+
+### Features
+
+* **mcpb:** owl-only app icon with light and dark variants ([b4c0996](https://github.com/metaneutrons/eule-mcp/commit/b4c099624f9e44045c9bf772c88d0badd652752c))
+
 ## [0.12.0](https://github.com/metaneutrons/eule-mcp/compare/v0.11.0...v0.12.0) (2026-10-21)
 
 
