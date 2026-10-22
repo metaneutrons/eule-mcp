@@ -315,6 +315,26 @@ describe("packMcpb", () => {
     });
   });
 
+  it("checks every icon variant listed under icons", () => {
+    const icons = [
+      { src: "icons/icon-32.png", size: "32x32", theme: "light" },
+      { src: "icons/icon-dark-32.png", size: "32x32", theme: "dark" },
+    ];
+    withFixture(({ inputDir, tempRoot }) => {
+      writeManifest(inputDir, { ...VALID_MANIFEST, icons });
+      writePath(inputDir, "icons/icon-32.png", PNG_SIGNATURE);
+      expect(() => packMcpb(inputDir, join(tempRoot, "missing-variant.mcpb"))).toThrow(
+        /icons\/icon-dark-32\.png/,
+      );
+      writePath(inputDir, "icons/icon-dark-32.png", "not a png");
+      expect(() => packMcpb(inputDir, join(tempRoot, "bad-variant.mcpb"))).toThrow(
+        /must be a PNG file: icons\/icon-dark-32\.png/,
+      );
+      writePath(inputDir, "icons/icon-dark-32.png", PNG_SIGNATURE);
+      expect(() => packMcpb(inputDir, join(tempRoot, "variants.mcpb"))).not.toThrow();
+    });
+  });
+
   it("rejects an entry point excluded by .mcpbignore", () => {
     withFixture(({ inputDir, tempRoot }) => {
       writePath(inputDir, ".mcpbignore", `${ENTRY_PATH}\n`);

@@ -17,6 +17,38 @@
   "documentation": "https://github.com/metaneutrons/eule-mcp#readme",
   "support": "https://github.com/metaneutrons/eule-mcp/issues",
   "icon": "icon.png",
+  "icons": [
+    {
+      "src": "icons/icon-32.png",
+      "size": "32x32",
+      "theme": "light"
+    },
+    {
+      "src": "icons/icon-128.png",
+      "size": "128x128",
+      "theme": "light"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "size": "512x512",
+      "theme": "light"
+    },
+    {
+      "src": "icons/icon-dark-32.png",
+      "size": "32x32",
+      "theme": "dark"
+    },
+    {
+      "src": "icons/icon-dark-128.png",
+      "size": "128x128",
+      "theme": "dark"
+    },
+    {
+      "src": "icons/icon-dark-512.png",
+      "size": "512x512",
+      "theme": "dark"
+    }
+  ],
   "license": "GPL-3.0-or-later",
   "keywords": [
     "mcp",
