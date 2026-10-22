@@ -119,7 +119,7 @@ try {
   for (const file of readdirSync(join(repo, "assets", "app-icons")).filter((f) =>
     f.endsWith(".png"),
   ))
-    copyFileSync(join(repo, "assets", "icons", file), join(stage, "icons", file));
+    copyFileSync(join(repo, "assets", "app-icons", file), join(stage, "icons", file));
   writeFileSync(join(stage, ".mcpbignore"), MCPBIGNORE);
 
   // The lockfile still lists the devDependencies, so they stay declared for a
