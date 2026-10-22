@@ -22,6 +22,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -113,6 +114,15 @@ try {
   for (const file of ["LICENSE", "README.md", "pnpm-lock.yaml", "pnpm-workspace.yaml"])
     copyFileSync(join(repo, file), join(stage, file));
   copyFileSync(join(repo, "assets", "icon.png"), join(stage, "icon.png"));
+  // Size and theme variants listed under "icons" in manifest.json. Both paths
+  // are the repo root or the staging directory plus fixed names.
+  // eslint-disable-next-line security/detect-non-literal-fs-filename
+  mkdirSync(join(stage, "icons"), { recursive: true });
+  // eslint-disable-next-line security/detect-non-literal-fs-filename
+  for (const file of readdirSync(join(repo, "assets", "app-icons")).filter((f) =>
+    f.endsWith(".png"),
+  ))
+    copyFileSync(join(repo, "assets", "app-icons", file), join(stage, "icons", file));
   writeFileSync(join(stage, ".mcpbignore"), MCPBIGNORE);
 
   // The lockfile still lists the devDependencies, so they stay declared for a

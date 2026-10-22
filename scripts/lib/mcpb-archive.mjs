@@ -103,16 +103,19 @@ export function packMcpb(directory, outputPath) {
     }
   };
   walk(root);
-  const requiredFiles = ["manifest.json", manifest.server.entry_point];
-  if (manifest.icon !== undefined) requiredFiles.push(manifest.icon);
+  const iconFiles = [
+    ...(manifest.icon !== undefined ? [manifest.icon] : []),
+    ...(manifest.icons ?? []).map((icon) => icon.src),
+  ];
+  const requiredFiles = ["manifest.json", manifest.server.entry_point, ...iconFiles];
   for (const required of requiredFiles) {
     if (!Object.hasOwn(files, required))
       throw new Error(`Required MCPB file missing or excluded: ${required}`);
   }
-  if (manifest.icon) {
-    const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
-    if (!files[manifest.icon][0].subarray(0, png.length).equals(png)) {
-      throw new Error("MCPB icon must be a PNG file");
+  const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  for (const icon of iconFiles) {
+    if (!files[icon][0].subarray(0, png.length).equals(png)) {
+      throw new Error(`MCPB icon must be a PNG file: ${icon}`);
     }
   }
   // Stable order and timestamp make identical staging trees produce identical bytes.
