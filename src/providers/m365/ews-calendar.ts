@@ -1,3 +1,4 @@
+import { ewsFailure } from "./ews-errors.js";
 import { XMLParser } from "fast-xml-parser";
 import { escapeXml } from "../../utils/security.js";
 import type {
@@ -44,32 +45,6 @@ function dig(obj: unknown, ...keys: string[]): unknown {
     current = (current as Record<string, unknown>)[key];
   }
   return current;
-}
-
-/**
- * EWS reports a failed operation with HTTP 200 and a response message whose
- * ResponseClass is "Error". Find the first such message anywhere in the reply.
- */
-export function ewsFailure(node: unknown): { code: string; message: string } | undefined {
-  if (!node || typeof node !== "object") return undefined;
-  if (Array.isArray(node)) {
-    for (const entry of node) {
-      const found = ewsFailure(entry);
-      if (found) return found;
-    }
-    return undefined;
-  }
-  const record = node as Record<string, unknown>;
-  if (record["@_ResponseClass"] === "Error")
-    return {
-      code: str(record.ResponseCode) || "Error",
-      message: str(record.MessageText) || "request failed",
-    };
-  for (const value of Object.values(record)) {
-    const found = ewsFailure(value);
-    if (found) return found;
-  }
-  return undefined;
 }
 
 export class EwsCalendarConnector implements CalendarConnector {
