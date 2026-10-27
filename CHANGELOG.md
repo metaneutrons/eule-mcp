@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.1](https://github.com/metaneutrons/eule-mcp/compare/v0.13.0...v0.13.1) (2026-10-27)
+
+
+### Bug Fixes
+
+* **ews:** send replies and forwards with attachments ([#132](https://github.com/metaneutrons/eule-mcp/issues/132)) ([1d30349](https://github.com/metaneutrons/eule-mcp/commit/1d30349c77e3138b064c05a2d724cbcb03d5459e))
+
 ## [0.13.0](https://github.com/metaneutrons/eule-mcp/compare/v0.12.0...v0.13.0) (2026-10-22)
 
 
