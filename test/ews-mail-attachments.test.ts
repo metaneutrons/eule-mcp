@@ -82,11 +82,18 @@ describe("EwsMailConnector reply and forward with attachments", () => {
 
     await connector().replyToMessage("orig-1", "Anbei die Rechnung.", { attachments: [PDF] });
 
-    expect(ews.operations()).toEqual(["CreateItem", "CreateAttachment", "GetItem", "SendItem"]);
-    const [create, attach, , send] = ews.requests;
+    expect(ews.operations()).toEqual([
+      "GetItem",
+      "CreateItem",
+      "CreateAttachment",
+      "GetItem",
+      "SendItem",
+    ]);
+    const [, create, attach, , send] = ews.requests;
     expect(create).toContain('MessageDisposition="SaveOnly"');
     expect(create).toContain("<t:ReplyToItem>");
-    expect(create).toContain('<t:ReferenceItemId Id="orig-1"/>');
+    // The original's ChangeKey, read first, is required to compose the draft.
+    expect(create).toContain('<t:ReferenceItemId Id="orig-1" ChangeKey="ck-after-attach"/>');
     expect(create).toContain("Anbei die Rechnung.");
     expect(attach).toContain('<m:ParentItemId Id="draft-1"/>');
     expect(attach).toContain("<t:Name>Rechnung.pdf</t:Name>");
@@ -119,14 +126,21 @@ describe("EwsMailConnector reply and forward with attachments", () => {
       attachments: [PDF],
     });
 
-    expect(ews.operations()).toEqual(["CreateItem", "CreateAttachment", "GetItem", "SendItem"]);
-    expect(ews.requests[0]).toContain("<t:ForwardItem>");
-    expect(ews.requests[0]).toContain("<t:EmailAddress>frau@example.com</t:EmailAddress>");
+    expect(ews.operations()).toEqual([
+      "GetItem",
+      "CreateItem",
+      "CreateAttachment",
+      "GetItem",
+      "SendItem",
+    ]);
+    expect(ews.requests[1]).toContain("<t:ForwardItem>");
+    expect(ews.requests[1]).toContain("<t:EmailAddress>frau@example.com</t:EmailAddress>");
   });
 
   it("does not send, and removes the draft, when attaching fails", async () => {
     const ews = exchange({
       CreateItem: created,
+      GetItem: fetched,
       CreateAttachment: refused("CreateAttachment", "ErrorAttachmentSizeLimitExceeded", "too big"),
       DeleteItem: deleted,
     });
@@ -135,8 +149,8 @@ describe("EwsMailConnector reply and forward with attachments", () => {
       connector().replyToMessage("orig-1", "Anbei.", { attachments: [PDF] }),
     ).rejects.toThrow(/attaching files failed: ErrorAttachmentSizeLimitExceeded: too big/);
 
-    expect(ews.operations()).toEqual(["CreateItem", "CreateAttachment", "DeleteItem"]);
-    expect(ews.requests[2]).toContain('<t:ItemId Id="draft-1"/>');
+    expect(ews.operations()).toEqual(["GetItem", "CreateItem", "CreateAttachment", "DeleteItem"]);
+    expect(ews.requests[3]).toContain('<t:ItemId Id="draft-1"/>');
   });
 
   it("reports a refused send instead of claiming success", async () => {
@@ -155,13 +169,14 @@ describe("EwsMailConnector reply and forward with attachments", () => {
 
   it("stops when Exchange refuses to compose the reply", async () => {
     const ews = exchange({
+      GetItem: fetched,
       CreateItem: refused("CreateItem", "ErrorItemNotFound", "original is gone"),
     });
 
     await expect(
       connector().replyToMessage("orig-1", "Anbei.", { attachments: [PDF] }),
     ).rejects.toThrow(/composing the message failed: ErrorItemNotFound/);
-    expect(ews.operations()).toEqual(["CreateItem"]);
+    expect(ews.operations()).toEqual(["GetItem", "CreateItem"]);
   });
 
   it("still sends a new message with attachments through a checked draft", async () => {
