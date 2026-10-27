@@ -1,4 +1,5 @@
 import { XMLParser } from "fast-xml-parser";
+import { ewsFailure } from "./ews-errors.js";
 import { hasFolder, looksLikeFolderId, wellKnownMailFolder } from "../../utils/mail-folders.js";
 import { assembleHtml } from "../../utils/mail-html.js";
 import { assertResponseSize, escapeXml, fetchWithTimeout } from "../../utils/security.js";
@@ -131,6 +132,18 @@ export class EwsMailConnector implements MailConnector {
     assertResponseSize(res);
     const xml = await res.text();
     return parser.parse(xml);
+  }
+
+  /**
+   * Like post(), but Exchange's SOAP-level errors (HTTP 200 with ResponseClass
+   * "Error") throw. Used where a silent failure would leave the user believing
+   * a mail went out, or went out complete.
+   */
+  private async postChecked(body: string, what: string): Promise<unknown> {
+    const data = await this.post(body);
+    const failure = ewsFailure(data);
+    if (failure) throw new Error(`EWS ${what} failed: ${failure.code}: ${failure.message}`);
+    return data;
   }
 
   async listMessages(folder = "inbox", limit = 10): Promise<MailMessage[]> {
@@ -410,11 +423,14 @@ export class EwsMailConnector implements MailConnector {
         </t:FileAttachment>`;
       })
       .join("");
-    await this.post(`
+    await this.postChecked(
+      `
     <m:CreateAttachment>
       <m:ParentItemId Id="${escapeXml(parentId)}"/>
       <m:Attachments>${parts}</m:Attachments>
-    </m:CreateAttachment>`);
+    </m:CreateAttachment>`,
+      "attaching files",
+    );
   }
 
   async createDraft(
@@ -479,30 +495,90 @@ export class EwsMailConnector implements MailConnector {
     return "";
   }
 
+  /**
+   * Current ChangeKey of an item. Every edit, attaching a file included, changes
+   * it, and Exchange refuses SendItem without the current one
+   * (ErrorChangeKeyRequiredForWriteOperations).
+   */
+  private async changeKey(id: string): Promise<string> {
+    const data = await this.postChecked(
+      `
+    <m:GetItem>
+      <m:ItemShape><t:BaseShape>IdOnly</t:BaseShape></m:ItemShape>
+      <m:ItemIds><t:ItemId Id="${escapeXml(id)}"/></m:ItemIds>
+    </m:GetItem>`,
+      "reading the draft",
+    );
+    const items = dig(
+      data,
+      "Envelope",
+      "Body",
+      "GetItemResponse",
+      "ResponseMessages",
+      "GetItemResponseMessage",
+      "Items",
+      "Message",
+    );
+    const message = Array.isArray(items) ? (items as unknown[])[0] : items;
+    const key = str(dig(message, "ItemId", "@_ChangeKey"));
+    if (!key) throw new Error(`EWS: draft ${id} not found`);
+    return key;
+  }
+
   async sendDraft(id: string): Promise<SendReceipt> {
-    await this.post(`
+    const changeKey = await this.changeKey(id);
+    await this.postChecked(
+      `
     <m:SendItem SaveItemToFolder="true">
       <m:ItemIds>
-        <t:ItemId Id="${escapeXml(id)}" />
+        <t:ItemId Id="${escapeXml(id)}" ChangeKey="${escapeXml(changeKey)}" />
       </m:ItemIds>
       <m:SavedItemFolderId><t:DistinguishedFolderId Id="sentitems" /></m:SavedItemFolderId>
-    </m:SendItem>`);
+    </m:SendItem>`,
+      "sending the draft",
+    );
     return {};
   }
 
+  /**
+   * ReplyToItem and ForwardItem cannot carry attachments. With files, the reply
+   * or forward is saved as a draft (EWS composes the quoted original), the
+   * files are attached, and the draft is sent. A draft that cannot be completed
+   * is moved to the trash again instead of being left in Drafts.
+   */
+  private async sendWithAttachments(
+    itemXml: string,
+    attachments: readonly OutgoingAttachment[],
+  ): Promise<SendReceipt> {
+    const created = await this.postChecked(
+      `
+    <m:CreateItem MessageDisposition="SaveOnly">
+      <m:Items>${itemXml}</m:Items>
+    </m:CreateItem>`,
+      "composing the message",
+    );
+    const id = this.extractCreatedItemId(created);
+    if (!id) throw new Error("EWS: could not resolve the draft ItemId to attach files.");
+    try {
+      await this.addAttachments(id, attachments);
+      return await this.sendDraft(id);
+    } catch (error) {
+      await this.deleteMessage(id).catch(() => undefined);
+      throw error;
+    }
+  }
+
   async replyToMessage(id: string, body: string, opts?: MailSendOpts): Promise<SendReceipt> {
-    if (opts?.attachments?.length)
-      throw new Error(
-        "EWS tier: attachments on reply are not supported — send a new message with attachments, or create a draft.",
-      );
     const html = assembleHtml(body, this.signature);
+    const reply = `<t:ReplyToItem>
+          <t:ReferenceItemId Id="${escapeXml(id)}"/>
+          <t:NewBodyContent BodyType="HTML">${escapeXml(html)}</t:NewBodyContent>
+        </t:ReplyToItem>`;
+    if (opts?.attachments?.length) return this.sendWithAttachments(reply, opts.attachments);
     await this.post(`
     <m:CreateItem MessageDisposition="SendAndSaveCopy">
       <m:Items>
-        <t:ReplyToItem>
-          <t:ReferenceItemId Id="${escapeXml(id)}"/>
-          <t:NewBodyContent BodyType="HTML">${escapeXml(html)}</t:NewBodyContent>
-        </t:ReplyToItem>
+        ${reply}
       </m:Items>
     </m:CreateItem>`);
     return {};
@@ -514,21 +590,19 @@ export class EwsMailConnector implements MailConnector {
     body?: string,
     opts?: MailSendOpts,
   ): Promise<SendReceipt> {
-    if (opts?.attachments?.length)
-      throw new Error(
-        "EWS tier: attachments on forward are not supported — send a new message with attachments, or create a draft.",
-      );
     const toRecipients = to
       .map((addr) => `<t:Mailbox><t:EmailAddress>${escapeXml(addr)}</t:EmailAddress></t:Mailbox>`)
       .join("");
-    await this.post(`
-    <m:CreateItem MessageDisposition="SendAndSaveCopy">
-      <m:Items>
-        <t:ForwardItem>
+    const forward = `<t:ForwardItem>
           <t:ReferenceItemId Id="${escapeXml(id)}"/>
           <t:NewBodyContent BodyType="HTML">${escapeXml(assembleHtml(body ?? "", this.signature))}</t:NewBodyContent>
           <t:ToRecipients>${toRecipients}</t:ToRecipients>
-        </t:ForwardItem>
+        </t:ForwardItem>`;
+    if (opts?.attachments?.length) return this.sendWithAttachments(forward, opts.attachments);
+    await this.post(`
+    <m:CreateItem MessageDisposition="SendAndSaveCopy">
+      <m:Items>
+        ${forward}
       </m:Items>
     </m:CreateItem>`);
     return {};

@@ -165,8 +165,10 @@ one writable Paperless instance.
 > PDF without a text layer is reported as such.
 > Saved downloads may additionally use a `~/.eule` subdirectory or the
 > platform temporary directory (`/tmp` on POSIX, `%TEMP%` on Windows).
-> Attachments on **reply/forward** are supported on Graph, Gmail and IMAP; on the
-> EWS fallback tier, attach via a new message or draft instead.
+> Attachments on **reply/forward** are supported on every tier. EWS cannot carry
+> files in a reply or forward call, so Eule saves it as a draft, attaches the
+> files and sends the draft; if that fails, the draft is removed again and the
+> error is reported.
 > `mail_send` and `mail_send_draft` accept an optional `idempotency_key` to
 > prevent duplicate submission within the running server process.
 > On the **Graph tier** of a Microsoft 365 account, sending goes over SMTP with

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ewsFailure } from "../src/providers/m365/ews-calendar.js";
+import { ewsFailure } from "../src/providers/m365/ews-errors.js";
 
 describe("ewsFailure", () => {
   it("finds an error response message nested anywhere in the reply", () => {
