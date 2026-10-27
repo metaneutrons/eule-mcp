@@ -495,12 +495,43 @@ export class EwsMailConnector implements MailConnector {
     return "";
   }
 
+  /**
+   * Current ChangeKey of an item. Every edit, attaching a file included, changes
+   * it, and Exchange refuses SendItem without the current one
+   * (ErrorChangeKeyRequiredForWriteOperations).
+   */
+  private async changeKey(id: string): Promise<string> {
+    const data = await this.postChecked(
+      `
+    <m:GetItem>
+      <m:ItemShape><t:BaseShape>IdOnly</t:BaseShape></m:ItemShape>
+      <m:ItemIds><t:ItemId Id="${escapeXml(id)}"/></m:ItemIds>
+    </m:GetItem>`,
+      "reading the draft",
+    );
+    const items = dig(
+      data,
+      "Envelope",
+      "Body",
+      "GetItemResponse",
+      "ResponseMessages",
+      "GetItemResponseMessage",
+      "Items",
+      "Message",
+    );
+    const message = Array.isArray(items) ? (items as unknown[])[0] : items;
+    const key = str(dig(message, "ItemId", "@_ChangeKey"));
+    if (!key) throw new Error(`EWS: draft ${id} not found`);
+    return key;
+  }
+
   async sendDraft(id: string): Promise<SendReceipt> {
+    const changeKey = await this.changeKey(id);
     await this.postChecked(
       `
     <m:SendItem SaveItemToFolder="true">
       <m:ItemIds>
-        <t:ItemId Id="${escapeXml(id)}" />
+        <t:ItemId Id="${escapeXml(id)}" ChangeKey="${escapeXml(changeKey)}" />
       </m:ItemIds>
       <m:SavedItemFolderId><t:DistinguishedFolderId Id="sentitems" /></m:SavedItemFolderId>
     </m:SendItem>`,

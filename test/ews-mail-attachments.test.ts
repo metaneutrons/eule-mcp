@@ -20,6 +20,12 @@ const attached = reply(
   `<m:CreateAttachmentResponseMessage ResponseClass="Success"><m:ResponseCode>NoError</m:ResponseCode>
    </m:CreateAttachmentResponseMessage>`,
 );
+const fetched = reply(
+  "GetItem",
+  `<m:GetItemResponseMessage ResponseClass="Success"><m:ResponseCode>NoError</m:ResponseCode>
+     <m:Items><t:Message><t:ItemId Id="draft-1" ChangeKey="ck-after-attach"/></t:Message></m:Items>
+   </m:GetItemResponseMessage>`,
+);
 const sent = reply(
   "SendItem",
   `<m:SendItemResponseMessage ResponseClass="Success"><m:ResponseCode>NoError</m:ResponseCode>
@@ -70,13 +76,14 @@ describe("EwsMailConnector reply and forward with attachments", () => {
     const ews = exchange({
       CreateItem: created,
       CreateAttachment: attached,
+      GetItem: fetched,
       SendItem: sent,
     });
 
     await connector().replyToMessage("orig-1", "Anbei die Rechnung.", { attachments: [PDF] });
 
-    expect(ews.operations()).toEqual(["CreateItem", "CreateAttachment", "SendItem"]);
-    const [create, attach, send] = ews.requests;
+    expect(ews.operations()).toEqual(["CreateItem", "CreateAttachment", "GetItem", "SendItem"]);
+    const [create, attach, , send] = ews.requests;
     expect(create).toContain('MessageDisposition="SaveOnly"');
     expect(create).toContain("<t:ReplyToItem>");
     expect(create).toContain('<t:ReferenceItemId Id="orig-1"/>');
@@ -86,7 +93,8 @@ describe("EwsMailConnector reply and forward with attachments", () => {
     expect(attach).toContain(
       `<t:Content>${Buffer.from("PDF-BYTES").toString("base64")}</t:Content>`,
     );
-    expect(send).toContain('<t:ItemId Id="draft-1" />');
+    // SendItem must carry the ChangeKey read after the attachment changed the draft.
+    expect(send).toContain('<t:ItemId Id="draft-1" ChangeKey="ck-after-attach" />');
     expect(send).toContain('SaveItemToFolder="true"');
   });
 
@@ -100,13 +108,18 @@ describe("EwsMailConnector reply and forward with attachments", () => {
   });
 
   it("forwards with an attachment the same way and keeps the recipients", async () => {
-    const ews = exchange({ CreateItem: created, CreateAttachment: attached, SendItem: sent });
+    const ews = exchange({
+      CreateItem: created,
+      CreateAttachment: attached,
+      GetItem: fetched,
+      SendItem: sent,
+    });
 
     await connector().forwardMessage("orig-2", ["frau@example.com"], "Zur Kenntnis.", {
       attachments: [PDF],
     });
 
-    expect(ews.operations()).toEqual(["CreateItem", "CreateAttachment", "SendItem"]);
+    expect(ews.operations()).toEqual(["CreateItem", "CreateAttachment", "GetItem", "SendItem"]);
     expect(ews.requests[0]).toContain("<t:ForwardItem>");
     expect(ews.requests[0]).toContain("<t:EmailAddress>frau@example.com</t:EmailAddress>");
   });
@@ -130,6 +143,7 @@ describe("EwsMailConnector reply and forward with attachments", () => {
     exchange({
       CreateItem: created,
       CreateAttachment: attached,
+      GetItem: fetched,
       SendItem: refused("SendItem", "ErrorInvalidRecipients", "no recipient"),
       DeleteItem: deleted,
     });
@@ -151,12 +165,17 @@ describe("EwsMailConnector reply and forward with attachments", () => {
   });
 
   it("still sends a new message with attachments through a checked draft", async () => {
-    const ews = exchange({ CreateItem: created, CreateAttachment: attached, SendItem: sent });
+    const ews = exchange({
+      CreateItem: created,
+      CreateAttachment: attached,
+      GetItem: fetched,
+      SendItem: sent,
+    });
 
     await connector().sendMessage(["frau@example.com"], "Rechnung", "Anbei.", {
       attachments: [PDF],
     });
 
-    expect(ews.operations()).toEqual(["CreateItem", "CreateAttachment", "SendItem"]);
+    expect(ews.operations()).toEqual(["CreateItem", "CreateAttachment", "GetItem", "SendItem"]);
   });
 });
