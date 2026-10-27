@@ -570,15 +570,19 @@ export class EwsMailConnector implements MailConnector {
 
   async replyToMessage(id: string, body: string, opts?: MailSendOpts): Promise<SendReceipt> {
     const html = assembleHtml(body, this.signature);
-    const reply = `<t:ReplyToItem>
-          <t:ReferenceItemId Id="${escapeXml(id)}"/>
+    // Composing a draft from the original needs the original's ChangeKey too.
+    const reference = (changeKey?: string): string =>
+      `<t:ReferenceItemId Id="${escapeXml(id)}"${changeKey ? ` ChangeKey="${escapeXml(changeKey)}"` : ""}/>`;
+    const reply = (changeKey?: string): string => `<t:ReplyToItem>
+          ${reference(changeKey)}
           <t:NewBodyContent BodyType="HTML">${escapeXml(html)}</t:NewBodyContent>
         </t:ReplyToItem>`;
-    if (opts?.attachments?.length) return this.sendWithAttachments(reply, opts.attachments);
+    if (opts?.attachments?.length)
+      return this.sendWithAttachments(reply(await this.changeKey(id)), opts.attachments);
     await this.post(`
     <m:CreateItem MessageDisposition="SendAndSaveCopy">
       <m:Items>
-        ${reply}
+        ${reply()}
       </m:Items>
     </m:CreateItem>`);
     return {};
@@ -593,16 +597,17 @@ export class EwsMailConnector implements MailConnector {
     const toRecipients = to
       .map((addr) => `<t:Mailbox><t:EmailAddress>${escapeXml(addr)}</t:EmailAddress></t:Mailbox>`)
       .join("");
-    const forward = `<t:ForwardItem>
-          <t:ReferenceItemId Id="${escapeXml(id)}"/>
+    const forward = (changeKey?: string): string => `<t:ForwardItem>
+          <t:ReferenceItemId Id="${escapeXml(id)}"${changeKey ? ` ChangeKey="${escapeXml(changeKey)}"` : ""}/>
           <t:NewBodyContent BodyType="HTML">${escapeXml(assembleHtml(body ?? "", this.signature))}</t:NewBodyContent>
           <t:ToRecipients>${toRecipients}</t:ToRecipients>
         </t:ForwardItem>`;
-    if (opts?.attachments?.length) return this.sendWithAttachments(forward, opts.attachments);
+    if (opts?.attachments?.length)
+      return this.sendWithAttachments(forward(await this.changeKey(id)), opts.attachments);
     await this.post(`
     <m:CreateItem MessageDisposition="SendAndSaveCopy">
       <m:Items>
-        ${forward}
+        ${forward()}
       </m:Items>
     </m:CreateItem>`);
     return {};
