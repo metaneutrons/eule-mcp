@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.2](https://github.com/metaneutrons/eule-mcp/compare/v0.13.1...v0.13.2) (2026-10-27)
+
+
+### Bug Fixes
+
+* **ews:** give the original's ChangeKey when composing a reply or forward draft ([#135](https://github.com/metaneutrons/eule-mcp/issues/135)) ([dfd0862](https://github.com/metaneutrons/eule-mcp/commit/dfd08625fd5c81c4a18d8eaa27e6e5bae1fe04c5))
+
 ## [0.13.1](https://github.com/metaneutrons/eule-mcp/compare/v0.13.0...v0.13.1) (2026-10-27)
 
 
